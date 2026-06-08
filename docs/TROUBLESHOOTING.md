@@ -66,6 +66,36 @@ affect anything else that uses it.
 
 ---
 
+## DrumSep / Custom Isolation: model download failed
+
+The advanced **DrumSep** (and the 6-stem Custom Isolation) split uses the **MDX23C DrumSep**
+model by **aufr33 & jarredou**. ParaKit downloads it automatically on first use — but the
+original upstream host was taken down, so that auto-download can fail if the fallback mirrors
+are also unavailable.
+
+**Manual fix** — download the model yourself and drop it where ParaKit looks for it:
+
+1. Get **`MDX23C-DrumSep-aufr33-jarredou.ckpt`** (~437 MB). It's on the same
+   [LimeWire page](https://limewire.com/d/HrcqC#lS73gPUpJa) as the requirements bundle
+   (it's also mirrored on Hugging Face if you'd rather grab it there).
+2. Make sure it's named **exactly** `MDX23C-DrumSep-aufr33-jarredou.ckpt`.
+3. Place it in **either** location — ParaKit checks both:
+   - **Windows (user cache):** `%APPDATA%\ParaKit\separators\jarredou_mdx23c\MDX23C-DrumSep-aufr33-jarredou.ckpt`
+   - **Next to the app:** `parakit_models\jarredou_mdx23c\MDX23C-DrumSep-aufr33-jarredou.ckpt` (beside `ParaKit v4.0.py`)
+   - *(macOS/Linux: `~/.config/parakit/separators/jarredou_mdx23c/MDX23C-DrumSep-aufr33-jarredou.ckpt`)*
+4. **Restart ParaKit** — DrumSep finds the local copy and skips the download entirely.
+
+**Verify your download (optional but recommended).** The genuine file is exactly
+**437,652,699 bytes**, SHA-256:
+```
+D2A4AA53EB584D21EEAD358A4E66D1882AD182911BE018F052B5DA73BE9096D0
+```
+On Windows: `certutil -hashfile "MDX23C-DrumSep-aufr33-jarredou.ckpt" SHA256`
+
+> Model credit: **aufr33 & jarredou** (MDX23C DrumSep checkpoint).
+
+---
+
 ## Practice / MIDI issues
 - **"mido is required"** → `py -3.12 -m pip install mido`
 - **"pygame-ce is required"** (Practice v2) → `py -3.12 -m pip install pygame-ce`
