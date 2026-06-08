@@ -2,6 +2,8 @@
 
 **An all-in-one drum-charting tool for [Paradiddle](https://www.paradiddleapp.com/) (`.rlrr`), with Clone Hero (`.chart`) support.**
 
+STANDALONE .EXE VERSION: https://limewire.com/d/UV9Zm#DHqxKgEtmn
+
 Take a song, isolate the drums, turn them into a playable drum chart, refine it in a
 visual MIDI editor, practice it with falling notes, and export it — all in one app.
 
