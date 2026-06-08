@@ -1,0 +1,19 @@
+﻿{
+    "generated_by":  "tools/generate_practice_ui_assets.ps1",
+    "theme":  {
+                  "base":  "#080810, #0D0D1A, #222222",
+                  "purple":  "#8A35A6, #B388FF, #C4B5FD",
+                  "magenta":  "#FF69B4"
+              },
+    "nine_slice_insets":  {
+                              "results_card_bg":  12,
+                              "results_histogram_card_bg":  12,
+                              "launcher_card_bg":  12,
+                              "launcher_input_bg":  6
+                          },
+    "folders":  {
+                    "results":  "results",
+                    "launcher":  "launcher",
+                    "common":  "common"
+                }
+}

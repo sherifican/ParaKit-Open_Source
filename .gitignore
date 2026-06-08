@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Logs / runtime artifacts
+*.log
+parakit_debug.log
+recent_files.json
+*.bak
+
+# Bundled command-line tools + heavy assets — distributed separately
+# (the "requirements bundle": FFmpeg, yt-dlp, ADB / platform-tools, etc.)
+Requirements/
+platform-tools/
+ffmpeg.exe
+yt-dlp.exe
+adb.exe
+
+# Generated stem / audio outputs
+drums.wav
+no_drums.wav
+drums_composite.wav
+*.tmp

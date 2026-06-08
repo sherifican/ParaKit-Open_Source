@@ -1,0 +1,39 @@
+# ParaKit v4.4.57.99-10 — Python dependencies  (Python 3.12 required)
+#
+# Install:   py -3.12 -m pip install -r requirements.txt
+#
+# ParaKit also relies on three BUNDLED command-line tools that are NOT pip
+# packages — FFmpeg, yt-dlp, and ADB. They ship in the separate ParaKit
+# "requirements bundle" download (see README → "Requirements bundle"). Keep
+# them next to "ParaKit v4.0.py" (root) or in a "Requirements\" subfolder.
+
+# --- Core audio / detection -------------------------------------------------
+librosa>=0.11          # audio loading + onset / feature analysis
+scipy>=1.11            # signal processing (resample, filtering)
+numpy>=1.26            # array math (used throughout)
+onnxruntime>=1.16      # ML / Hybrid Audio->MIDI detection (ONNX models)
+soundfile>=0.12        # audio file I/O
+pydub>=0.25            # audio segment ops  (REQUIRES FFmpeg on PATH)
+
+# --- MIDI -------------------------------------------------------------------
+mido>=1.3              # MIDI read / write / parsing
+python-rtmidi>=1.5     # real-time MIDI input backend for mido (drum-kit play)
+
+# --- Sheet music ------------------------------------------------------------
+music21>=9             # MusicXML -> MIDI conversion
+
+# --- UI / drag-drop / practice ---------------------------------------------
+ttkbootstrap>=1.10     # themed Tkinter widgets (app theme)
+tkinterdnd2>=0.4       # drag-and-drop onto file fields
+pygame>=2.6            # Preview / Practice falling-note renderer
+Pillow>=10             # album art + image handling
+
+# --- Metadata ---------------------------------------------------------------
+mutagen>=1.47          # read / write audio tags (FLAC / MP3 / MP4 / OGG)
+
+# --- Stem splitter (HEAVY — optional) --------------------------------------
+# demucs pulls in torch + torchaudio (~2-3 GB download). Only needed for the
+# Stem Splitter tab; skip this line if you will not split stems.
+# RTX 50-series (Blackwell) GPU owners: stock torch runs the splitter on CPU.
+# See docs/TROUBLESHOOTING.md for the CUDA 12.8 (cu128) GPU fix.
+demucs>=4.0
