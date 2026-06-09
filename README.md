@@ -38,6 +38,26 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan
 
 ---
 
+## 🥁 New — Practice Mode v2: Web Edition
+
+The falling-note **Practice** experience has been rebuilt from scratch as a fast, **self-contained web app** — a big step up from the in-app mini-game and the `practice_v2/` alpha. Notes fall down 8 lanes in time with the music while you play along on a **USB MIDI drum kit or your keyboard**.
+
+- **Rock-solid timing** — a sample-accurate Web Audio clock, no drift.
+- **One file, zero setup** — open it in any modern browser; includes a built-in demo plus a synth that makes any chart audible even with no audio file.
+- **Latency calibration, mid-song mix/stem switching, touch support, a results screen with a timing histogram**, and full keyboard + MIDI play.
+
+**▶ Try it:** download **[`Practice Window v2 - Web Edition/parakit-practice.html`](Practice%20Window%20v2%20-%20Web%20Edition/parakit-practice.html)** and open it in any modern browser (Chrome or Edge for USB-MIDI).
+
+<p align="center">
+  <img src="screenshots/practice-web-setup.png" width="300" alt="Practice — setup screen">
+  <img src="screenshots/practice-web-gameplay-1.png" width="300" alt="Practice — gameplay">
+  <img src="screenshots/practice-web-gameplay-2.png" width="300" alt="Practice — gameplay, full lanes">
+</p>
+
+> **This web edition is the de-facto final version of Practice Mode v2 for now.** An updated native (`.py`) version folded back into the app is planned for a later release — but you don't need to wait: the web edition is complete and ready to play today.
+
+---
+
 ## What's in this repository
 
 | Folder / file | What it is |
@@ -47,6 +67,7 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan
 | **`requirements.txt`** | Python dependencies for the main app |
 | **`extractor/`** | **RLRR Extractor** — converts `.rlrr` charts back into `.mid` MIDI ([readme](extractor/README.md)) |
 | **`practice_v2/`** | **Practice Window v2** — standalone falling-note practice mini-game (**alpha**, [readme](practice_v2/README.md)) |
+| **`Practice Window v2 - Web Edition/`** | **Practice Mode v2 — Web Edition** — the new self-contained browser rebuild (recommended; see the section above) |
 | **`docs/`** | Building from source, troubleshooting, roadmap |
 | **`LICENSE`** | GNU GPL v3 |
 
@@ -69,6 +90,58 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan
 - **Preview & Practice** — falling notes synced to the audio, keyboard or USB MIDI kit
 - **Song Tester** — verify sync before export
 - **Export** — Paradiddle (`.rlrr`) and Clone Hero (`.chart`)
+
+---
+
+## 📸 Screenshots
+
+<div align="center">
+  <img src="screenshots/app-01-single-song-creator.png" width="820" alt="ParaKit — Single Song Creator">
+</div>
+
+<details>
+<summary><b>🖼️ Click to expand — see every tab</b></summary>
+
+<br>
+
+### 1 · Single Song Creator
+<img src="screenshots/app-01-single-song-creator.png" width="900" alt="Single Song Creator">
+
+### 2 · Create Multiple Songs
+<img src="screenshots/app-02-create-multiple-songs.png" width="900" alt="Create Multiple Songs">
+
+### 3 · Audio → .ogg Converter
+<img src="screenshots/app-03-audio-to-ogg.png" width="900" alt="Audio to .ogg Converter">
+
+### 4 · Stem Splitter
+<img src="screenshots/app-04-stem-splitter.png" width="900" alt="Stem Splitter">
+
+### 5 · Audio → MIDI
+<img src="screenshots/app-05-audio-to-midi.png" width="900" alt="Audio to MIDI">
+
+### 6 · MIDI Editor
+<img src="screenshots/app-06-midi-editor.png" width="900" alt="MIDI Editor">
+
+### 7 · Sheet Music → MIDI
+<img src="screenshots/app-07-sheet-music-to-midi.png" width="900" alt="Sheet Music to MIDI">
+
+### 8 · YouTube → FLAC
+<img src="screenshots/app-08-youtube-to-flac.png" width="900" alt="YouTube to FLAC">
+
+### 9 · Asset Manager
+<img src="screenshots/app-09-asset-manager.png" width="900" alt="Asset Manager">
+
+### 10 · Song Tester
+<img src="screenshots/app-10-song-tester.png" width="900" alt="Song Tester">
+
+### 11 · Preview / Practice Track
+<img src="screenshots/app-11a-preview.png" width="900" alt="Preview subtab"><br><br>
+<img src="screenshots/app-11b-practice.png" width="900" alt="Practice subtab">
+
+### 12 · Quick Start & FAQ
+<img src="screenshots/app-12-quick-start-faq.png" width="900" alt="Quick Start & FAQ">
+
+</details>
 
 ---
 
