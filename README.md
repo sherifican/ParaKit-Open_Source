@@ -4,6 +4,8 @@
 
 STANDALONE .EXE VERSION: https://limewire.com/d/UV9Zm#DHqxKgEtmn
 
+REPO FOR .EXE VERSION: https://github.com/sherifican/ParaKit---Releases
+
 Take a song, isolate the drums, turn them into a playable drum chart, refine it in a
 visual MIDI editor, practice it with falling notes, and export it — all in one app.
 
