@@ -170,7 +170,7 @@ These are distributed separately as the **`Requirements.zip` bundle** (≈174 MB
 include in the Git repo). **Download it here → [Requirements.zip (LimeWire)](https://limewire.com/d/HrcqC#lS73gPUpJa)**
 
 I have also uploaded the Jarredou model alongside the Reqs on the LimeWire page since the original repo for it is down.
-There are mirrors on HuggingFace but I don't wanna force people do dig thru the giant repo + read thru the 600+ page report.
+There are mirrors on HuggingFace but I don't wanna force people to dig thru the giant repo + read thru the 600+ page report.
 
 Extract it, then place the files next to `ParaKit v4.0.py`, or keep them in the included
 `Requirements\` subfolder beside it. They're kept out of the Git tree on purpose — large
