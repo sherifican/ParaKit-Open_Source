@@ -13,7 +13,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.4.57.99-10`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.4.58-12`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -196,12 +196,15 @@ py -3.12 "ParaKit v4.0.py"
 
 ---
 
-## Known issue — RTX 50-series GPUs and stem splitting
+## RTX 50-series GPUs and stem splitting
 
-The stem splitter uses GPU acceleration on NVIDIA **GTX 10-series through RTX 40-series**.
-On the newer **RTX 50-series** (Blackwell — 5070/5080/5090) the stock PyTorch build does
-**not** include support for those GPUs, so splitting falls back to **CPU** (it still works,
-just slower). AMD / Intel GPUs are CPU-only as well (Demucs needs CUDA).
+The stem splitter uses GPU acceleration on NVIDIA **GTX 10-series through RTX 50-series**.
+As of **v4.4.58-12**, ParaKit detects your GPU's architecture and uses CUDA whenever your
+installed PyTorch supports it — including **RTX 50-series** (Blackwell — 5070/5080/5090),
+which needs a **CUDA 12.8+ (`cu128`) PyTorch build**. If your PyTorch doesn't include your
+GPU's architecture, the split log reports which architectures it *does* support, and the app
+falls back to **CPU** (still works, just slower). AMD / Intel GPUs are CPU-only too (Demucs
+needs CUDA).
 
 A working GPU fix exists (CUDA 12.8 / `cu128` PyTorch + a save-path tweak) — see
 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md). We're also preparing a separate,
@@ -216,6 +219,21 @@ that the feature works on every machine, even if a bit slower.
 Because this is the full source, you can add features, remove them, rearrange the UI, or
 make your own personal ParaKit. See [`docs/BUILDING.md`](docs/BUILDING.md) for running from
 source and compiling a standalone `.exe`.
+
+---
+
+## Changelog
+
+### v4.4.58-12
+- **RTX 50-series (Blackwell) GPU acceleration for the Stem Splitter.** ParaKit now detects
+  whether your installed PyTorch was built for your GPU's architecture (sm_120) and uses CUDA
+  when it is, instead of always falling back to CPU. RTX 50-series cards need a **CUDA 12.8+
+  (`cu128`) PyTorch build**; if yours isn't built for your GPU, the split log reports which
+  architectures your PyTorch supports, so you know what to install. (This also fixes RTX
+  40-series cards that were previously running on CPU by mistake.)
+
+### v4.4.57.99-10
+- Initial public source release (GPLv3).
 
 ---
 

@@ -5314,7 +5314,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.57.99-10"
+    VERSION = "4.4.58-12"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -8074,14 +8074,22 @@ class MidiToRlrrApp:
             justify=tk.LEFT
         ).pack(anchor="w", pady=(3, 0))
 
+        ttk.Label(main,
+                  text="⚡  NEW (v4.4.58-12): RTX 50-series (Blackwell) GPUs are now supported "
+                       "for GPU-accelerated splitting when a CUDA 12.8+ (cu128) PyTorch build "
+                       "is installed. See the Hardware speed notes below for details.",
+                  style="Sub.TLabel", foreground="#00e0e0", wraplength=860,
+                  justify=tk.LEFT).pack(anchor="w", pady=(0, 6))
+
         _, hardware_content = self._make_collapsible_tips(
             main, title="Hardware speed notes", start_open=False,
             pack_kw={"pady": (0, 10)})
         ttk.Label(hardware_content,
                   text="NVIDIA GTX 10-series through RTX 40-series: full GPU acceleration "
                        "via CUDA. Splitting typically takes ~30 seconds.\n\n"
-                       "NVIDIA RTX 50-series (5070, 5080, 5090): GPU not yet supported by "
-                       "the current PyTorch release; runs on CPU for now.\n\n"
+                       "NVIDIA RTX 50-series (5070, 5080, 5090): GPU-accelerated when a "
+                       "CUDA 12.8+ (cu128) PyTorch build is installed (detects the Blackwell "
+                       "sm_120 architecture); the default build falls back to CPU.\n\n"
                        "AMD and Intel GPUs: run on CPU only. Demucs requires CUDA, which is "
                        "an NVIDIA-exclusive technology. CPU splits typically take 45s to "
                        "~1m30s depending on your processor.",
@@ -8530,7 +8538,15 @@ class MidiToRlrrApp:
                         if _t.cuda.is_available():
                             sm = _t.cuda.get_device_capability()
                             sm_val = sm[0] * 10 + sm[1]
-                            _device = "cuda" if sm_val in [50,60,61,70,75,80,86,90] else "cpu"
+                            sm_str = f"sm_{sm_val}"
+                            try:
+                                arch = _t.cuda.get_arch_list()
+                            except Exception:
+                                arch = []
+                            if arch:
+                                _device = "cuda" if (sm_str in arch or (sm_str + "a") in arch) else "cpu"
+                            else:
+                                _device = "cuda" if sm_val in [50,60,61,70,75,80,86,89,90] else "cpu"
                         else:
                             _device = "cpu"
                     except Exception:
@@ -8542,7 +8558,7 @@ class MidiToRlrrApp:
                         "--out", tmp, input_path
                     ]
                     self._stem_log(f"  Device: {_device.upper()}"
-                                   + (" (GPU)" if _device == "cuda" else " (CPU — RTX 50-series uses CPU for now)"))
+                                   + (" (GPU)" if _device == "cuda" else " (CPU — install a CUDA 12.8+ cu128 PyTorch build for RTX 50-series GPU)"))
 
                     wrapper = textwrap.dedent(f"""
 import sys, torch
@@ -8895,11 +8911,25 @@ demucs.separate.main()
             if _torch.cuda.is_available():
                 _sm = _torch.cuda.get_device_capability()
                 _sm_val = _sm[0] * 10 + _sm[1]
-                _supported = [50, 60, 61, 70, 75, 80, 86, 90]
-                _device = "cuda" if _sm_val in _supported else "cpu"
+                _sm_str = f"sm_{_sm_val}"
+                try:
+                    _arch = _torch.cuda.get_arch_list()   # archs THIS PyTorch build was compiled for
+                except Exception:
+                    _arch = []
+                # Use the GPU when the installed PyTorch supports this GPU's arch.
+                # This is what enables Blackwell / RTX 50-series (sm_120) on a
+                # CUDA 12.8+ (cu128) build. Falls back to a known-good list only
+                # if get_arch_list is unavailable (very old PyTorch).
+                if _arch:
+                    _device = "cuda" if (_sm_str in _arch or (_sm_str + "a") in _arch) else "cpu"
+                else:
+                    _device = "cuda" if _sm_val in [50, 60, 61, 70, 75, 80, 86, 89, 90] else "cpu"
                 if _device == "cpu":
                     self._stem_log(
-                        f"  ⚠  GPU sm_{_sm_val} not supported by current PyTorch — using CPU")
+                        f"  ⚠  GPU sm_{_sm_val} not in this PyTorch build "
+                        f"(arch: {', '.join(_arch) if _arch else 'n/a'}) — using CPU.")
+                    self._stem_log(
+                        "     RTX 50-series needs a CUDA 12.8+ (cu128) PyTorch build for GPU.")
                 else:
                     self._stem_log(f"  ✓ GPU ready (sm_{_sm_val})")
             else:
@@ -22921,6 +22951,25 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.4.58-12 - RTX 50-series GPU support + Practice Mode v2 web app\n"
+              "  Changes/Additions:\n"
+              "  - Stem Splitter now supports GPU acceleration on NVIDIA\n"
+              "    RTX 50-series (Blackwell) cards. ParaKit checks whether your\n"
+              "    installed PyTorch was built for your GPU's architecture\n"
+              "    (sm_120) and uses CUDA when it is, instead of always falling\n"
+              "    back to CPU. RTX 50-series needs a CUDA 12.8+ (cu128) PyTorch\n"
+              "    build; if yours isn't, the split log now tells you exactly\n"
+              "    which architectures your PyTorch supports, so you know what\n"
+              "    to install. (This also fixes RTX 40-series cards that were\n"
+              "    previously running on CPU by mistake.)\n"
+              "  - A web/HTML version of Practice Mode v2 is now available on\n"
+              "    the ParaKit open-source repo. It's a self-contained,\n"
+              "    browser-based build of the practice game (no install) with\n"
+              "    sample-accurate timing, keyboard and USB-MIDI input, and\n"
+              "    live scoring — essentially the final form of Practice Mode\n"
+              "    v2. A matching update to this app's Practice tab will follow.\n")
+
+        wn_entry(wn_latest,
               "v4.4.57.99-10 - Snare-roll progress bar + green-to-cyan UI refresh\n"
               "  Changes/Additions:\n"
               "  - All conversion progress bars (Single Song, Stem Splitter,\n"
@@ -23000,7 +23049,7 @@ demucs.separate.main()
               "    Track tab — both surfaces now handle old extracted MIDIs\n"
               "    the same way.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.57.4-6 - MIDI Editor: tidier toolbar layout\n"
               "  Changes/Additions:\n"
               "  - In the MIDI Editor's playback toolbar, the position of\n"
@@ -26483,10 +26532,11 @@ demucs.separate.main()
                  "  → Verify the folder is in the correct Songs directory.")
         divider(s)
         entry(s, "Stem Splitter is slow\n"
-                 "  → GPU acceleration requires an NVIDIA GTX 10–40 series GPU with CUDA.\n"
-                 "    AMD and Intel GPUs always run on CPU — this is a Demucs limitation,\n"
-                 "    not a ParaKit bug. RTX 50-series also falls back to CPU until a\n"
-                 "    future PyTorch update adds support.\n"
+                 "  → GPU acceleration requires an NVIDIA CUDA GPU. GTX 10-series through\n"
+                 "    RTX 40-series work on a standard CUDA PyTorch build; RTX 50-series\n"
+                 "    (Blackwell) needs a CUDA 12.8+ (cu128) PyTorch build.\n"
+                 "    AMD and Intel GPUs always run on CPU — a Demucs limitation, not a\n"
+                 "    ParaKit bug.\n"
                  "  → Use htdemucs (not htdemucs_ft) for faster splits.")
         divider(s)
         entry(s, "Drag and drop not working\n"
