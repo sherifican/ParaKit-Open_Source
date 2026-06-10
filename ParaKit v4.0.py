@@ -5314,7 +5314,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.58-12"
+    VERSION = "4.4.59-12"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -17376,7 +17376,7 @@ demucs.separate.main()
             vel   = note.get("vel", 100)
             bar_h = max(2, int((vel / 127.0) * (h - 4)))
             y1    = h - bar_h
-            col   = "#ffffff" if ni in sel else "#b388ff"
+            col   = "#ffffff" if ni in sel else self.MIDI_EDITOR_LANES[note.get("lane_idx", 0)]["color"]
             c.create_rectangle(x - bar_w + GAP, y1, x + bar_w - GAP, h,
                                 fill=col, outline="", tags=f"vel_{ni}")
 
@@ -22951,6 +22951,17 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.4.59-12 - MIDI Editor: Velocity Lane colored by drum\n"
+              "  Changes/Additions:\n"
+              "  - In the MIDI Editor's Velocity Lane, each velocity bar is now\n"
+              "    drawn in its drum's lane color (Hi-Hat cyan, Snare red, Kick\n"
+              "    pink, toms blue/green/purple, Crash orange, Ride yellow) to\n"
+              "    match the piano roll above it, instead of one uniform purple.\n"
+              "    Selected bars still show white so the selection stays clear.\n"
+              "    Makes it obvious at a glance which drum each velocity belongs\n"
+              "    to.\n")
+
+        wn_entry(wn_latest,
               "v4.4.58-12 - RTX 50-series GPU support + Practice Mode v2 web app\n"
               "  Changes/Additions:\n"
               "  - Stem Splitter now supports GPU acceleration on NVIDIA\n"
@@ -23027,7 +23038,7 @@ demucs.separate.main()
               "    vs MIDI: .rlrr for downloaded/third-party charts; MIDI\n"
               "    is fine if you made it inside ParaKit.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.57.5-6 - MIDI Editor: recover correct timing for old extracted MIDIs\n"
               "  Changes/Additions:\n"
               "  - Loading a MIDI in the MIDI Editor tab now automatically\n"

@@ -14,7 +14,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.4.58-12`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.4.59-12`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -224,6 +224,12 @@ source and compiling a standalone `.exe`.
 ---
 
 ## Changelog
+
+### v4.4.59-12
+- **MIDI Editor — Velocity Lane colored by drum.** Each bar in the Velocity Lane is now drawn
+  in its drum's lane color (Hi-Hat cyan, Snare red, Kick pink, toms blue/green/purple, Crash
+  orange, Ride yellow) to match the piano roll, instead of one uniform color — so it's obvious
+  at a glance which drum each velocity belongs to. Selected bars stay white.
 
 ### v4.4.58-12
 - **RTX 50-series (Blackwell) GPU acceleration for the Stem Splitter.** ParaKit now detects
