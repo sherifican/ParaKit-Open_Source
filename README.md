@@ -7,7 +7,8 @@ STANDALONE .EXE VERSION: https://limewire.com/d/UV9Zm#DHqxKgEtmn
 REPO FOR .EXE VERSION: https://github.com/sherifican/ParaKit---Releases
 
 Take a song, isolate the drums, turn them into a playable drum chart, refine it in a
-visual MIDI editor, practice it with falling notes, and export it — all in one app.
+visual MIDI editor, practice it with falling notes, and export it, use iTunes/MusicBrainz to find Album Art & Meta Data,
+turn Sheet Music into MIDI files, and create batches of songs at once — all in one app.
 
 ParaKit **always has been and always will be free of charge, and will _never_ host ads.**
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
