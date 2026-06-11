@@ -25,7 +25,8 @@ build keeps its CPU fallback regardless, so stem splitting works on every machin
 ## Practice Window v2
 The new Pygame-CE falling-note **Practice v2** (in `practice_v2/`) is an **alpha** still under
 development. The stable Practice mode is **v1**, built into the main app. v2 is included so
-the community can help mature it — or fork it.
+the community can help mature it — or fork it. **However** there is the recently released
+html version of the completed practice mode v2 redesign, it will be folded into the main app later.
 
 ---
 
