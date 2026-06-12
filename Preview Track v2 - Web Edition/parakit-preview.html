@@ -1,0 +1,3076 @@
+<!DOCTYPE html>
+<!--
+═══════════════════════════════════════════════════════════════════════════
+  PARAKIT PREVIEW TRACK — Web Prototype (v0.1.0)
+  Falling-note chart preview (no scoring) + LIVE EDIT MODE.
+  Companion to ParaKit Practice (Web Edition); third standalone prototype in
+  the v5 rebuild series (Practice → MIDI Editor → Preview Track).
+  One file. No build step. No server. No dependencies.
+
+  WHAT THIS IS
+    v4's "Preview/Practice Track" tab, Preview half: watch the chart fall
+    synced to audio — review, don't play. Plus the headline this prototype
+    exists to prove: pause → EDIT MODE → add / move / delete notes directly
+    in the falling view, snapped to a prominent subdivision grid. Catch a
+    misaligned note while previewing, fix it in place, resume — no tab
+    switch. The see-it→fix-it loop, closed.
+
+  REUSE (this is the point)
+    · PURE LOGIC CORE — VERBATIM the MIDI editor's core
+      (prototypes/midi-editor-web/parakit-midi-editor.html, between the
+      CORE-BEGIN and CORE-END markers): ChartModel + edit ops + undo,
+      bucketed TimeIndex, snapTime, Selection, demo-chart generator,
+      parakit-chart-v1 serialization. `shared-core-test.mjs` BYTE-COMPARES
+      the two blocks — if they ever diverge, the test fails. One core,
+      three renderers (Practice · piano-roll · falling view). The falling
+      edit mode is the piano-roll edit model rotated 90°:
+        piano-roll x = time, y = lane   ⇄   falling view y = time, x = lane
+      Same snapTime, same ChartModel ops, same undo — only the view
+      transform differs.
+    · FALLING-NOTE ENGINE — from the Practice Web Edition: column layout,
+      y = hitY − (t−now)/fall · (hitY−padTop), receptor ring + hit-line
+      anchor, gradient/glow note styling, AudioContext master clock.
+    · AUDIO — the MIDI editor's synth + lookahead scheduler, extended with
+      review-speed scaling (0.5×–1.25×).
+
+  DATA CONTRACT (identical to the MIDI editor / Practice)
+    Note { id, time (s), lane 0–7, vel 1–127, flag } · lanes 0 Hi-Hat ·
+    1 Crash · 2 Snare · 3 Tom 1 · 4 Tom 2 · 5 Tom 3 · 6 Ride · 7 Kick.
+    Export/Import { format:"parakit-chart-v1", bpm, notes:[[t,lane,vel?],…] }
+    — round-trips with the MIDI editor and the Practice Web Edition.
+
+  EDIT MODE UX
+    · ✎ Edit (or E) pauses and enters edit mode; Play resumes and exits.
+    · The subdivision grid (same beat math as the MIDI editor, current res
+      1/4–1/32) brightens into a precise horizontal ruler the notes cross;
+      the hit line is the "now" anchor; bar numbers in the left gutter.
+    · Click an empty spot in a lane = place a note at the snapped time.
+    · Drag a note: vertical = move in time (snapped, with the MIDI editor's
+      note-snap + yellow guide), horizontal = reclassify lane. One gesture.
+    · Right-click = delete; hold and sweep = eraser.
+    · Wheel = scrub time · Ctrl+wheel = stretch/squeeze fall window (zoom).
+    · 1–8 = place note at the hit line (v4 hotkey lane layout) — works
+      during playback too, for tap-along charting.
+    · Ctrl+Z / Ctrl+Y undo/redo (shared ChartModel history).
+
+  PROTOTYPED vs DEFERRED — see README.md in this folder.
+═══════════════════════════════════════════════════════════════════════════
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>ParaKit Preview Track — Web Prototype</title>
+<style>
+:root{
+  --bg:#0D0D1A; --bg-2:#10101f; --panel:#14142a; --panel-2:#1b1b35;
+  --line:rgba(196,181,253,.16); --line-soft:rgba(196,181,253,.09);
+  --purple:#7C3AED; --purple-2:#9F67FF; --lav:#C4B5FD; --pink:#FF69B4;
+  --text:#EFECFF; --muted:#9A95C0; --dim:#6f6a94;
+  --ok:#00ff88; --warn:#ffb347; --err:#e94560; --cyan:#00e5ff;
+  --radius:12px; --radius-s:8px;
+  --glow:0 0 22px rgba(124,58,237,.35);
+  --font:'Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif;
+  --mono:ui-monospace,'Cascadia Mono','Consolas','SF Mono',Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--text); font-family:var(--font);
+  font-size:14px; line-height:1.45; overflow:hidden;
+  -webkit-font-smoothing:antialiased; user-select:none;
+}
+body::before{
+  content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(1100px 480px at 50% -10%, rgba(124,58,237,.20), transparent 62%),
+    radial-gradient(900px 420px at 110% 115%, rgba(0,229,255,.05), transparent 55%);
+}
+#app{position:relative; z-index:1; height:100%; display:flex; flex-direction:column; padding:10px 12px 8px; gap:8px}
+
+header{display:flex; align-items:baseline; gap:12px; flex:none}
+header h1{font-size:16px; font-weight:700; letter-spacing:.02em}
+header h1 .accent{color:var(--purple-2)}
+header .tagline{color:var(--dim); font-size:12px}
+header .stats{margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--muted); display:flex; gap:14px}
+header .stats b{color:var(--lav); font-weight:600}
+#fps.good{color:var(--ok)} #fps.bad{color:var(--err)}
+
+#toolbar{
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex:none;
+  background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+  padding:7px 10px;
+}
+.tb-group{display:flex; align-items:center; gap:4px}
+.tb-sep{width:1px; height:22px; background:var(--line); margin:0 5px; flex:none}
+button{
+  font:inherit; font-size:12.5px; color:var(--text); cursor:pointer;
+  background:var(--panel-2); border:1px solid var(--line); border-radius:var(--radius-s);
+  padding:5px 10px; transition:background .12s,border-color .12s,transform .05s;
+  white-space:nowrap;
+}
+button:hover{background:#232347; border-color:rgba(196,181,253,.34)}
+button:active{transform:translateY(1px)}
+button.primary{background:linear-gradient(180deg,#8B4DF7,#6D2BD9); border-color:#9F67FF; font-weight:600; box-shadow:var(--glow)}
+button.primary:hover{background:linear-gradient(180deg,#9A5FFF,#7B39E8)}
+button.toggled{background:#2c1f55; border-color:var(--purple-2); color:var(--lav)}
+button.edit-on{background:linear-gradient(180deg,#1f8a5f,#0e6b45); border-color:var(--ok); color:#eafff4; font-weight:600; box-shadow:0 0 18px rgba(0,255,136,.25)}
+button .kbd{color:var(--dim); font-family:var(--mono); font-size:10px; margin-left:4px}
+.seg{display:flex; border:1px solid var(--line); border-radius:var(--radius-s); overflow:hidden}
+.seg button{border:none; border-radius:0; padding:5px 9px; background:var(--panel-2)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:#2c1f55; color:var(--lav); font-weight:600}
+#timeRead{font-family:var(--mono); font-size:13px; color:var(--cyan); min-width:96px; text-align:center}
+#bpmRead{font-family:var(--mono); font-size:12px; color:var(--warn)}
+.tb-label{font-size:11px; color:var(--dim); margin:0 2px 0 4px}
+select{
+  font:inherit; font-size:12.5px; color:var(--text); background:var(--panel-2);
+  border:1px solid var(--line); border-radius:var(--radius-s); padding:4px 6px; cursor:pointer;
+}
+
+#stage{flex:1; min-height:0; position:relative; background:var(--bg-2);
+  border:1px solid var(--line); border-radius:var(--radius); overflow:hidden}
+#stage.editing{border-color:rgba(0,255,136,.45); box-shadow:inset 0 0 60px rgba(0,255,136,.05)}
+#stage canvas{position:absolute; inset:0; width:100%; height:100%}
+#mainCanvas{z-index:1} #overlayCanvas{z-index:2}
+#editBadge{
+  position:absolute; top:10px; right:12px; z-index:3; display:none;
+  font:700 11px var(--mono); letter-spacing:.12em; color:#0D0D1A;
+  background:var(--ok); border-radius:6px; padding:4px 10px;
+  box-shadow:0 0 16px rgba(0,255,136,.4);
+}
+#stage.editing #editBadge{display:block}
+
+#seekRow{flex:none; display:flex; align-items:center; gap:10px}
+#seekBar{flex:1; height:18px; position:relative; cursor:pointer;
+  background:var(--panel); border:1px solid var(--line); border-radius:9px; overflow:hidden}
+#seekFill{position:absolute; inset:0; width:0%; background:linear-gradient(90deg,rgba(124,58,237,.55),rgba(159,103,255,.75)); pointer-events:none}
+#seekHandle{position:absolute; top:0; bottom:0; width:2px; background:#fff; pointer-events:none; box-shadow:0 0 8px rgba(255,255,255,.8)}
+#seekRow .t{font-family:var(--mono); font-size:11px; color:var(--dim); flex:none}
+
+#statusBar{flex:none; display:flex; gap:16px; align-items:center;
+  font-size:12px; color:var(--muted); padding:2px 4px; min-height:20px}
+#noteInfo{color:var(--cyan); font-family:var(--mono); font-size:11.5px}
+#statusHint{color:var(--dim)}
+#statusBar .spacer{flex:1}
+
+#helpPop{
+  position:absolute; right:14px; top:96px; z-index:50; width:430px; max-height:70vh; overflow:auto;
+  background:var(--panel); border:1px solid var(--purple); border-radius:var(--radius);
+  box-shadow:0 18px 60px rgba(0,0,0,.6), var(--glow); padding:16px 18px; display:none;
+}
+#helpPop.open{display:block}
+#helpPop h2{font-size:13px; color:var(--lav); margin-bottom:8px}
+#helpPop table{width:100%; border-collapse:collapse; font-size:12px}
+#helpPop td{padding:3px 6px 3px 0; vertical-align:top; color:var(--muted)}
+#helpPop td:first-child{font-family:var(--mono); color:var(--text); white-space:nowrap; font-size:11px}
+#helpPop .sect{margin-top:10px}
+.popover{position:absolute; z-index:60; background:var(--panel); border:1px solid var(--purple); border-radius:var(--radius); box-shadow:0 18px 60px rgba(0,0,0,.6), var(--glow); padding:14px 16px; display:none; font-size:12px; max-width:430px}
+.popover.open{display:block}
+.popover h3{font-size:12px; color:var(--lav); margin-bottom:8px}
+.popover .row{display:flex; align-items:center; gap:8px; margin:5px 0}
+.popover label{color:var(--muted); font-size:12px; display:flex; gap:6px; align-items:center; cursor:pointer}
+.popover input[type=range]{width:130px}
+.popover .val{font-family:var(--mono);font-size:11px;color:var(--lav);min-width:48px}
+#btnRecord.rec{background:linear-gradient(180deg,#c0392b,#922b21);border-color:#ff6b5e;color:#fff;font-weight:700;box-shadow:0 0 16px rgba(255,80,80,.5)}
+#toast{
+  position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(20px);
+  background:var(--panel-2); border:1px solid var(--purple-2); color:var(--text);
+  border-radius:var(--radius-s); padding:8px 16px; font-size:13px; opacity:0;
+  transition:opacity .18s, transform .18s; pointer-events:none; z-index:99; box-shadow:var(--glow);
+}
+#toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>ParaKit <span class="accent">Preview Track</span></h1>
+    <span class="tagline">web prototype · falling-note review + live edit · shared core with the MIDI editor</span>
+    <div class="stats">
+      <span>fps <b id="fps">—</b></span>
+      <span>drawn <b id="drawnCount">0</b></span>
+      <span>notes <b id="noteCount">0</b></span>
+    </div>
+  </header>
+
+  <div id="toolbar">
+    <div class="tb-group">
+      <button id="btnPlay" class="primary">▶ Play<span class="kbd">Space</span></button>
+      <button id="btnStop">⏹<span class="kbd">Home</span></button>
+      <button id="btnEdit">✎ Edit<span class="kbd">E</span></button>
+      <span id="timeRead">00:00.000</span>
+      <span id="bpmRead">184 BPM</span>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <span class="tb-label">Speed</span>
+      <div class="seg" id="speedSeg">
+        <button data-spd="0.5">0.5×</button><button data-spd="0.75">0.75×</button>
+        <button data-spd="1" class="on">1×</button><button data-spd="1.25">1.25×</button>
+      </div>
+      <span class="tb-label">Fall</span>
+      <button id="btnFallMinus">−</button>
+      <button id="btnFallPlus">+</button>
+      <span id="fallRead" style="font-family:var(--mono);font-size:11px;color:var(--muted)">3.0s</span>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <span class="tb-label">Grid</span>
+      <div class="seg" id="gridSeg">
+        <button data-res="1">1/4</button><button data-res="2">1/8</button>
+        <button data-res="4" class="on">1/16</button><button data-res="8">1/32</button>
+      </div>
+      <button id="btnSnap" class="toggled">Snap<span class="kbd">G</span></button>
+      <button id="btnUndo">↩<span class="kbd">^Z</span></button>
+      <button id="btnRedo">↪<span class="kbd">^Y</span></button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <span class="tb-label">Demo</span>
+      <select id="densitySel">
+        <option value="light">Light (~1.2k notes)</option>
+        <option value="dense" selected>Dense (~4.2k notes)</option>
+        <option value="insane">Insane (~9.7k notes)</option>
+      </select>
+      <button id="btnExport">⇩ Export</button>
+      <button id="btnImport">⇧ Import</button>
+      <input type="file" id="importFile" accept=".json" style="display:none">
+      <button id="btnHelp">?</button>
+    </div>
+  </div>
+
+
+  <div id="toolbar">
+    <div class="tb-group">
+      <span class="tb-label">Audio</span>
+      <button id="btnMix">🎵 Mix</button>
+      <button id="btnDrums">🥁 Drums</button>
+      <input type="file" id="mixFile" accept="audio/*" style="display:none">
+      <input type="file" id="drumsFile" accept="audio/*" style="display:none">
+      <div class="seg" id="srcSeg">
+        <button data-src="stems">Stems</button><button data-src="synth" class="on">Synth</button><button data-src="both">Both</button>
+      </div>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <button id="btnRecord" title="Record live hits (keyboard 1-8 + MIDI) while the chart plays">● Record</button>
+      <button id="btnCountIn" class="toggled" title="1-bar count-in before recording">Count-in</button>
+      <button id="btnMetro" title="Metronome click during play/record">Metro</button>
+      <select id="midiDevSel" title="MIDI input device"><option value="">MIDI: none</option></select>
+      <button id="btnPads">🥁 Pads</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <button id="btnReceive" title="Load the chart staged by the MIDI editor's → Preview button">⇪ Receive</button>
+      <button id="btnSettings">⚙ Settings</button>
+    </div>
+  </div>
+
+  <div id="stage">
+    <canvas id="mainCanvas"></canvas>
+    <canvas id="overlayCanvas"></canvas>
+    <div id="editBadge">EDIT MODE</div>
+  </div>
+
+  <div id="seekRow">
+    <span class="t" id="seekT0">0:00</span>
+    <div id="seekBar"><div id="seekFill"></div><div id="seekHandle"></div></div>
+    <span class="t" id="seekT1">0:00</span>
+  </div>
+
+  <div id="statusBar">
+    <span id="noteInfo"></span>
+    <span id="statusHint">Press ✎ Edit (E) to fix notes in place — click = place · drag = move/reclassify · right-click = delete · wheel = scrub</span>
+    <span class="spacer"></span>
+  </div>
+
+  <div id="helpPop">
+    <h2>Preview</h2>
+    <table>
+      <tr><td>Space</td><td>play / pause (resuming exits edit mode)</td></tr>
+      <tr><td>Home / ⏹</td><td>stop &amp; rewind</td></tr>
+      <tr><td>speed seg</td><td>review speed — audio + fall stay in sync</td></tr>
+      <tr><td>Fall − / +</td><td>fall window (how many seconds are on screen)</td></tr>
+      <tr><td>seek bar</td><td>click / drag to jump anywhere</td></tr>
+      <tr><td>1–8</td><td>place note at the hit line (works during playback — tap-along charting; v4 lane layout)</td></tr>
+    </table>
+    <h2 class="sect">Edit mode (✎ / E — pauses playback)</h2>
+    <table>
+      <tr><td>click empty lane</td><td>place note at the snapped grid time</td></tr>
+      <tr><td>drag note</td><td>vertical = move in time (snapped, yellow guide) · horizontal = reclassify lane</td></tr>
+      <tr><td>right-click</td><td>delete · hold &amp; sweep = eraser</td></tr>
+      <tr><td>wheel</td><td>scrub time · <b>Ctrl+wheel = stretch fall window</b></td></tr>
+      <tr><td>Ctrl+Z / Ctrl+Y</td><td>undo / redo (same history engine as the MIDI editor)</td></tr>
+      <tr><td>G</td><td>toggle snap</td></tr>
+      <tr><td>Esc</td><td>exit edit mode</td></tr>
+    </table>
+    <h2 class="sect">Note visuals</h2>
+    <table>
+      <tr><td>hollow</td><td>ghost note (vel &lt; 40)</td></tr>
+      <tr><td>hot-pink ring</td><td>accent (vel ≥ 115)</td></tr>
+      <tr><td>orange ring</td><td>troubleshooter flag</td></tr>
+      <tr><td>white flash at hit line</td><td>note crossing "now" — the timing check</td></tr>
+    </table>
+  </div>
+
+  <div class="popover" id="popSettings" style="right:14px; top:130px">
+    <h3>⚙ Preview settings <span style="color:var(--dim)">(v4 Preview/Practice visuals)</span></h3>
+    <div class="row" id="laneVisRow" style="flex-wrap:wrap"></div>
+    <div class="row"><label><input type="checkbox" id="pSquares"> Square notes</label>
+      <label><input type="checkbox" id="pKickLine"> Kick as full-width line</label></div>
+    <div class="row"><label><input type="checkbox" id="pBeatGrid" checked> Beat grid during play</label></div>
+    <div class="row"><span class="tb-label">Note size</span>
+      <input type="range" id="pNoteSize" min="50" max="160" value="100"><span class="val" id="pNoteSizeV">1.0×</span></div>
+    <div class="row"><span class="tb-label">Audio offset</span>
+      <input type="range" id="pAudioOff" min="-200" max="200" value="0"><span class="val" id="pAudioOffV">0 ms</span>
+      <span style="color:var(--dim)">(stems vs chart)</span></div>
+    <div class="row"><span class="tb-label">Loop</span>
+      <button id="pLoopA">Set A</button><button id="pLoopB">Set B</button>
+      <button id="pLoopClear">Clear</button><span class="val" id="pLoopV">off</span></div>
+  </div>
+  <div class="popover" id="popPads" style="right:14px; top:130px">
+    <h3>🥁 MIDI pads <span style="color:var(--dim)">(hit a pad — lane lights; Remap captures next hit)</span></h3>
+    <div id="padRows"></div>
+    <div class="row"><button id="padClear">Reset overrides</button><span id="padStatus" class="val"></span></div>
+  </div>
+
+  <div id="toast"></div>
+</div>
+<script>
+"use strict";
+/* ══════════════════════════════════════════════════════════════════════
+   PART 1 — CONFIG
+   Keys the SHARED CORE depends on (LANES, BUCKET_S, UNDO_DEPTH, GHOST/
+   ACCENT, HOTKEY_LANES) are identical to the MIDI editor's CONFIG. The
+   rest is falling-view + audio tuning.
+   ══════════════════════════════════════════════════════════════════════ */
+const CONFIG = {
+  LANES: [
+    { name:"Hi-Hat", midi:[42,44,46], color:"#00e5ff", shape:"circle" },
+    { name:"Crash",  midi:[49,55,57], color:"#ff8c00", shape:"circle" },
+    { name:"Snare",  midi:[37,38,40], color:"#e63946", shape:"bar"    },
+    { name:"Tom 1",  midi:[48,50],    color:"#3a5fc8", shape:"bar"    },
+    { name:"Tom 2",  midi:[45,47],    color:"#2e8b57", shape:"bar"    },
+    { name:"Tom 3",  midi:[41,43],    color:"#9b4fc0", shape:"bar"    },
+    { name:"Ride",   midi:[51,53,59], color:"#ffd700", shape:"circle" },
+    { name:"Kick",   midi:[35,36],    color:"#ff69b4", shape:"kick"   },
+  ],
+  HOTKEY_LANES: { "1":7, "2":2, "3":0, "4":1, "5":6, "6":3, "7":4, "8":5 },
+  GHOST_VEL: 40,
+  ACCENT_VEL: 115,
+  BUCKET_S: 0.25,
+  UNDO_DEPTH: 100,
+
+  // Falling view
+  HIT_LINE_FRAC: 0.78,      // y of the "now" anchor (fraction of stage height)
+  PAD_TOP: 8,
+  FALL_DEFAULT: 3.0,        // seconds of chart visible above the hit line
+  FALL_MIN: 1.0, FALL_MAX: 8.0,
+  TAIL_FRAC: 0.22,          // seconds shown below the hit line = fall × this
+  CROSS_FLASH_S: 0.050,     // white flash as a note crosses the hit line
+  EDIT_HIT_TOL_FRAC: 0.035, // hit-test tolerance = fall × this (≈105 ms at 3 s)
+
+  // Audio (same voices as the MIDI editor)
+  VOICES: [
+    { kind:"hat",   freq:8000, dur:0.05 },
+    { kind:"cymbal",freq:5200, dur:0.85 },
+    { kind:"snare", freq:190,  dur:0.16 },
+    { kind:"tom",   freq:196,  dur:0.22 },
+    { kind:"tom",   freq:147,  dur:0.26 },
+    { kind:"tom",   freq:110,  dur:0.30 },
+    { kind:"ride",  freq:6400, dur:0.45 },
+    { kind:"kick",  freq:118,  dur:0.13 },
+  ],
+  SCHED_LOOKAHEAD_S: 0.12, SCHED_INTERVAL_MS: 25,
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   PART 2 — PURE LOGIC CORE  (SHARED — verbatim from the MIDI editor)
+   Source of truth: prototypes/midi-editor-web/parakit-midi-editor.html.
+   shared-core-test.mjs byte-compares the two CORE blocks; edit it THERE,
+   then mirror here. Zero DOM / Web-API.
+   ══════════════════════════════════════════════════════════════════════ */
+/* CORE-BEGIN */
+
+let _noteIdSeq = 1;
+
+/** A chart note. `flag` ∈ "" | "dt_review" | "misclass" | "drift" | … */
+function makeNote(time, lane, vel = 100, flag = "") {
+  return { id: _noteIdSeq++, time, lane, vel, flag };
+}
+
+/* ── Bucketed time index ────────────────────────────────────────────────
+   The core de-risk structure: visible-note iteration and hit-testing walk
+   O(buckets-in-window) instead of O(N). Mirrors the skill's §D rect-index
+   (sorted bucket array keyed on time slice).                            */
+class TimeIndex {
+  constructor(bucketS = CORE_BUCKET_S_DEFAULT) {
+    this.bucketS = bucketS;
+    this.buckets = new Map();   // bucketIdx -> array of notes
+  }
+  rebuild(notes) {
+    this.buckets.clear();
+    for (const n of notes) {
+      const b = Math.floor(n.time / this.bucketS);
+      let arr = this.buckets.get(b);
+      if (!arr) { arr = []; this.buckets.set(b, arr); }
+      arr.push(n);
+    }
+  }
+  /** Iterate notes with time ∈ [t0, t1]; callback(note). */
+  forRange(t0, t1, cb) {
+    const b0 = Math.floor(Math.max(0, t0) / this.bucketS);
+    const b1 = Math.floor(Math.max(0, t1) / this.bucketS);
+    for (let b = b0; b <= b1; b++) {
+      const arr = this.buckets.get(b);
+      if (!arr) continue;
+      for (const n of arr) if (n.time >= t0 && n.time <= t1) cb(n);
+    }
+  }
+  /** Nearest note in `lane` within tolS of time t, or null. */
+  noteAt(t, lane, tolS) {
+    let best = null, bestD = tolS;
+    this.forRange(t - tolS, t + tolS, n => {
+      if (n.lane !== lane) return;
+      const d = Math.abs(n.time - t);
+      if (d <= bestD) { bestD = d; best = n; }
+    });
+    return best;
+  }
+  /** Nearest note time within tolS of t (any lane), excluding ids in skip. */
+  nearestTime(t, tolS, skip) {
+    let best = null, bestD = tolS;
+    this.forRange(t - tolS, t + tolS, n => {
+      if (skip && skip.has(n.id)) return;
+      const d = Math.abs(n.time - t);
+      if (d < bestD) { bestD = d; best = n.time; }
+    });
+    return best;
+  }
+}
+
+/* ── Chart model + edit ops ──────────────────────────────────────────── */
+class ChartModel {
+  constructor(bpm = 120) {
+    this.notes = [];            // flat array, kept time-sorted after edits
+    this.markers = [];          // { time, label }
+    this.bpm = bpm;
+    this.duration = 0;          // seconds (last note + tail)
+    this.index = new TimeIndex();
+    this._indexDirty = true;
+    this.undoStack = [];
+    this.redoStack = [];
+  }
+
+  /* — index maintenance — */
+  touch() { this._indexDirty = true; }
+  getIndex() {
+    if (this._indexDirty) { this.index.rebuild(this.notes); this._indexDirty = false; }
+    return this.index;
+  }
+  sortNotes() { this.notes.sort((a, b) => a.time - b.time); this.touch(); }
+  recalcDuration() {
+    let max = 0;
+    for (const n of this.notes) if (n.time > max) max = n.time;
+    this.duration = Math.max(this.duration, max + 2.0);
+  }
+
+  /* — undo/redo: snapshot-based, like v4, but selection-safe (ids) — */
+  snapshot() {
+    return {
+      notes: this.notes.map(n => ({ ...n })),
+      markers: this.markers.map(m => ({ ...m })),
+      duration: this.duration,
+    };
+  }
+  restore(s) {
+    this.notes = s.notes.map(n => ({ ...n }));
+    this.markers = s.markers.map(m => ({ ...m }));
+    this.duration = s.duration;
+    this.touch();
+  }
+  pushUndo() {
+    this.undoStack.push(this.snapshot());
+    if (this.undoStack.length > CORE_UNDO_DEPTH) this.undoStack.shift();
+    this.redoStack.length = 0;
+  }
+  undo() {
+    if (!this.undoStack.length) return false;
+    this.redoStack.push(this.snapshot());
+    this.restore(this.undoStack.pop());
+    return true;
+  }
+  redo() {
+    if (!this.redoStack.length) return false;
+    this.undoStack.push(this.snapshot());
+    this.restore(this.redoStack.pop());
+    return true;
+  }
+
+  /* — edit ops (each caller decides when to pushUndo) — */
+  addNote(time, lane, vel = 100) {
+    const n = makeNote(Math.max(0, time), lane, vel);
+    this.notes.push(n);
+    this.sortNotes();
+    this.duration = Math.max(this.duration, n.time + 0.5);
+    return n;
+  }
+  byId(id) { return this.notes.find(n => n.id === id) || null; }
+  deleteByIds(ids) {
+    const before = this.notes.length;
+    this.notes = this.notes.filter(n => !ids.has(n.id));
+    this.touch();
+    return before - this.notes.length;
+  }
+  /** Move notes by dt seconds and dLane lanes (clamped). */
+  moveByIds(ids, dt, dLane = 0) {
+    for (const n of this.notes) {
+      if (!ids.has(n.id)) continue;
+      n.time = Math.max(0, n.time + dt);
+      if (dLane) n.lane = Math.min(CORE_LANE_COUNT - 1, Math.max(0, n.lane + dLane));
+    }
+    this.touch();
+  }
+  reclassifyByIds(ids, lane) {
+    for (const n of this.notes) if (ids.has(n.id)) n.lane = lane;
+    this.touch();
+  }
+  setVelocityByIds(ids, vel) {
+    vel = Math.min(127, Math.max(1, Math.round(vel)));
+    for (const n of this.notes) if (ids.has(n.id)) n.vel = vel;
+  }
+  clearFlag(id) { const n = this.byId(id); if (n) n.flag = ""; }
+  flaggedNotes() { return this.notes.filter(n => n.flag); }
+
+  /** Quantize notes (by id set, or all when ids null) to grid subdivision.
+      subsPerBeat: 1=1/4, 2=1/8, 4=1/16, 8=1/32 — obeys current grid res. */
+  quantize(ids, subsPerBeat) {
+    if (this.bpm <= 0) return 0;
+    const sub = 60.0 / this.bpm / subsPerBeat;
+    let count = 0;
+    for (const n of this.notes) {
+      if (ids && !ids.has(n.id)) continue;
+      n.time = Math.round(n.time / sub) * sub;
+      count++;
+    }
+    this.sortNotes();
+    return count;
+  }
+
+  /* — clipboard (pure: returns/accepts plain data) — */
+  copyByIds(ids) {
+    const sel = this.notes.filter(n => ids.has(n.id));
+    if (!sel.length) return null;
+    const base = Math.min(...sel.map(n => n.time));
+    return sel.map(n => ({ time: n.time - base, lane: n.lane, vel: n.vel }));
+  }
+  pasteAt(clip, t) {
+    const added = [];
+    for (const c of clip) added.push(this.addNote(t + c.time, c.lane, c.vel));
+    return added;
+  }
+
+  /* — serialization (round-trip contract) — */
+  toJSON() {
+    return {
+      format: "parakit-chart-v1",
+      bpm: this.bpm,
+      notes: this.notes.map(n => [ +n.time.toFixed(6), n.lane,
+                                   n.vel === 100 ? undefined : n.vel ]
+                            .filter(v => v !== undefined)),
+    };
+  }
+  static fromJSON(obj) {
+    const m = new ChartModel(Number(obj.bpm) || 120);
+    if (Array.isArray(obj.notes)) {
+      for (const item of obj.notes) {
+        if (!Array.isArray(item) || item.length < 2) continue;
+        const t = Number(item[0]), lane = Math.trunc(Number(item[1]));
+        const vel = item.length >= 3 ? Math.trunc(Number(item[2])) : 100;
+        if (Number.isFinite(t) && lane >= 0 && lane < CORE_LANE_COUNT)
+          m.notes.push(makeNote(t, lane, Math.min(127, Math.max(1, vel))));
+      }
+    }
+    m.sortNotes();
+    m.recalcDuration();
+    return m;
+  }
+}
+
+/* ── Snap engine ────────────────────────────────────────────────────────
+   Grid snap at the active resolution + optional nearest-note snap (used
+   while dragging — skips the dragged selection). Returns the snapped time
+   plus guide info so the renderer can draw the yellow guide like v4.   */
+function snapTime(model, t, opts) {
+  // opts: { snapOn, subsPerBeat, noteSnapTolS?, skipIds? }
+  const out = { t: Math.max(0, t), snapped: false, guideT: null };
+  if (!opts.snapOn) return out;
+  if (opts.noteSnapTolS) {
+    const nt = model.getIndex().nearestTime(t, opts.noteSnapTolS, opts.skipIds);
+    if (nt !== null) { out.t = nt; out.snapped = true; out.guideT = nt; return out; }
+  }
+  if (model.bpm > 0) {
+    const sub = 60.0 / model.bpm / opts.subsPerBeat;
+    out.t = Math.max(0, Math.round(t / sub) * sub);
+    out.snapped = true;
+  }
+  return out;
+}
+
+/* ── Selection model — id-based, immune to delete/sort reindexing ───── */
+class Selection {
+  constructor() { this.ids = new Set(); }
+  clear()        { this.ids.clear(); }
+  has(id)        { return this.ids.has(id); }
+  toggle(id)     { this.ids.has(id) ? this.ids.delete(id) : this.ids.add(id); }
+  add(id)        { this.ids.add(id); }
+  get size()     { return this.ids.size; }
+  /** Replace with all notes inside a time/lane rectangle. */
+  setFromRect(model, t0, t1, lane0, lane1, additive = false) {
+    if (!additive) this.ids.clear();
+    model.getIndex().forRange(Math.min(t0, t1), Math.max(t0, t1), n => {
+      if (n.lane >= Math.min(lane0, lane1) && n.lane <= Math.max(lane0, lane1))
+        this.ids.add(n.id);
+    });
+  }
+  /** Drop ids that no longer exist (after undo/redo/delete). */
+  prune(model) {
+    const live = new Set(model.notes.map(n => n.id));
+    for (const id of [...this.ids]) if (!live.has(id)) this.ids.delete(id);
+  }
+}
+
+/* ── Demo chart generator (pure, seeded — deterministic) ──────────────
+   Generates a dense metal chart: 16th hi-hats, syncopated double kick,
+   blast sections, crash accents, tom fills every 4 bars, snare ghosts,
+   and a sprinkle of troubleshooter flags. Density presets scale length. */
+function makeRng(seed) {
+  let s = seed >>> 0;
+  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+function generateDemoChart(density = "dense") {
+  const bpm = 184;
+  const bars = { light: 56, dense: 200, insane: 460 }[density] || 200;
+  return _generateDemoChart(bpm, bars, makeRng(0x9a7a11));
+}
+function _generateDemoChart(bpm, bars, rng) {
+  const m = new ChartModel(bpm);
+  const beat = 60 / bpm, bar = 4 * beat, s16 = beat / 4;
+  const HH=0, CR=1, SN=2, T1=3, T2=4, T3=5, RD=6, KK=7;
+  const push = (t, lane, vel, flag="") => m.notes.push(makeNote(t, lane, vel, flag));
+
+  for (let b = 0; b < bars; b++) {
+    const t0 = b * bar;
+    const section = Math.floor(b / 16) % 4;     // 0 verse · 1 chorus · 2 blast · 3 groove
+    const isFill = (b % 4 === 3);
+
+    if (isFill && section !== 2) {
+      // descending 16th tom fill, last beat snare build first
+      for (let i = 0; i < 12; i++)
+        push(t0 + i * s16, SN, i % 4 === 0 ? 112 : (rng() < .3 ? 34 : 88));
+      for (let i = 12; i < 16; i++)
+        push(t0 + i * s16, [T1, T2, T3, T3][i - 12], 105);
+      push(t0, KK, 118); push(t0 + 2 * beat, KK, 110);
+      continue;
+    }
+    switch (section) {
+      case 0: // verse — 16th hats, back-beat snare, syncopated kick
+        for (let i = 0; i < 16; i++)
+          push(t0 + i * s16, HH, i % 4 === 0 ? 96 : 64);
+        push(t0 + beat, SN, 102); push(t0 + 3 * beat, SN, 102);
+        if (rng() < .5) push(t0 + 2.5 * beat, SN, 30);          // ghost
+        push(t0, KK, 116);
+        push(t0 + .75 * beat, KK, 100); push(t0 + 2 * beat, KK, 112);
+        if (rng() < .6) push(t0 + 3.5 * beat, KK, 98);
+        break;
+      case 1: // chorus — crash on 1, ride 8ths, double-kick 16ths
+        push(t0, CR, 120);
+        for (let i = 0; i < 8; i++) push(t0 + i * beat / 2, RD, i % 2 === 0 ? 98 : 72);
+        push(t0 + beat, SN, 108); push(t0 + 3 * beat, SN, 108);
+        for (let i = 0; i < 16; i++) push(t0 + i * s16, KK, i % 4 === 0 ? 112 : 92);
+        break;
+      case 2: // blast — alternating 16th snare/kick, hat 8ths, crash hits
+        for (let i = 0; i < 16; i++)
+          push(t0 + i * s16, i % 2 === 0 ? SN : KK, i % 8 === 0 ? 118 : 96);
+        for (let i = 0; i < 8; i++) push(t0 + i * beat / 2, HH, 60);
+        if (b % 2 === 0) push(t0, CR, 122);
+        break;
+      default: // groove — half-time, tom accents
+        for (let i = 0; i < 8; i++) push(t0 + i * beat / 2, HH, i % 2 === 0 ? 92 : 58);
+        push(t0 + 2 * beat, SN, 110);
+        push(t0, KK, 118); push(t0 + 1.25 * beat, KK, 96); push(t0 + 2.75 * beat, KK, 96);
+        if (rng() < .4) push(t0 + 3.5 * beat, T2, 86);
+        if (rng() < .25) push(t0 + 3.75 * beat, T3, 90);
+    }
+  }
+  // sprinkle troubleshooter flags on ~0.4% of notes (deterministic)
+  for (let i = 0; i < m.notes.length; i++)
+    if (rng() < 0.004) m.notes[i].flag = "dt_review";
+  // a few section markers
+  for (let b = 0; b < bars; b += 16)
+    m.markers.push({ time: b * bar, label: ["Verse","Chorus","Blast","Groove"][(b/16)%4] });
+  m.sortNotes();
+  m.recalcDuration();
+  return m;
+}
+
+
+/* ── Core constants (CONFIG-independent — port-cleanliness) ──────────── */
+const CORE_LANE_COUNT = 8;
+const CORE_BUCKET_S_DEFAULT = 0.25;
+const CORE_UNDO_DEPTH = 100;
+// Lane → MIDI note written on export (v4 MIDI_EDITOR_LANES midi[0]).
+const CORE_LANE_MIDI = [42, 49, 38, 48, 45, 41, 51, 36];
+const CORE_LANE_NAMES = ["Hi-Hat","Crash","Snare","Tom 1","Tom 2","Tom 3","Ride","Kick"];
+
+/* ── Shared import tables (GM MIDI + Paradiddle .rlrr) ───────────────────
+   From the Practice Web Edition (incl. its open-hi-hat + floor-tom fixes);
+   MIDI 41 (low floor tom) added to Tom 3 for .mid import (declared delta). */
+const CORE_MIDI_IN = {
+  "Hi-Hat":      [42,22,23,44],
+  "Open Hi-Hat": [46,26,21],
+  "Crash":       [49,52,55,57],
+  "Snare":       [38,40,37],
+  "Tom 1":       [48,50],
+  "Tom 2":       [45,47],
+  "Tom 3":       [43,58,41],
+  "Ride":        [51,53,59],
+  "Kick":        [36,35],
+};
+const CORE_LANE_BY_NAME = { "Hi-Hat":0,"Open Hi-Hat":0,"Crash":1,"Snare":2,
+  "Tom 1":3,"Tom 2":4,"Tom 3":5,"Ride":6,"Kick":7 };
+const CORE_CLASS_TO_LANE = {
+  "BP_HiHat_C":0, "BP_Crash15_C":1, "BP_Crash17_C":1, "BP_Snare_C":2,
+  "BP_Tom1_C":3, "BP_Tom2_C":4, "BP_FloorTom_C":5, "BP_Ride17_C":6,
+  "BP_Ride20_C":6, "BP_Kick_C":7,
+};
+function buildMidiNoteToLane() {
+  const map = new Map();
+  for (const [laneName, notes] of Object.entries(CORE_MIDI_IN)) {
+    const idx = CORE_LANE_BY_NAME[laneName];
+    if (idx === undefined) continue;
+    for (const n of notes) if (!map.has(n)) map.set(n, idx);
+  }
+  return map;
+}
+const MIDI_NOTE_TO_LANE = buildMidiNoteToLane();
+
+/* ── SMF (.mid) parser — Practice Web Edition's, honoring the full tempo
+   map (never assumes 120 BPM). Returns { notes:[[t,lane,vel]…], bpm,
+   tempoMapSecs:[[timeSecs,bpm]…] }. Pure: bytes in, tuples out.         */
+function parseMidi(arrayBuffer) {
+  const dv = new DataView(arrayBuffer);
+  let p = 0;
+  const u32 = () => { const v = dv.getUint32(p); p += 4; return v; };
+  const u16 = () => { const v = dv.getUint16(p); p += 2; return v; };
+  const u8  = () => dv.getUint8(p++);
+  const str = (n) => { let s=""; for (let i=0;i<n;i++) s+=String.fromCharCode(u8()); return s; };
+  const vlq = () => { let v=0,b; do { b=u8(); v=(v<<7)|(b&0x7f); } while (b&0x80); return v; };
+
+  if (str(4) !== "MThd") throw new Error("Not a MIDI file (missing MThd).");
+  u32(); u16();
+  const nTracks = u16();
+  const division = u16();
+  if (division & 0x8000) throw new Error("SMPTE time division is not supported.");
+  const tpb = division || 480;
+
+  const tempoMap = [];
+  const trackStarts = [];
+  for (let t = 0; t < nTracks; t++) {
+    if (str(4) !== "MTrk") throw new Error("Bad track header.");
+    const len = u32();
+    const start = p, end = p + len;
+    trackStarts.push([start, end]);
+    let abs = 0, running = 0;
+    while (p < end) {
+      abs += vlq();
+      let status = dv.getUint8(p);
+      if (status & 0x80) { p++; running = status; } else { status = running; }
+      const hi = status & 0xf0;
+      if (status === 0xff) {
+        const type = u8(); const l = vlq();
+        if (type === 0x51 && l === 3) {
+          const tempo = (u8()<<16)|(u8()<<8)|u8();
+          tempoMap.push([abs, tempo]);
+        } else { p += l; }
+      } else if (status === 0xf0 || status === 0xf7) { p += vlq(); }
+      else if (hi === 0xc0 || hi === 0xd0) { p += 1; }
+      else { p += 2; }
+    }
+    p = end;
+  }
+  if (!tempoMap.length) tempoMap.push([0, 500000]);
+  tempoMap.sort((a,b) => a[0]-b[0]);
+
+  const ticksToSecs = (ticks) => {
+    let secs = 0, prevTick = 0, prevTempo = 500000;
+    for (const [ct, tempo] of tempoMap) {
+      if (ct >= ticks) break;
+      secs += (ct - prevTick) * prevTempo / tpb / 1e6;
+      prevTick = ct; prevTempo = tempo;
+    }
+    secs += (ticks - prevTick) * prevTempo / tpb / 1e6;
+    return secs;
+  };
+
+  const notes = [];
+  for (const [start, end] of trackStarts) {
+    p = start; let abs = 0, running = 0;
+    while (p < end) {
+      abs += vlq();
+      let status = dv.getUint8(p);
+      if (status & 0x80) { p++; running = status; } else { status = running; }
+      const hi = status & 0xf0;
+      if (status === 0xff) { u8(); const l = vlq(); p += l; }
+      else if (status === 0xf0 || status === 0xf7) { p += vlq(); }
+      else if (hi === 0x90) {
+        const note = u8(), vel = u8();
+        if (vel > 0) {
+          const lane = MIDI_NOTE_TO_LANE.get(note);
+          if (lane !== undefined) notes.push([ticksToSecs(abs), lane, vel]);
+        }
+      }
+      else if (hi === 0xc0 || hi === 0xd0) { p += 1; }
+      else { p += 2; }
+    }
+  }
+  notes.sort((a,b) => a[0]-b[0]);
+  const tempoMapSecs = tempoMap.map(([tk, us]) => [ticksToSecs(tk), 6e7 / us]);
+  return { notes, bpm: 6e7 / tempoMap[0][1], tempoMapSecs };
+}
+
+/* ── Paradiddle .rlrr parser (Practice Web Edition's; events[].time is
+   authoritative seconds; class → lane direct = floor-tom fix). Pure.    */
+function parseRlrr(text) {
+  const data = JSON.parse(text.replace(/^﻿/, ""));
+  const events = data.events || [];
+  const instruments = data.instruments || [];
+  let bpm = 120;
+  const be = data.bpmEvents || [];
+  if (be.length && be[0] && be[0].bpm != null) bpm = Number(be[0].bpm) || 120;
+  const notes = [];
+  for (const e of events) {
+    let cls = "";
+    if ("name" in e && e.name != null) {
+      const nv = String(e.name);
+      for (const c of Object.keys(CORE_CLASS_TO_LANE)) if (nv.startsWith(c)) { cls = c; break; }
+    } else {
+      const ii = e.instrumentIndex;
+      if (Number.isInteger(ii) && ii >= 0 && ii < instruments.length) {
+        cls = (instruments[ii] && instruments[ii].class) || "";
+      }
+    }
+    const lane = CORE_CLASS_TO_LANE[cls];
+    if (lane === undefined) continue;
+    const t = Number(e.time);
+    if (!Number.isFinite(t)) continue;
+    const vel = e.vel != null ? Math.trunc(Number(e.vel)) : 80;
+    notes.push([t, lane, Number.isFinite(vel) ? vel : 80]);
+  }
+  notes.sort((a,b) => a[0]-b[0]);
+  return { notes, bpm };
+}
+
+/* ── SMF (.mid) writer — format 0, tpb 480, channel 9, constant bpm.
+   Round-trip contract: parseMidi(writeMidi(m)) reproduces m's notes.    */
+function writeMidi(model) {
+  const tpb = 480, bpm = model.bpm > 0 ? model.bpm : 120;
+  const bytes = [];
+  const w8 = b => bytes.push(b & 0xff);
+  const w16 = v => { w8(v >> 8); w8(v); };
+  const w32 = v => { w8(v >>> 24); w8(v >>> 16); w8(v >>> 8); w8(v); };
+  const wStr = s => { for (const ch of s) w8(ch.charCodeAt(0)); };
+  const vlq = v => { const st = [v & 0x7f]; while (v >>= 7) st.push((v & 0x7f) | 0x80); for (let i = st.length - 1; i >= 0; i--) w8(st[i]); };
+  wStr("MThd"); w32(6); w16(0); w16(1); w16(tpb);
+  // events: tempo, then per-note on(+vel) / off(+1/8 beat)
+  const evs = [];
+  const tick = t => Math.max(0, Math.round(t * bpm / 60 * tpb));
+  for (const n of model.notes) {
+    const midi = CORE_LANE_MIDI[n.lane] != null ? CORE_LANE_MIDI[n.lane] : 38;
+    evs.push([tick(n.time), 0x99, midi, Math.min(127, Math.max(1, n.vel))]);
+    evs.push([tick(n.time) + (tpb >> 3), 0x89, midi, 0]);
+  }
+  evs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const track = [];
+  const t8 = b => track.push(b & 0xff);
+  const tvlq = v => { const st = [v & 0x7f]; while (v >>= 7) st.push((v & 0x7f) | 0x80); for (let i = st.length - 1; i >= 0; i--) t8(st[i]); };
+  // tempo meta at t=0
+  tvlq(0); t8(0xff); t8(0x51); t8(3);
+  const us = Math.round(6e7 / bpm);
+  t8(us >> 16); t8(us >> 8); t8(us);
+  let last = 0;
+  for (const [tk, st, d1, d2] of evs) { tvlq(tk - last); last = tk; t8(st); t8(d1); t8(d2); }
+  tvlq(0); t8(0xff); t8(0x2f); t8(0);
+  wStr("MTrk"); w32(track.length); for (const b of track) w8(b);
+  return new Uint8Array(bytes);
+}
+
+/* ── Tuple-form constructor (what the parsers emit) ──────────────────── */
+function chartFromTuples(tuples, bpm) {
+  const m = new ChartModel(bpm || 120);
+  for (const item of tuples || []) {
+    if (!Array.isArray(item) || item.length < 2) continue;
+    const t = Number(item[0]), lane = Math.trunc(Number(item[1]));
+    const vel = item.length >= 3 ? Math.trunc(Number(item[2])) : 100;
+    if (Number.isFinite(t) && lane >= 0 && lane < CORE_LANE_COUNT)
+      m.notes.push(makeNote(Math.max(0, t), lane, Math.min(127, Math.max(1, vel))));
+  }
+  m.sortNotes();
+  m.recalcDuration();
+  return m;
+}
+
+/* ── Lane families (v4 _me_lane_kind / misclass heuristics) ──────────── */
+function laneKind(lane) {
+  const name = (CORE_LANE_NAMES[lane] || "").toLowerCase();
+  if (name.includes("kick")) return "kick";
+  if (name.includes("snare")) return "snare";
+  if (name.includes("tom")) return "tom";
+  if (name.includes("crash")) return "crash";
+  if (name.includes("ride")) return "ride";
+  if (name.includes("hat")) return "hihat";
+  return "other";
+}
+function isSuspiciousMisclassPair(a, b) {
+  if (a === b) return false;
+  const kinds = new Set([laneKind(a), laneKind(b)]);
+  if (kinds.has("kick")) return false;
+  const cymbals = ["hihat", "crash", "ride"];
+  if ((kinds.has("snare") || kinds.has("tom")) && cymbals.some(k => kinds.has(k))) return false;
+  return true;
+}
+
+/* ── Edit-op tools (v4 parity, all pure; caller decides undo) ────────── */
+
+/** Dedup (v4 _me_dedup): same-lane near-dupes within gapS; optional
+    impossible 3-hit cymbal-cluster removal (Crash>Ride>Hi-Hat priority).
+    Returns Set of removed ids. Caller pushes undo BEFORE if result>0 —
+    so run with dryRun to count, or push undo first and accept no-op. */
+function dedupNotes(model, opts) {
+  const gapS = opts.gapS != null ? opts.gapS : 0.030;
+  const ids = opts.ids || null;
+  const doomed = new Set();
+  const targets = model.notes.filter(n => !ids || ids.has(n.id))
+    .slice().sort((a, b) => a.time - b.time || a.lane - b.lane);
+  const lastByLane = new Map();
+  for (const n of targets) {
+    const last = lastByLane.get(n.lane);
+    if (last !== undefined) {
+      if (gapS === 0 ? (Math.abs(n.time - last) < 5e-5) : (n.time - last <= gapS)) {
+        doomed.add(n.id); continue;
+      }
+    }
+    lastByLane.set(n.lane, n.time);
+  }
+  if (opts.removeClusters) {
+    const winS = opts.clusterWinS != null ? opts.clusterWinS : 0.020;
+    const prio = lane => ({ crash: 3, ride: 2, hihat: 1 }[laneKind(lane)] || 0);
+    const live = model.notes.filter(n => !doomed.has(n.id));
+    for (const n of live) {
+      if (prio(n.lane) === 0 || doomed.has(n.id)) continue;
+      const cluster = live.filter(m => !doomed.has(m.id) && Math.abs(m.time - n.time) <= winS);
+      const cymbals = cluster.filter(m => prio(m.lane) > 0);
+      const drums = cluster.filter(m => ["snare", "tom"].includes(laneKind(m.lane)));
+      if (cymbals.length >= 2 && drums.length >= 1) {
+        cymbals.sort((a, b) => prio(b.lane) - prio(a.lane) || b.vel - a.vel);
+        for (const m of cymbals.slice(1)) doomed.add(m.id);
+      }
+    }
+  }
+  if (!opts.dryRun && doomed.size) model.deleteByIds(doomed);
+  return doomed;
+}
+
+/** Soft quantize (v4): snap only notes within windowS of the grid. */
+function softQuantizeNotes(model, ids, subsPerBeat, windowS) {
+  if (model.bpm <= 0) return 0;
+  const sub = 60 / model.bpm / subsPerBeat;
+  let moved = 0;
+  for (const n of model.notes) {
+    if (ids && !ids.has(n.id)) continue;
+    const near = Math.round(n.time / sub) * sub;
+    if (Math.abs(n.time - near) <= windowS && n.time !== near) { n.time = near; moved++; }
+  }
+  model.sortNotes();
+  return moved;
+}
+
+/** Velocity filter (v4): remove notes with vel < threshold. */
+function velocityFilterNotes(model, ids, threshold) {
+  const doomed = new Set(model.notes
+    .filter(n => (!ids || ids.has(n.id)) && n.vel < threshold).map(n => n.id));
+  if (doomed.size) model.deleteByIds(doomed);
+  return doomed.size;
+}
+
+/** Flam (v4): grace note 30 ms before each target at vel 30. */
+function insertFlams(model, ids) {
+  const targets = model.notes.filter(n => ids.has(n.id) && n.time >= 0.031);
+  for (const n of targets) model.notes.push(makeNote(n.time - 0.030, n.lane, 30, ""));
+  model.sortNotes();
+  model.recalcDuration();
+  return targets.length;
+}
+
+/** Repeat (v4): tile the selection once after its last note (beat-snapped
+    length when close). Returns the new notes' ids. */
+function repeatSelection(model, ids) {
+  const sel = model.notes.filter(n => ids.has(n.id));
+  if (!sel.length) return [];
+  const tMin = Math.min(...sel.map(n => n.time));
+  const tMax = Math.max(...sel.map(n => n.time));
+  let len = tMax - tMin;
+  if (model.bpm > 0) {
+    const beat = 60 / model.bpm;
+    const snapped = Math.round(len / beat) * beat;
+    if (Math.abs(snapped - len) < beat * 0.5 && snapped > 0) len = snapped;
+  }
+  if (len <= 0) return [];
+  const gap = model.bpm > 0 ? 60 / model.bpm / 32 : 0.005;
+  const added = sel.map(n => {
+    const nn = makeNote(n.time - tMin + tMax + gap, n.lane, n.vel, "");
+    model.notes.push(nn);
+    return nn.id;
+  });
+  model.sortNotes();
+  model.recalcDuration();
+  return added;
+}
+
+/** Offset (v4 Apply Offset to All Notes): shift every note by shiftS. */
+function applyOffsetAll(model, shiftS) {
+  for (const n of model.notes) n.time = Math.max(0, n.time + shiftS);
+  model.sortNotes();
+  model.recalcDuration();
+  return model.notes.length;
+}
+
+/** Tempo warp (v4 Tempo Map Apply): re-time notes so a constant baseBpm
+    grid fits — per segment, time scales by baseBpm/segBpm. rows=[[t,bpm]]. */
+function applyTempoWarp(model, rows, baseBpm) {
+  const sorted = rows.slice().filter(r => r[1] > 0).sort((a, b) => a[0] - b[0]);
+  if (!sorted.length || baseBpm <= 0) return 0;
+  const segments = [[0, baseBpm], ...sorted];
+  for (const n of model.notes) {
+    const t = n.time;
+    let newT = 0;
+    for (let i = 0; i < segments.length; i++) {
+      const [segStart, segBpm] = segments[i];
+      const segEnd = i + 1 < segments.length ? segments[i + 1][0] : Infinity;
+      if (t <= segStart) break;
+      const ratio = segBpm > 0 ? baseBpm / segBpm : 1;
+      newT = segStart + (Math.min(t, segEnd) - segStart) * ratio;
+      if (t <= segEnd) break;
+    }
+    n.time = Math.max(0, newT);
+  }
+  model.sortNotes();
+  model.recalcDuration();
+  return model.notes.length;
+}
+
+/** BPM estimate from note times (v4 BPM-from-Selection + B-tap backend). */
+function bpmFromTimes(times, refBpm) {
+  const ts = times.slice().sort((a, b) => a - b);
+  if (ts.length < 4) return null;
+  let intervals = [];
+  for (let i = 1; i < ts.length; i++) intervals.push(ts[i] - ts[i - 1]);
+  intervals = intervals.filter(x => x > 0.05);
+  if (!intervals.length) return null;
+  intervals.sort((a, b) => a - b);
+  const base = intervals[0];
+  const score = b => intervals.reduce((s, x) =>
+    s + (Math.abs(x / b - Math.round(x / b)) < 0.12 ? 1 : 0), 0);
+  let bestBase = base, bestScore = score(base);
+  for (const mult of [0.5, 0.75, 1.0, 1.333, 1.5, 2.0]) {
+    const c = base * mult;
+    if (c > 0.05 && score(c) > bestScore) { bestScore = score(c); bestBase = c; }
+  }
+  const candidates = [1, 2, 4, 3, 6].map(d => 60 / (bestBase * d))
+    .filter(b => b >= 60 && b <= 240);
+  if (!candidates.length) return 60 / bestBase;
+  return candidates.reduce((best, b) =>
+    Math.abs(b - refBpm) < Math.abs(best - refBpm) ? b : best, candidates[0]);
+}
+
+/** Review Issues scan (v4 cleanup wizard, id-based). Flags misclasses. */
+function reviewIssues(model) {
+  const NEAR_DUP = 0.035, FLAM_MIN = 0.008, MISCLASS = 0.010, CONF = 0.70;
+  const ns = model.notes;
+  const nearDups = [], flams = [], misclassIds = new Set(), lowConfIds = [];
+  for (let i = 0; i < ns.length; i++) {
+    const n = ns[i];
+    for (let j = i + 1; j < ns.length; j++) {
+      const m = ns[j];
+      if (m.time - n.time > NEAR_DUP) break;
+      if (m.lane === n.lane) {
+        nearDups.push([n.id, m.id]);
+        const gap = m.time - n.time;
+        if (gap >= FLAM_MIN && ["snare", "tom"].includes(laneKind(n.lane)))
+          flams.push([n.id, m.id]);
+      }
+    }
+    for (let j = i + 1; j < ns.length; j++) {
+      const m = ns[j];
+      if (m.time - n.time > MISCLASS) break;
+      if (m.lane !== n.lane && isSuspiciousMisclassPair(n.lane, m.lane)) {
+        misclassIds.add(n.id); misclassIds.add(m.id);
+      }
+    }
+    if (n.conf != null && n.conf < CONF) lowConfIds.push(n.id);
+  }
+  for (const id of misclassIds) { const n = model.byId(id); if (n && !n.flag) n.flag = "misclass"; }
+  return { nearDups, flams, misclassIds: [...misclassIds], lowConfIds };
+}
+
+/** Clear all flags; returns count cleared. */
+function clearAllFlags(model) {
+  let k = 0;
+  for (const n of model.notes) if (n.flag) { n.flag = ""; k++; }
+  return k;
+}
+
+/** Per-lane note counts (v4 info line). */
+function laneCounts(model) {
+  const counts = new Array(CORE_LANE_COUNT).fill(0);
+  for (const n of model.notes) counts[n.lane]++;
+  return counts;
+}
+
+/* ── Record session (v4 Record, pure capture buffer) ─────────────────────
+   The caller computes songTime from the audio clock (incl. latency/input
+   offsets) — capture itself is host-free, so it ports unchanged.        */
+class RecordSession {
+  constructor() { this.buffer = []; this.active = false; }
+  start() { this.buffer = []; this.active = true; }
+  stop() { this.active = false; }
+  capture(songTime, lane, vel = 100) {
+    if (!this.active || lane < 0 || lane >= CORE_LANE_COUNT) return false;
+    this.buffer.push([Math.max(0, songTime), lane,
+                      Math.min(127, Math.max(1, Math.round(vel)))]);
+    return true;
+  }
+  /** Commit buffered hits into the model (optionally snapped). Pushes undo
+      only when there is something to commit (v4 no-op-undo discipline). */
+  commit(model, opts) {
+    if (!this.buffer.length) return 0;
+    model.pushUndo();
+    let k = 0;
+    for (const [t, lane, vel] of this.buffer) {
+      const tt = opts && opts.snapOn
+        ? snapTime(model, t, { snapOn: true, subsPerBeat: opts.subsPerBeat || 4 }).t
+        : t;
+      model.addNote(tt, lane, vel); k++;
+    }
+    this.buffer = [];
+    return k;
+  }
+}
+
+
+/* ── Paradiddle .rlrr WRITER (format I/O — replicates v4 build_rlrr's
+   OUTPUT FORMAT byte-for-byte in structure; the protected conversion
+   logic itself is NOT ported). Verified against a real v4-produced file:
+   4-space-indent JSON, version 0.7, instance-name events with %.4f time
+   STRINGS, filename track arrays, the canonical 10-instrument block,
+   length = last event + 5.0.                                            */
+const RLRR_INSTRUMENTS = [
+  {"name": "BP_HiHat_C_1",    "class": "BP_HiHat_C",    "location": [17.22353, -34.08699, 94.211975],   "rotation": [15.416171, 19.771341, 6.125736],    "scale": [1.0, 1.0, 1.0]},
+  {"name": "BP_Kick_C_1",     "class": "BP_Kick_C",     "location": [-69.758492, 60.319191, 34.294422], "rotation": [-96.766594, 2.265444, 38.000126],   "scale": [1.0, 1.0, 1.0]},
+  {"name": "BP_Crash15_C_1",  "class": "BP_Crash15_C",  "location": [27.7938, -37.487892, 132.343323],  "rotation": [17.085356, 39.032425, -19.564053],  "scale": [1.000001, 1.000001, 1.0]},
+  {"name": "BP_Crash17_C_1",  "class": "BP_Crash17_C",  "location": [26.813931, 52.215088, 135.513931], "rotation": [-10.405132, 44.075054, 25.513369],  "scale": [1.0, 1.0, 1.0]},
+  {"name": "BP_FloorTom_C_1", "class": "BP_FloorTom_C", "location": [-1.75137, 42.720551, 61.630424],   "rotation": [1.261108, 28.997799, 73.703827],    "scale": [1.0, 1.0, 1.0]},
+  {"name": "BP_Ride17_C_1",   "class": "BP_Ride17_C",   "location": [-14.226593, 61.129753, 105.472443],"rotation": [-27.074295, 19.200071, 15.730481],  "scale": [1.0, 1.0, 1.0]},
+  {"name": "BP_Ride20_C_1",   "class": "BP_Ride20_C",   "location": [-13.356556, 77.818153, 138.67569], "rotation": [18.895599, 42.784584, 101.073982],  "scale": [1.0, 1.0, 1.0]},
+  {"name": "BP_Snare_C_1",    "class": "BP_Snare_C",    "location": [17.106194, -1.370838, 68.553436],  "rotation": [3.194685, 15.114579, 1.082093],     "scale": [1.0, 1.0, 1.0]},
+  {"name": "BP_Tom1_C_1",     "class": "BP_Tom1_C",     "location": [40.340771, -2.559204, 95.154297],  "rotation": [-40.931034, 37.27087, -55.179005],  "scale": [1.0, 1.0, 1.0]},
+  {"name": "BP_Tom2_C_2",     "class": "BP_Tom2_C",     "location": [30.543972, 33.849445, 93.909325],  "rotation": [14.762558, 52.847816, 50.355915],   "scale": [1.0, 1.0, 1.0]},
+];
+// lane index → rlrr instrument instance name (event "name" field)
+const RLRR_LANE_TO_NAME = ["BP_HiHat_C_1", "BP_Crash15_C_1", "BP_Snare_C_1",
+  "BP_Tom1_C_1", "BP_Tom2_C_2", "BP_FloorTom_C_1", "BP_Ride17_C_1", "BP_Kick_C_1"];
+
+/** Build the .rlrr data object (v4 build_rlrr output shape, key order
+    preserved). meta: { title, artist, creator, complexity, coverImagePath,
+    songTracks:[names], drumTracks:[names], bpm, offset }. */
+function buildRlrrData(model, meta) {
+  const offset = meta.offset || 0;
+  const events = [];
+  for (const n of model.notes) {
+    const t = n.time + offset;
+    if (t < 0) continue;
+    events.push({ name: RLRR_LANE_TO_NAME[n.lane], vel: n.vel, loc: 0, time: t.toFixed(4) });
+  }
+  events.sort((a, b) => parseFloat(a.time) - parseFloat(b.time));
+  const lastTime = events.length ? parseFloat(events[events.length - 1].time) : 0;
+  return {
+    version: 0.7,
+    recordingMetadata: {
+      title: meta.title || "", description: "",
+      coverImagePath: meta.coverImagePath || "",
+      artist: meta.artist || "", creator: meta.creator || "ParaKit",
+      length: lastTime + 5.0,
+      complexity: meta.complexity != null ? meta.complexity : 3,
+    },
+    audioFileData: {
+      songTracks: meta.songTracks || [], drumTracks: meta.drumTracks || [],
+      calibrationOffset: 0,
+    },
+    instruments: RLRR_INSTRUMENTS,
+    events,
+    bpmEvents: [{ bpm: meta.bpm != null ? meta.bpm : model.bpm, time: 0.0 }],
+  };
+}
+/** Serialize like v4 (Python json.dump indent=4). Cosmetic delta: JS
+    renders 1.0 as "1" where Python writes "1.0" — semantically identical. */
+function writeRlrr(model, meta) {
+  return JSON.stringify(buildRlrrData(model, meta), null, 4);
+}
+
+/* ── Clone Hero .chart / song.ini WRITERS (v4 build_chart format) ─────── */
+// lane → [CH pad, cymbal flag or null]  (mirrors v4 _CH_NOTE_MAP by lane)
+const CH_LANE_MAP = [[2, 66], [2, 66], [1, null], [2, null], [3, null], [4, null], [3, 67], [0, null]];
+const CH_RESOLUTION = 192;
+const CH_DIFF_RATING = { Easy: 1, Medium: 2, Hard: 3, Expert: 4 };
+
+function chEscape(v) { return String(v).replace(/\\/g, "\\\\").replace(/"/g, '\\"'); }
+
+/** model → sorted CH tick events [tick, pad, cymbalFlag|null, velFlag|null].
+    velFlags (33 accent > 100 · 34 ghost < 50) follow v4's Pd→CH converter. */
+function modelToChEvents(model, meta) {
+  const bpm = meta.bpm != null ? meta.bpm : model.bpm;
+  const offset = meta.offset || 0;
+  const out = [];
+  for (const n of model.notes) {
+    const t = n.time + offset;
+    if (t < 0) continue;
+    const [pad, cym] = CH_LANE_MAP[n.lane];
+    const tick = Math.round(t * bpm / 60 * CH_RESOLUTION);
+    let velFlag = null;
+    if (meta.velocityFlags) {
+      if (n.vel > 100) velFlag = 33;
+      else if (n.vel < 50) velFlag = 34;
+    }
+    out.push([tick, pad, cym, velFlag]);
+  }
+  out.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  return out;
+}
+
+function writeChart(model, meta) {
+  const bpm = meta.bpm != null ? meta.bpm : model.bpm;
+  const bpmInt = Math.round(bpm * 1000);
+  const lines = [
+    "[Song]", "{",
+    `  Name = "${chEscape(meta.title || "")}"`,
+    `  Artist = "${chEscape(meta.artist || "")}"`,
+  ];
+  if (meta.album) lines.push(`  Album = "${chEscape(meta.album)}"`);
+  if (meta.year) lines.push(`  Year = ", ${chEscape(meta.year)}"`);
+  lines.push(
+    `  Charter = "${chEscape(meta.creator || "ParaKit")}"`,
+    `  Resolution = ${CH_RESOLUTION}`,
+    "  Offset = 0",
+    "  Player2 = bass",
+    "  Difficulty = 0",
+    "  PreviewStart = 0",
+    "  PreviewEnd = 0",
+    '  Genre = "rock"',
+    '  MediaType = "cd"',
+    `  MusicStream = "${meta.musicStream || "song.ogg"}"`,
+    "}", "",
+    "[SyncTrack]", "{",
+    "  0 = TS 4",
+    `  0 = B ${bpmInt}`,
+    "}", "",
+    "[Events]", "{", "}", "",
+    "[ExpertDrums]", "{",
+  );
+  for (const [tick, pad, cym, velFlag] of modelToChEvents(model, meta)) {
+    lines.push(`  ${tick} = N ${pad} 0`);
+    if (cym != null) lines.push(`  ${tick} = N ${cym} 0`);
+    if (velFlag != null) lines.push(`  ${tick} = N ${velFlag} 0`);
+  }
+  lines.push("}", "");
+  return lines.join("\n");
+}
+
+function writeSongIni(meta, songLengthMs) {
+  const lines = ["[song]", `name = ${meta.title || ""}`, `artist = ${meta.artist || ""}`];
+  if (meta.album) lines.push(`album = ${meta.album}`);
+  if (meta.year) lines.push(`year = ${meta.year}`);
+  const diff = CH_DIFF_RATING[meta.difficulty] || 3;
+  lines.push(
+    `charter = ${meta.creator || "ParaKit"}`,
+    `diff_drums = ${diff}`,
+    `diff_drums_real = ${diff}`,
+    "pro_drums = True",
+    "diff_guitar = -1",
+    "diff_bass = -1",
+    "diff_keys = -1",
+    "diff_guitarghl = -1",
+    "diff_bassghl = -1",
+    `song_length = ${songLengthMs || 0}`,
+    "preview_start_time = 0",
+    "icon = ",
+  );
+  return lines.join("\n");
+}
+
+/** Windows-safe folder/file name (v4 _safe_name). */
+function safeName(s) {
+  let out = "";
+  for (const c of String(s)) out += ('<>:"/\\|?*'.includes(c)) ? "_" : c;
+  out = [...out].filter(c => c.codePointAt(0) >= 32 && c.codePointAt(0) !== 0x7f).join("");
+  out = out.replace(/[. ]+$/, "").trim();
+  if (out.length > 200) out = out.slice(0, 200).replace(/[. ]+$/, "").trim();
+  return out || "Untitled";
+}
+
+
+/* ── Difficulty note reduction — FIXED re-implementation ────────────────
+   v4's reduce_notes_for_difficulty is PROTECTED and audited as buggy; this
+   is a clean re-implementation of its documented instrument-layering
+   semantics with the three audited fixes:
+     (1) ghost-grid tolerance is TEMPO-RELATIVE (eighth × 0.18), not the
+         fixed 0.15 s that removed zero ghosts at ≥100 BPM;
+     (2) the 8th/beat grid anchor is the MODE PHASE of all hits in the
+         family (not "first hit is on-grid");
+     (3) removal is keyed by note IDENTITY (ids), never by time value.
+   Layering (v4 doc): Easy = main-hit snare + 8th hi-hats + crash/ride ·
+   Medium = Easy + on-beat kicks (≥2-beat spacing) · Hard = full kick/hat/
+   toms + main-hit snare + crash/ride · Expert = everything.            */
+const REDUX_LANES = { hihat: [0], crash: [1], snare: [2], toms: [3, 4, 5], ride: [6], kick: [7] };
+
+/** Mode phase of times modulo `period` — wrap-aware (a cluster sitting on
+    the 0/period boundary must not split across histogram ends) and
+    optionally weighted (pass velocities: loud main hits dominate the
+    anchor, quiet ghosts barely vote). */
+function modePhase(times, period, weights) {
+  if (!times.length || period <= 0) return 0;
+  const BINS = 24, hist = new Array(BINS).fill(0);
+  const phases = times.map(t => ((t % period) + period) % period);
+  phases.forEach((ph, i) => {
+    hist[Math.floor(ph / period * BINS) % BINS] += weights ? Math.max(1, weights[i]) : 1;
+  });
+  // neighbor-smoothed circular score so boundary-straddling clusters win
+  let best = 0, bestScore = -1;
+  for (let i = 0; i < BINS; i++) {
+    const score = hist[i] + hist[(i + 1) % BINS] + hist[(i + BINS - 1) % BINS];
+    if (score > bestScore) { bestScore = score; best = i; }
+  }
+  // weighted circular mean of hits within ±1 bin of the winner (recentre
+  // around the winning bin so the wrap doesn't skew the average)
+  const center = (best + 0.5) / BINS * period;
+  let sum = 0, wsum = 0;
+  phases.forEach((ph, i) => {
+    let d = ph - center;
+    if (d > period / 2) d -= period;
+    if (d < -period / 2) d += period;
+    if (Math.abs(d) <= period / BINS * 1.5) {
+      const w = weights ? Math.max(1, weights[i]) : 1;
+      sum += d * w; wsum += w;
+    }
+  });
+  const anchor = center + (wsum ? sum / wsum : 0);
+  return ((anchor % period) + period) % period;
+}
+function onGrid(t, anchor, period, tol) {
+  const off = (((t - anchor) % period) + period) % period;
+  return Math.min(off, period - off) < tol;
+}
+
+/** notes: [{id,time,lane,vel}] (any order) → array of KEPT notes (new
+    array, original objects). bpm > 0 required for reduction. */
+function reduceForDifficulty(notes, bpm, difficulty) {
+  if (difficulty === "Expert" || !(bpm > 0)) return notes.slice();
+  const beat = 60 / bpm, eighth = beat / 2;
+  const ghostTol = eighth * 0.18;          // FIX 1: tempo-relative
+  const beatTol = beat * 0.10;
+  const inFam = (n, fam) => REDUX_LANES[fam].includes(n.lane);
+
+  // FIX 2: robust anchors from the family's mode phase
+  const snares = notes.filter(n => inFam(n, "snare")).sort((a, b) => a.time - b.time);
+  const snareAnchor = modePhase(snares.map(n => n.time), eighth, snares.map(n => n.vel));
+  const kicks = notes.filter(n => inFam(n, "kick")).sort((a, b) => a.time - b.time);
+  const kickAnchor = modePhase(kicks.map(n => n.time), beat, kicks.map(n => n.vel));
+
+  // FIX 3: identity-keyed ghost set
+  const ghostIds = new Set(
+    snares.filter(n => !onGrid(n.time, snareAnchor, eighth, ghostTol)).map(n => n.id));
+
+  const keep = new Set();
+  for (const n of notes) {
+    if (inFam(n, "crash") || inFam(n, "ride")) { keep.add(n.id); continue; }  // always
+    if (inFam(n, "snare")) {
+      if (!ghostIds.has(n.id)) keep.add(n.id);
+      continue;
+    }
+    if (inFam(n, "hihat")) { keep.add(n.id); continue; }   // thinned below for E/M
+    if (inFam(n, "kick")) {
+      if (difficulty === "Hard") keep.add(n.id);           // Medium handled below
+      else if (difficulty === "Medium") keep.add(n.id);    // placeholder, filtered next
+      continue;                                            // Easy: dropped
+    }
+    if (inFam(n, "toms")) {
+      if (difficulty === "Hard") keep.add(n.id);
+      continue;                                            // Easy/Medium: dropped
+    }
+  }
+  // hi-hat thinning to 8ths on Easy/Medium (keep hits ≥ ~an 8th apart)
+  if (difficulty === "Easy" || difficulty === "Medium") {
+    const hats = notes.filter(n => inFam(n, "hihat") && keep.has(n.id))
+      .sort((a, b) => a.time - b.time);
+    let lastT = -Infinity;
+    for (const n of hats) {
+      if (n.time - lastT >= eighth * 0.9) lastT = n.time;
+      else keep.delete(n.id);
+    }
+  }
+  // Medium kicks: on-beat only, ≥2-beat spacing
+  if (difficulty === "Medium") {
+    let lastT = -Infinity;
+    for (const n of kicks) {
+      if (!keep.has(n.id)) continue;
+      if (onGrid(n.time, kickAnchor, beat, beatTol) && n.time - lastT >= beat * 2 * 0.9) lastT = n.time;
+      else keep.delete(n.id);
+    }
+  }
+  return notes.filter(n => keep.has(n.id)).sort((a, b) => a.time - b.time);
+}
+
+/* ── Embedded cover-art extraction (pure bytes → {mime, bytes} | null) ──
+   ID3v2 APIC (mp3) · FLAC PICTURE block (type 6) · OGG/Vorbis
+   METADATA_BLOCK_PICTURE (base64 comment, best-effort scan).            */
+function extractEmbeddedArt(u8) {
+  // ── ID3v2 ──
+  if (u8.length > 10 && u8[0] === 0x49 && u8[1] === 0x44 && u8[2] === 0x33) {
+    const ver = u8[3];
+    const syn = b => ((b[0] & 0x7f) << 21) | ((b[1] & 0x7f) << 14) | ((b[2] & 0x7f) << 7) | (b[3] & 0x7f);
+    const tagEnd = 10 + syn(u8.subarray(6, 10));
+    let p = 10;
+    while (p + 10 < Math.min(tagEnd, u8.length)) {
+      const id = String.fromCharCode(u8[p], u8[p+1], u8[p+2], u8[p+3]);
+      const size = ver >= 4 ? syn(u8.subarray(p+4, p+8))
+                            : (u8[p+4] << 24) | (u8[p+5] << 16) | (u8[p+6] << 8) | u8[p+7];
+      if (!/^[A-Z0-9]{4}$/.test(id) || size <= 0) break;
+      if (id === "APIC") {
+        let q = p + 10;
+        const enc = u8[q++];                       // text encoding
+        let mime = "";
+        while (q < p + 10 + size && u8[q] !== 0) mime += String.fromCharCode(u8[q++]);
+        q++;                                        // mime NUL
+        q++;                                        // picture type byte
+        if (enc === 1 || enc === 2) {               // UTF-16 description: NUL NUL
+          while (q + 1 < p + 10 + size && !(u8[q] === 0 && u8[q+1] === 0)) q += 2;
+          q += 2;
+        } else {
+          while (q < p + 10 + size && u8[q] !== 0) q++;
+          q++;
+        }
+        return { mime: mime || "image/jpeg", bytes: u8.slice(q, p + 10 + size) };
+      }
+      p += 10 + size;
+    }
+  }
+  // ── FLAC ──
+  if (u8.length > 8 && u8[0] === 0x66 && u8[1] === 0x4c && u8[2] === 0x61 && u8[3] === 0x43) {
+    let p = 4, last = false;
+    while (!last && p + 4 < u8.length) {
+      last = !!(u8[p] & 0x80);
+      const type = u8[p] & 0x7f;
+      const size = (u8[p+1] << 16) | (u8[p+2] << 8) | u8[p+3];
+      if (type === 6) {                            // PICTURE
+        const dv = new DataView(u8.buffer, u8.byteOffset + p + 4, size);
+        let q = 4;                                  // skip picture type
+        const mimeLen = dv.getUint32(q); q += 4;
+        let mime = "";
+        for (let i = 0; i < mimeLen; i++) mime += String.fromCharCode(dv.getUint8(q + i));
+        q += mimeLen;
+        const descLen = dv.getUint32(q); q += 4 + descLen;
+        q += 16;                                    // w/h/depth/colors
+        const dataLen = dv.getUint32(q); q += 4;
+        const start = p + 4 + q;
+        return { mime: mime || "image/jpeg", bytes: u8.slice(start, start + dataLen) };
+      }
+      p += 4 + size;
+    }
+  }
+  // ── OGG (best-effort: scan the head for a base64 picture comment) ──
+  if (u8.length > 4 && u8[0] === 0x4f && u8[1] === 0x67 && u8[2] === 0x67 && u8[3] === 0x53) {
+    const headLen = Math.min(u8.length, 1 << 19);
+    let txt = "";
+    for (let i = 0; i < headLen; i++) { const c = u8[i]; txt += (c >= 32 && c < 127) ? String.fromCharCode(c) : "\x00"; }
+    const m = txt.match(/METADATA_BLOCK_PICTURE=([A-Za-z0-9+/=]{64,})/);
+    if (m) {
+      try {
+        const bin = typeof atob === "function" ? atob(m[1]) : "";
+        if (bin) {
+          const pic = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) pic[i] = bin.charCodeAt(i);
+          return extractFlacPictureBlock(pic);
+        }
+      } catch (_) {}
+    }
+  }
+  return null;
+}
+function extractFlacPictureBlock(pic) {   // a bare FLAC PICTURE payload
+  try {
+    const dv = new DataView(pic.buffer, pic.byteOffset, pic.byteLength);
+    let q = 4;
+    const mimeLen = dv.getUint32(q); q += 4;
+    let mime = "";
+    for (let i = 0; i < mimeLen; i++) mime += String.fromCharCode(dv.getUint8(q + i));
+    q += mimeLen;
+    const descLen = dv.getUint32(q); q += 4 + descLen;
+    q += 16;
+    const dataLen = dv.getUint32(q); q += 4;
+    return { mime: mime || "image/jpeg", bytes: pic.slice(q, q + dataLen) };
+  } catch (_) { return null; }
+}
+
+
+/* ── Batch layer (v4 Create Multiple Songs) — pure orchestration logic ── */
+
+/** v4 folder-batch pairing rule (flat, top-level): every .mid/.midi is
+    matched to a same-stem audio file, priority .ogg > .flac > .mp3 > .wav
+    (game-format-first). Pure: names in → pairs out.
+    → [{ midi, audio|null, stem }] sorted by midi name. */
+function pairMidiAudio(fileNames) {
+  const AUDIO_PRIORITY = [".ogg", ".flac", ".mp3", ".wav"];
+  const lower = new Map();
+  for (const n of fileNames) lower.set(n.toLowerCase(), n);
+  const mids = fileNames
+    .filter(n => /\.midi?$/i.test(n))
+    .sort((a, b) => a.localeCompare(b));
+  return mids.map(mid => {
+    const stem = mid.replace(/\.midi?$/i, "");
+    let audio = null;
+    for (const ext of AUDIO_PRIORITY) {
+      const hit = lower.get((stem + ext).toLowerCase());
+      if (hit) { audio = hit; break; }
+    }
+    return { midi: mid, audio, stem };
+  });
+}
+
+/** v4 batch template (on-disk schema v1) — defaults mirror the in-code
+    safety net in ParaKit v4.0.py. */
+const BATCH_TEMPLATE_SCHEMA_VERSION = 1;
+function batchTemplateDefault() {
+  return {
+    schema_version: BATCH_TEMPLATE_SCHEMA_VERSION,
+    name: "default",
+    chart: { difficulty: "Expert", complexity: 3, creator: "ParaKit" },
+    difficulty_reduction: { enabled: false, difficulty: "Expert" },
+    metadata_defaults: { artist: "", album: "", year: null, genre: "" },
+    output: { folder_pattern: "{title}", overwrite_policy: "skip" },
+  };
+}
+/** Validate + normalize a parsed template object; returns {tpl, errors[]}. */
+function batchTemplateNormalize(obj) {
+  const errors = [];
+  const tpl = batchTemplateDefault();
+  if (!obj || typeof obj !== "object") return { tpl, errors: ["template is not an object"] };
+  if (obj.schema_version != null && obj.schema_version !== BATCH_TEMPLATE_SCHEMA_VERSION)
+    errors.push(`unknown schema_version ${obj.schema_version} (expected ${BATCH_TEMPLATE_SCHEMA_VERSION})`);
+  if (obj.name) tpl.name = String(obj.name);
+  const ch = obj.chart || {};
+  if (["Easy", "Medium", "Hard", "Expert"].includes(ch.difficulty)) tpl.chart.difficulty = ch.difficulty;
+  else if (ch.difficulty != null) errors.push(`unknown chart.difficulty: ${ch.difficulty}`);
+  if (ch.complexity >= 1 && ch.complexity <= 5) tpl.chart.complexity = Math.trunc(ch.complexity);
+  if (ch.creator) tpl.chart.creator = String(ch.creator);
+  const rd = obj.difficulty_reduction || {};
+  if (typeof rd.enabled === "boolean") tpl.difficulty_reduction.enabled = rd.enabled;
+  else if (rd.enabled != null) errors.push("difficulty_reduction.enabled must be true or false");
+  if (["Easy", "Medium", "Hard", "Expert"].includes(rd.difficulty)) tpl.difficulty_reduction.difficulty = rd.difficulty;
+  else if (rd.difficulty != null) errors.push(`unknown difficulty_reduction.difficulty: ${rd.difficulty}`);
+  const md = obj.metadata_defaults || {};
+  for (const k of ["artist", "album", "genre"]) if (md[k]) tpl.metadata_defaults[k] = String(md[k]);
+  if (md.year != null) tpl.metadata_defaults.year = md.year;
+  const out = obj.output || {};
+  if (out.folder_pattern) tpl.output.folder_pattern = String(out.folder_pattern);
+  if (out.overwrite_policy) tpl.output.overwrite_policy = String(out.overwrite_policy);
+  return { tpl, errors };
+}
+/** Expand output.folder_pattern ({title}/{artist}/{difficulty}). */
+function batchFolderName(pattern, meta) {
+  return safeName((pattern || "{title}")
+    .replace("{title}", meta.title || "Untitled")
+    .replace("{artist}", meta.artist || "")
+    .replace("{difficulty}", meta.difficulty || ""));
+}
+
+/* ── STORE-only .zip writer (CRC32; pure bytes — moved here from the Song
+   Creator so the Batch tab + any consumer shares ONE packager). ─────── */
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function buildZip(entries) {   // entries: [{name, bytes(Uint8Array)}]
+  const enc = new TextEncoder();
+  const chunks = [], central = [];
+  let offset = 0;
+  for (const { name, bytes } of entries) {
+    const nameB = enc.encode(name);
+    const crc = crc32(bytes);
+    const head = new DataView(new ArrayBuffer(30));
+    head.setUint32(0, 0x04034b50, true);
+    head.setUint16(4, 20, true);  head.setUint16(6, 0x0800, true);
+    head.setUint16(8, 0, true);   head.setUint16(10, 0, true); head.setUint16(12, 0, true);
+    head.setUint32(14, crc, true);
+    head.setUint32(18, bytes.length, true); head.setUint32(22, bytes.length, true);
+    head.setUint16(26, nameB.length, true); head.setUint16(28, 0, true);
+    chunks.push(new Uint8Array(head.buffer), nameB, bytes);
+    const cen = new DataView(new ArrayBuffer(46));
+    cen.setUint32(0, 0x02014b50, true);
+    cen.setUint16(4, 20, true); cen.setUint16(6, 20, true); cen.setUint16(8, 0x0800, true);
+    cen.setUint16(10, 0, true); cen.setUint16(12, 0, true); cen.setUint16(14, 0, true);
+    cen.setUint32(16, crc, true);
+    cen.setUint32(20, bytes.length, true); cen.setUint32(24, bytes.length, true);
+    cen.setUint16(28, nameB.length, true);
+    cen.setUint32(42, offset, true);
+    central.push(new Uint8Array(cen.buffer), nameB);
+    offset += 30 + nameB.length + bytes.length;
+  }
+  let cenSize = 0;
+  for (const c of central) cenSize += c.length;
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, entries.length, true); end.setUint16(10, entries.length, true);
+  end.setUint32(12, cenSize, true); end.setUint32(16, offset, true);
+  const total = offset + cenSize + 22;
+  const out = new Uint8Array(total);
+  let p = 0;
+  for (const c of [...chunks, ...central, new Uint8Array(end.buffer)]) { out.set(c, p); p += c.length; }
+  return out;
+}
+
+/** Build ONE song's package entries (the Song Creator's export logic as a
+    pure function — the Batch tab calls this per slot/pair).
+    song: { model, meta(title/artist/creator/album/year/difficulty/
+           complexity/bpm/offset/velocityFlags), files:{mix?, drums?,
+           extra:[{name,bytes,role}]}, coverPng?, fmt:"rlrr"|"chart"|"both",
+           reduce:boolean, folderSuffix?:string }
+    → { entries:[{name,bytes}], notesIn, notesOut } */
+function buildSongPackage(song) {
+  const enc = new TextEncoder();
+  const meta = song.meta;
+  const entries = [];
+  let model = song.model;
+  const notesIn = model.notes.length;
+  const redDiff = song.reduceDifficulty || meta.difficulty;
+  if (song.reduce && redDiff !== "Expert") {
+    const kept = reduceForDifficulty(model.notes, meta.bpm, redDiff);
+    model = chartFromTuples(kept.map(n => [n.time, n.lane, n.vel]), song.model.bpm);
+  }
+  const notesOut = model.notes.length;
+  const suffix = song.folderSuffix || "";
+  const files = song.files || {};
+  const extra = files.extra || [];
+  if (song.fmt === "rlrr" || song.fmt === "both") {
+    const safe = safeName(meta.title);
+    const dirBase = song.folderPattern ? batchFolderName(song.folderPattern, meta) : safe;
+    const dir = dirBase + suffix + "/";
+    const songTracks = (files.mix ? [files.mix.name] : [])
+      .concat(extra.filter(x => x.bytes && x.role === "song").map(x => x.name));
+    const drumTracks = (files.drums ? [files.drums.name] : [])
+      .concat(extra.filter(x => x.bytes && x.role === "drums").map(x => x.name));
+    const rlrr = writeRlrr(model, { ...meta,
+      coverImagePath: song.coverPng ? safe + "_cover.png" : "",
+      songTracks, drumTracks });
+    entries.push({ name: dir + `${safe}_${meta.difficulty}.rlrr`, bytes: enc.encode(rlrr) });
+    if (files.mix) entries.push({ name: dir + files.mix.name, bytes: files.mix.bytes });
+    if (files.drums) entries.push({ name: dir + files.drums.name, bytes: files.drums.bytes });
+    for (const x of extra) if (x.bytes) entries.push({ name: dir + x.name, bytes: x.bytes });
+    if (files.preview && files.preview.bytes)
+      entries.push({ name: dir + safe + "_preview" + files.preview.name.slice(files.preview.name.lastIndexOf(".")), bytes: files.preview.bytes });
+    if (song.coverPng) entries.push({ name: dir + safe + "_cover.png", bytes: song.coverPng });
+  }
+  if (song.fmt === "chart" || song.fmt === "both") {
+    const dir = safeName((meta.artist ? meta.artist + " - " : "") + meta.title) + suffix
+      + (song.fmt === "both" ? " [CH]/" : "/");
+    const mixExt = files.mix ? files.mix.name.slice(files.mix.name.lastIndexOf(".")).toLowerCase() : ".ogg";
+    const musicStream = "song" + mixExt;
+    entries.push({ name: dir + "notes.chart", bytes: enc.encode(writeChart(model, { ...meta, musicStream })) });
+    const lastT = model.notes.length ? model.notes[model.notes.length - 1].time + (meta.offset || 0) : 0;
+    entries.push({ name: dir + "song.ini", bytes: enc.encode(writeSongIni(meta, Math.max(0, Math.round((lastT + 5) * 1000)))) });
+    if (files.mix) entries.push({ name: dir + musicStream, bytes: files.mix.bytes });
+    if (files.drums) entries.push({ name: dir + "drums" + files.drums.name.slice(files.drums.name.lastIndexOf(".")).toLowerCase(), bytes: files.drums.bytes });
+    if (song.coverPng) entries.push({ name: dir + "album.png", bytes: song.coverPng });
+  }
+  return { entries, notesIn, notesOut };
+}
+
+/* CORE-END */
+
+/* ══════════════════════════════════════════════════════════════════════
+   PART 3 — ADAPTERS
+   FallView (time→y transform — the piano-roll view rotated 90°),
+   Renderer (Canvas 2D, falling notes, Practice Web Edition styling),
+   AudioEngine (MIDI editor's synth/scheduler + review-speed scaling).
+   ══════════════════════════════════════════════════════════════════════ */
+const view = {
+  pos: 0,                       // current song-time at the hit line
+  fall: CONFIG.FALL_DEFAULT,    // seconds visible above the hit line
+  w: 100, h: 100,
+  padL: 56, padR: 16,
+  hitY()    { return this.h * CONFIG.HIT_LINE_FRAC; },
+  spanPx()  { return this.hitY() - CONFIG.PAD_TOP; },
+  yOf(t)    { return this.hitY() - (t - this.pos) / this.fall * this.spanPx(); },
+  tOf(y)    { return this.pos + (this.hitY() - y) / this.spanPx() * this.fall; },
+  tail()    { return this.fall * CONFIG.TAIL_FRAC; },
+  playW()   { return Math.max(40, this.w - this.padL - this.padR); },
+  colW()    { return this.playW() / CONFIG.LANES.length; },
+  colX(i)   { return this.padL + (i + 0.5) * this.colW(); },
+  laneAtX(x) {
+    const i = Math.floor((x - this.padL) / this.colW());
+    return (i >= 0 && i < CONFIG.LANES.length) ? i : -1;
+  },
+};
+
+class Renderer {
+  constructor(model) {
+    this.model = model;
+    this.main = document.getElementById("mainCanvas");
+    this.overlay = document.getElementById("overlayCanvas");
+    this.mctx = this.main.getContext("2d");
+    this.octx = this.overlay.getContext("2d");
+    this.mainDirty = true;
+    this.drawnNotes = 0;
+    this.dpr = 1;
+    this._sizeAll();
+    new ResizeObserver(() => { this._sizeAll(); this.mainDirty = true; })
+      .observe(document.getElementById("stage"));
+  }
+  _size(c, ctx) {
+    const r = c.getBoundingClientRect();
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    c.width = Math.max(1, Math.round(r.width * this.dpr));
+    c.height = Math.max(1, Math.round(r.height * this.dpr));
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    return r;
+  }
+  _sizeAll() {
+    const r = this._size(this.main, this.mctx);
+    this._size(this.overlay, this.octx);
+    view.w = r.width; view.h = r.height;
+  }
+  _rgba(hex, a) {
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  _rr(c, x, y, w, h, r) {
+    r = Math.min(r, h/2, w/2);
+    c.beginPath();
+    c.moveTo(x+r, y); c.arcTo(x+w, y, x+w, y+h, r); c.arcTo(x+w, y+h, x, y+h, r);
+    c.arcTo(x, y+h, x, y, r); c.arcTo(x, y, x+w, y, r); c.closePath();
+  }
+
+  /** Geometry for one note in the falling view (shared by draw + hover). */
+  noteGeom(n) {
+    const x = view.colX(n.lane), y = view.yOf(n.time), cw = view.colW();
+    const lane = CONFIG.LANES[n.lane];
+    const ns = app.prefs.noteScale;
+    if (lane.shape === "kick") {
+      if (app.prefs.kickLine) return { kind:"kickline", x, y, w: view.playW(), h: 5 * ns };
+      return { kind:"bar", x, y, w: cw * 0.86 * ns, h: 9 * ns };
+    }
+    if (lane.shape === "circle" && !app.prefs.squares)
+      return { kind:"circle", x, y, r: Math.min(cw * 0.30, 22) * ns };
+    return { kind:"bar", x, y, w: cw * 0.72 * ns, h: 15 * ns };
+  }
+
+  drawMain(st) {
+    const c = this.mctx, m = this.model;
+    const w = view.w, h = view.h, hitY = view.hitY(), padT = CONFIG.PAD_TOP;
+    const tTop = view.pos + view.fall, tBot = view.pos - view.tail();
+    c.clearRect(0, 0, w, h);
+
+    // lane wells (Practice styling: subtle per-column gradient)
+    const cw = view.colW();
+    for (let i = 0; i < CONFIG.LANES.length; i++) {
+      const lc = CONFIG.LANES[i].color, x0 = view.colX(i) - cw/2;
+      if (!app.prefs.laneVisible[i]) { c.globalAlpha = 0.25; } else { c.globalAlpha = 1; }
+      const grad = c.createLinearGradient(0, padT, 0, hitY);
+      grad.addColorStop(0, "rgba(255,255,255,0)");
+      grad.addColorStop(1, this._rgba(lc, st.editMode ? 0.09 : 0.05));
+      c.fillStyle = grad; c.fillRect(x0 + 1, padT, cw - 2, hitY - padT);
+      c.strokeStyle = "rgba(196,181,253,0.07)"; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(x0, padT); c.lineTo(x0, hitY + 26); c.stroke();
+    }
+    c.beginPath(); c.moveTo(view.padL + view.playW(), padT);
+    c.lineTo(view.padL + view.playW(), hitY + 26); c.stroke();
+    c.globalAlpha = 1;
+
+    // ── subdivision grid — SAME beat math as the MIDI editor (integer-
+    // stepped, current grid res), drawn as horizontal lines the notes
+    // cross. Prominent in edit mode; subtle beat/bar guide during play.
+    if (m.bpm > 0 && (st.editMode || app.prefs.beatGrid)) {
+      const beat = 60 / m.bpm, sub = beat / st.gridSubs;
+      const e = st.editMode;
+      const i0 = Math.max(0, Math.floor(tBot / sub)), i1 = Math.ceil(tTop / sub);
+      c.textAlign = "left"; c.textBaseline = "middle";
+      for (let i = i0; i <= i1; i++) {
+        const t = i * sub, y = view.yOf(t);
+        if (y < padT - 2 || y > h) continue;
+        const beatNum = Math.floor(i / st.gridSubs), inBeat = i % st.gridSubs;
+        const isBeat = inBeat === 0, isBar = isBeat && beatNum % 4 === 0;
+        if (isBar) {
+          c.strokeStyle = e ? "rgba(196,181,253,0.7)" : "rgba(196,181,253,0.45)";
+          c.lineWidth = e ? 2 : 2;
+        } else if (isBeat) {
+          c.strokeStyle = e ? "rgba(160,160,205,0.45)" : "rgba(140,140,175,0.25)";
+          c.lineWidth = 1;
+        } else {
+          if (!e) continue;                       // sub lines only in edit mode
+          c.strokeStyle = "rgba(130,130,180,0.28)"; c.lineWidth = 1;
+        }
+        c.beginPath(); c.moveTo(view.padL, y); c.lineTo(view.padL + view.playW(), y); c.stroke();
+        if (isBar) {
+          c.fillStyle = e ? "#8aa7cc" : "rgba(90,138,170,0.6)";
+          c.font = "10px Consolas,monospace";
+          c.fillText(String(beatNum / 4 + 1), 8, y);
+        }
+      }
+    }
+
+    // hit line — the clean "now" anchor (double stroke, Practice style)
+    c.strokeStyle = st.editMode ? "rgba(0,255,136,0.65)" : "rgba(196,181,253,0.5)";
+    c.lineWidth = 2;
+    c.beginPath(); c.moveTo(view.padL, hitY); c.lineTo(view.padL + view.playW(), hitY); c.stroke();
+    c.strokeStyle = st.editMode ? "rgba(0,255,136,0.18)" : "rgba(124,58,237,0.25)";
+    c.lineWidth = 8;
+    c.beginPath(); c.moveTo(view.padL, hitY); c.lineTo(view.padL + view.playW(), hitY); c.stroke();
+    c.fillStyle = st.editMode ? "rgba(0,255,136,0.8)" : "rgba(196,181,253,0.6)";
+    c.font = "700 9px Consolas,monospace"; c.textAlign = "left"; c.textBaseline = "bottom";
+    c.fillText("NOW", 8, hitY - 4);
+
+    // receptors + labels — scale + shape track the lane's notes
+    // (kick stays an UNSCALED full-width strip while kick-line mode is on)
+    c.textAlign = "center"; c.textBaseline = "middle";
+    const laneFlash = new Array(CONFIG.LANES.length).fill(0);
+    const nsR = app.prefs.noteScale;
+    for (let i = 0; i < CONFIG.LANES.length; i++) {
+      const lc = CONFIG.LANES[i].color;
+      const isCircle = CONFIG.LANES[i].shape === "circle" && !app.prefs.squares;
+      c.globalAlpha = app.prefs.laneVisible[i] ? 0.9 : 0.25;
+      c.strokeStyle = this._rgba(lc, 0.55); c.lineWidth = 2.5;
+      if (i === 7 && app.prefs.kickLine) {
+        const kh = 7;   // fixed — owner: kick excluded from scaling in line form
+        this._rr(c, view.padL, hitY - kh/2, view.playW(), kh, 3); c.stroke();
+      } else if (isCircle) {
+        c.beginPath(); c.arc(view.colX(i), hitY, Math.min(cw*0.30, 22) * nsR, 0, Math.PI*2); c.stroke();
+      } else {
+        const bw = cw * 0.72 * nsR, bh = (i === 7 ? 10 : 16) * nsR;
+        this._rr(c, view.colX(i) - bw/2, hitY - bh/2, bw, bh, 6); c.stroke();
+      }
+      c.globalAlpha = 1;
+      c.font = "800 11px Consolas,monospace";
+      c.shadowColor = "rgba(0,0,0,0.9)"; c.shadowBlur = 4;
+      c.fillStyle = lc;
+      c.fillText(CONFIG.LANES[i].name.toUpperCase(), view.colX(i), hitY + 34);
+      c.shadowBlur = 0;
+    }
+
+    // ── falling notes — bucketed-index culled to the visible window
+    let drawn = 0;
+    this.model.getIndex().forRange(tBot - 0.1, tTop + 0.1, n => {
+      if (!app.prefs.laneVisible[n.lane]) return;
+      drawn++;
+      const g = this.noteGeom(n);
+      if (g.y < padT - 30 || g.y > h + 20) return;
+      if (g.kind === "kickline") {     // Practice-style full-width kick line
+        const lcK = CONFIG.LANES[7].color;
+        const isPastK = n.time < view.pos - CONFIG.CROSS_FLASH_S;
+        c.globalAlpha = isPastK ? 0.35 : 0.85;
+        c.fillStyle = lcK; c.shadowColor = lcK; c.shadowBlur = 9;
+        this._rr(c, view.padL, g.y - g.h/2, g.w, g.h, 2); c.fill();
+        c.shadowBlur = 0; c.globalAlpha = 1;
+        const dtK = view.pos - n.time;
+        if (dtK >= 0 && dtK <= CONFIG.CROSS_FLASH_S) {
+          c.globalAlpha = 1 - dtK / CONFIG.CROSS_FLASH_S;
+          c.fillStyle = "#ffffff";
+          this._rr(c, view.padL, g.y - g.h/2, g.w, g.h, 2); c.fill();
+          c.globalAlpha = 1;
+        }
+        if (dtK >= 0 && dtK <= 0.16) laneFlash[7] = Math.max(laneFlash[7], 1 - dtK / 0.16);
+        return;
+      }
+      const isPast = n.time < view.pos - CONFIG.CROSS_FLASH_S;
+      if (isPast) c.globalAlpha = 0.45;
+      const lc = CONFIG.LANES[n.lane].color;
+      const isGhost = n.vel < CONFIG.GHOST_VEL, isAccent = n.vel >= CONFIG.ACCENT_VEL;
+      const vScale = 0.85 + Math.min(1, n.vel / 110) * 0.4;
+      const beingDragged = st.dragId === n.id;
+      let ring = null;
+      if (beingDragged)  ring = "#ffffff";
+      else if (n.flag)   ring = "#ff8c00";
+      else if (isAccent) ring = "#ff69b4";
+      c.shadowColor = lc; c.shadowBlur = isGhost ? 0 : 12;
+      if (g.kind === "circle") {
+        const r = g.r * vScale;
+        if (isGhost) {
+          c.strokeStyle = ring || lc; c.lineWidth = 2;
+          c.beginPath(); c.arc(g.x, g.y, r, 0, Math.PI*2); c.stroke();
+        } else {
+          const rg = c.createRadialGradient(g.x, g.y, 1, g.x, g.y, r);
+          rg.addColorStop(0, "#ffffff"); rg.addColorStop(0.35, lc);
+          rg.addColorStop(1, this._rgba(lc, 0.55));
+          c.fillStyle = rg;
+          c.beginPath(); c.arc(g.x, g.y, r, 0, Math.PI*2); c.fill();
+          c.strokeStyle = ring || "rgba(255,255,255,0.55)"; c.lineWidth = ring ? 2.5 : 1.5;
+          c.beginPath(); c.arc(g.x, g.y, r, 0, Math.PI*2); c.stroke();
+        }
+      } else {
+        const bw = g.w, bh = g.h * vScale;
+        if (isGhost) {
+          c.strokeStyle = ring || lc; c.lineWidth = 2;
+          this._rr(c, g.x - bw/2, g.y - bh/2, bw, bh, 5); c.stroke();
+        } else {
+          const lg = c.createLinearGradient(0, g.y - bh/2, 0, g.y + bh/2);
+          lg.addColorStop(0, "#ffffff"); lg.addColorStop(0.25, lc); lg.addColorStop(1, lc);
+          c.fillStyle = lg;
+          this._rr(c, g.x - bw/2, g.y - bh/2, bw, bh, 5); c.fill();
+          c.strokeStyle = ring || "rgba(255,255,255,0.35)"; c.lineWidth = ring ? 2.5 : 1.2;
+          this._rr(c, g.x - bw/2, g.y - bh/2, bw, bh, 5); c.stroke();
+        }
+      }
+      c.shadowBlur = 0;
+      if (isPast) c.globalAlpha = 1;
+      // crossing flash — the visual timing check (white as it crosses NOW)
+      const dt = view.pos - n.time;
+      if (dt >= 0 && dt <= CONFIG.CROSS_FLASH_S) {
+        c.globalAlpha = 1 - dt / CONFIG.CROSS_FLASH_S;
+        c.fillStyle = "#ffffff";
+        if (g.kind === "circle") { c.beginPath(); c.arc(g.x, g.y, g.r * vScale, 0, Math.PI*2); c.fill(); }
+        else { this._rr(c, g.x - g.w/2, g.y - (g.h*vScale)/2, g.w, g.h*vScale, 5); c.fill(); }
+        c.globalAlpha = 1;
+      }
+      if (dt >= 0 && dt <= 0.16) laneFlash[n.lane] = Math.max(laneFlash[n.lane], 1 - dt / 0.16);
+    });
+    this.drawnNotes = drawn;
+
+    // receptor flash on crossings (Practice-style glow)
+    for (let i = 0; i < CONFIG.LANES.length; i++) {
+      const k = laneFlash[i];
+      if (k <= 0) continue;
+      const lc = CONFIG.LANES[i].color;
+      c.globalAlpha = Math.min(1, k * 0.8);
+      c.fillStyle = lc; c.shadowColor = lc; c.shadowBlur = 24;
+      if (i === 7 && app.prefs.kickLine) {
+        this._rr(c, view.padL, hitY - 4, view.playW(), 8, 3); c.fill();
+      } else if (CONFIG.LANES[i].shape === "circle" && !app.prefs.squares) {
+        c.beginPath(); c.arc(view.colX(i), hitY, Math.min(cw*0.30, 22) * nsR * (1 + k*0.15), 0, Math.PI*2); c.fill();
+      } else {
+        const bw = cw * 0.72 * nsR * (1 + k*0.1), bh = (i === 7 ? 10 : 16) * nsR * (1 + k*0.2);
+        this._rr(c, view.colX(i) - bw/2, hitY - bh/2, bw, bh, 6); c.fill();
+      }
+      c.shadowBlur = 0; c.globalAlpha = 1;
+    }
+    this.mainDirty = false;
+  }
+
+  /* Overlay: edit-mode affordances only (hover ring, snap guide). */
+  drawOverlay(st) {
+    const c = this.octx;
+    c.clearRect(0, 0, view.w, view.h);
+    if (!st.editMode) return;
+    if (st.snapGuideT != null) {
+      const y = view.yOf(st.snapGuideT);
+      c.strokeStyle = "#ffff00"; c.globalAlpha = 0.85; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(view.padL, y - 1); c.lineTo(view.padL + view.playW(), y - 1); c.stroke();
+      c.beginPath(); c.moveTo(view.padL, y + 1); c.lineTo(view.padL + view.playW(), y + 1); c.stroke();
+      c.globalAlpha = 1;
+    }
+    if (st.hoverNote && !st.dragId) {
+      const g = this.noteGeom(st.hoverNote);
+      c.strokeStyle = "rgba(255,255,255,0.6)"; c.lineWidth = 1.5;
+      if (g.kind === "circle") { c.beginPath(); c.arc(g.x, g.y, g.r + 4, 0, Math.PI*2); c.stroke(); }
+      else c.strokeRect(g.x - g.w/2 - 4, g.y - g.h/2 - 4, g.w + 8, g.h + 8);
+    }
+  }
+}
+
+/* SHARED-AUDIO-BEGIN */
+/* ═══ SHARED-AUDIO — consolidated engine (Practice's anchor-clock stem
+   player + the prototypes' chart synth + scheduler). Master clock =
+   AudioContext.currentTime. Identical block in Practice / MIDI editor /
+   Preview (byte-compared); each app aliases or instantiates it.
+   Source modes: "stems" | "synth" | "both" ("auto" = stems if loaded). */
+class SharedAudioEngine {
+  constructor(model = null) {
+    this.ctx = null;
+    this.model = model;                  // chart for the synth scheduler
+    this.mixBuf = null; this.drumBuf = null;
+    this._sources = [];
+    this.state = "idle";                 // idle | playing | paused
+    this._anchorCtx = 0; this._anchorSong = 0;
+    this.track = "mix";                  // stems sub-select: mix | drums
+    this.sourceMode = "auto";            // auto | stems | synth | both
+    this.speed = 1.0;
+    this.metronomeOn = false;
+    this.stemOffsetS = 0;                // shifts stem audio vs the chart
+    this._noise = null;
+    this._schedTimer = null;
+    this._schedSongT = 0;
+    this._metSongT = 0;
+  }
+
+  ensure() {
+    if (this.ctx) return this.ctx;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    this.ctx = ctx;
+    this.comp = ctx.createDynamicsCompressor();
+    this.comp.threshold.value = -14; this.comp.knee.value = 24;
+    this.comp.ratio.value = 3; this.comp.attack.value = 0.003; this.comp.release.value = 0.25;
+    this.master = ctx.createGain(); this.master.gain.value = 0.92;
+    this.comp.connect(this.master); this.master.connect(ctx.destination);
+    this.mixGain  = ctx.createGain(); this.mixGain.gain.value  = 1;
+    this.drumGain = ctx.createGain(); this.drumGain.gain.value = 0;
+    this.synthBus = ctx.createGain(); this.synthBus.gain.value = 0.85;
+    this.metBus   = ctx.createGain(); this.metBus.gain.value = 0.9;
+    this.mixGain.connect(this.comp); this.drumGain.connect(this.comp);
+    this.synthBus.connect(this.comp); this.metBus.connect(this.comp);
+    return ctx;
+  }
+  async unlock() { this.ensure(); if (this.ctx.state === "suspended") { try { await this.ctx.resume(); } catch(_){} } }
+
+  get currentTime() { return this.ctx ? this.ctx.currentTime : 0; }
+
+  async decode(arrayBuffer) {
+    this.ensure();
+    return await this.ctx.decodeAudioData(arrayBuffer.slice(0));
+  }
+  setMix(buf)  { this.mixBuf = buf; }
+  setDrum(buf) { this.drumBuf = buf; }
+  hasAudio()   { return !!(this.mixBuf || this.drumBuf); }
+  get audioDuration() {
+    let d = 0;
+    if (this.mixBuf)  d = Math.max(d, this.mixBuf.duration);
+    if (this.drumBuf) d = Math.max(d, this.drumBuf.duration);
+    return d;
+  }
+  get duration() { return this.audioDuration; }   // Practice-compat alias
+  synthActive() {
+    if (this.sourceMode === "synth" || this.sourceMode === "both") return true;
+    if (this.sourceMode === "stems") return false;
+    return !this.hasAudio();                       // auto
+  }
+  stemsActive() {
+    if (this.sourceMode === "synth") return false;
+    return this.hasAudio();
+  }
+
+  _noiseBuf() {
+    if (this._noise) return this._noise;
+    const ctx = this.ctx, n = Math.floor(ctx.sampleRate * 1.0);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    this._noise = buf; return buf;
+  }
+
+  /* Per-lane percussive voice (Practice Web Edition synth, the shared
+     drum sound across all three apps). */
+  synthVoice(lane, vel = 90, when = null) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = when == null ? ctx.currentTime : Math.max(when, ctx.currentTime);
+    const v = Math.min(1.25, Math.max(0.1, vel / 110));
+    const out = this.synthBus;
+    const env = (node, peak, atk, dec) => {
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak * v), t + atk);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + atk + dec);
+      node.connect(g); g.connect(out);
+      return g;
+    };
+    const noiseSrc = () => { const s = ctx.createBufferSource(); s.buffer = this._noiseBuf(); return s; };
+    const tone = (type, f0, f1, dur) => {
+      const o = ctx.createOscillator(); o.type = type;
+      o.frequency.setValueAtTime(f0, t);
+      if (f1 != null) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+      return o;
+    };
+    if (lane === 7) {
+      const o = tone("sine", 125, 46, 0.12);
+      env(o, 0.95, 0.004, 0.20); o.start(t); o.stop(t + 0.26);
+      const click = noiseSrc(); const hp = ctx.createBiquadFilter();
+      hp.type = "highpass"; hp.frequency.value = 1400; click.connect(hp);
+      env(hp, 0.25, 0.001, 0.03); click.start(t); click.stop(t + 0.05);
+    } else if (lane === 2) {
+      const o = tone("triangle", 190, 150, 0.14);
+      env(o, 0.32, 0.002, 0.13); o.start(t); o.stop(t + 0.2);
+      const ns = noiseSrc(); const bp = ctx.createBiquadFilter();
+      bp.type = "bandpass"; bp.frequency.value = 1900; bp.Q.value = 0.7;
+      ns.connect(bp); env(bp, 0.55, 0.001, 0.16); ns.start(t); ns.stop(t + 0.22);
+    } else if (lane === 0) {
+      const ns = noiseSrc(); const hp = ctx.createBiquadFilter();
+      hp.type = "highpass"; hp.frequency.value = 7200; ns.connect(hp);
+      env(hp, 0.42, 0.001, 0.045); ns.start(t); ns.stop(t + 0.08);
+    } else if (lane === 1) {
+      const ns = noiseSrc(); const hp = ctx.createBiquadFilter();
+      hp.type = "highpass"; hp.frequency.value = 4600; ns.connect(hp);
+      env(hp, 0.40, 0.002, 0.75); ns.start(t); ns.stop(t + 0.9);
+    } else if (lane === 6) {
+      const ns = noiseSrc(); const hp = ctx.createBiquadFilter();
+      hp.type = "highpass"; hp.frequency.value = 6200; ns.connect(hp);
+      env(hp, 0.26, 0.002, 0.34); ns.start(t); ns.stop(t + 0.42);
+      const o = tone("square", 540, null, 0.2); const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass"; lp.frequency.value = 1200; o.connect(lp);
+      env(lp, 0.10, 0.002, 0.30); o.start(t); o.stop(t + 0.34);
+    } else {
+      const base = lane === 3 ? 220 : lane === 4 ? 165 : 110;
+      const o = tone("sine", base, base * 0.55, 0.22);
+      env(o, 0.7, 0.003, 0.24); o.start(t); o.stop(t + 0.3);
+      const o2 = tone("triangle", base * 1.5, base * 0.8, 0.18);
+      env(o2, 0.18, 0.003, 0.18); o2.start(t); o2.stop(t + 0.22);
+    }
+  }
+
+  /* Metronome click (count-in + optional during play). */
+  metClick(accent = false, when = null) {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = when == null ? ctx.currentTime : Math.max(when, ctx.currentTime);
+    const o = ctx.createOscillator(); o.type = "square";
+    o.frequency.value = accent ? 1800 : 1200;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(accent ? 0.5 : 0.32, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+    o.connect(g); g.connect(this.metBus);
+    o.start(t); o.stop(t + 0.08);
+  }
+  /** 1-bar count-in at bpm; onBeat(n) per click, onDone() after the bar.
+      Returns a cancel function. */
+  countIn(bpm, beats, onBeat, onDone) {
+    this.ensure();
+    const ctx = this.ctx, beat = 60 / Math.max(1, bpm);
+    const t0 = ctx.currentTime + 0.08;
+    for (let i = 0; i < beats; i++) this.metClick(i === 0, t0 + i * beat);
+    const timers = [];
+    for (let i = 0; i < beats; i++)
+      timers.push(setTimeout(() => onBeat && onBeat(beats - i), (t0 - ctx.currentTime + i * beat) * 1000));
+    timers.push(setTimeout(() => onDone && onDone(), (t0 - ctx.currentTime + beats * beat) * 1000));
+    return () => timers.forEach(clearTimeout);
+  }
+
+  effectiveTrack(track) {
+    if (track === "drums") return this.drumBuf ? "drums" : (this.mixBuf ? "mix" : null);
+    return this.mixBuf ? "mix" : (this.drumBuf ? "drums" : null);
+  }
+  setTrack(track, ramp = 0.10) {
+    this.track = track;
+    if (!this.ctx) return;
+    const eff = this.effectiveTrack(track), now = this.ctx.currentTime;
+    const stems = this.stemsActive();
+    const set = (g, val) => { g.gain.cancelScheduledValues(now);
+      g.gain.setValueAtTime(g.gain.value, now);
+      g.gain.linearRampToValueAtTime(val, now + ramp); };
+    set(this.mixGain,  stems && eff === "mix"   ? 1 : 0);
+    set(this.drumGain, stems && eff === "drums" ? 1 : 0);
+  }
+  setSourceMode(mode) {
+    this.sourceMode = mode;
+    this.setTrack(this.track, 0.05);
+  }
+
+  _startSources() {
+    this._stopSources();
+    if (!this.hasAudio()) return;
+    const ctx = this.ctx, spd = this.speed;
+    const startSong = this._anchorSong + this.stemOffsetS;
+    const start = (buf, gain) => {
+      if (!buf) return;
+      const s = ctx.createBufferSource(); s.buffer = buf; s.connect(gain);
+      s.playbackRate.value = spd;
+      let when, off;
+      if (startSong < 0) { when = this._anchorCtx + (0 - startSong) / spd; off = 0; }
+      else { when = ctx.currentTime; off = Math.max(0, Math.min(startSong, buf.duration - 0.01)); }
+      try { s.start(when, off); } catch(_) { try { s.start(ctx.currentTime); } catch(__){} }
+      this._sources.push(s);
+    };
+    start(this.mixBuf, this.mixGain);
+    start(this.drumBuf, this.drumGain);
+    this.setTrack(this.track, 0.0);
+  }
+  _stopSources() {
+    for (const s of this._sources) { try { s.stop(); } catch(_){} try { s.disconnect(); } catch(_){} }
+    this._sources = [];
+  }
+
+  play(fromSong = null) {
+    this.ensure();
+    if (this.ctx.state === "suspended") { try { this.ctx.resume(); } catch(_){} }
+    this._anchorSong = fromSong != null ? fromSong : this._anchorSong;
+    this._anchorCtx  = this.ctx.currentTime;
+    this.state = "playing";
+    if (this.stemsActive()) this._startSources();
+    this._startScheduler();
+  }
+  pause() {
+    if (this.state !== "playing") return;
+    this._anchorSong = this.songTime();
+    this._stopSources();
+    this._stopScheduler();
+    this.state = "paused";
+  }
+  resume() { this.play(this._anchorSong); }
+  seek(toSong) {
+    const t = Math.max(0, toSong);
+    if (this.state === "playing") {
+      this._anchorSong = t; this._anchorCtx = this.ctx.currentTime;
+      if (this.stemsActive()) this._startSources();
+      this._schedSongT = t; this._metSongT = t;
+    } else {
+      this._anchorSong = t;
+    }
+  }
+  stop(to = 0) { this._stopSources(); this._stopScheduler(); this.state = "idle"; this._anchorSong = to; }
+  setSpeed(s) {
+    const was = this.state === "playing";
+    if (was) this.pause();
+    this.speed = s;
+    if (was) this.resume();
+  }
+
+  /* THE clock. */
+  songTime() {
+    if (this.state === "playing") return (this.ctx.currentTime - this._anchorCtx) * this.speed + this._anchorSong;
+    return this._anchorSong;
+  }
+  ctxTimeForSong(t) { return this._anchorCtx + (t - this._anchorSong) / this.speed; }
+
+  /* Editor/Preview-compat surface */
+  get playing() { return this.state === "playing"; }
+  get pausedAt() { return this._anchorSong; }
+  set pausedAt(v) { this._anchorSong = Math.max(0, v); }
+  pos() { return this.songTime(); }
+
+  /* Chart synth + metronome lookahead scheduler (when synth is audible). */
+  _startScheduler() {
+    this._stopScheduler();
+    this._schedSongT = this._anchorSong;
+    this._metSongT = this._anchorSong;
+    this._schedTimer = setInterval(() => this._schedule(), 25);
+    this._schedule();
+  }
+  _stopScheduler() { clearInterval(this._schedTimer); this._schedTimer = null; }
+  _schedule() {
+    if (this.state !== "playing") return;
+    const horizon = this.songTime() + 0.12 * this.speed;
+    if (this.model && this.synthActive()) {
+      const from = this._schedSongT;
+      if (horizon > from) {
+        this.model.getIndex().forRange(from - 1e-6, horizon, n => {
+          if (n.time <= from && !(from === this._anchorSong && n.time >= from - 1e-6)) return;
+          if (n.time > horizon) return;
+          this.synthVoice(n.lane, n.vel, this.ctxTimeForSong(n.time));
+        });
+        this._schedSongT = horizon;
+      }
+    }
+    if (this.metronomeOn && this.model && this.model.bpm > 0) {
+      const beat = 60 / this.model.bpm;
+      let k = Math.ceil((this._metSongT - 1e-9) / beat);
+      while (k * beat <= horizon) {
+        if (k * beat > this._metSongT - 1e-9)
+          this.metClick(k % 4 === 0, this.ctxTimeForSong(k * beat));
+        k++;
+      }
+      this._metSongT = horizon;
+    }
+  }
+}
+/* SHARED-AUDIO-END */
+
+/* SHARED-INPUT-BEGIN */
+/* ═══ SHARED-INPUT — Web MIDI + keyboard (Practice's InputAdapter,
+   generalized): device select, keybind rebind, per-pad MIDI remap
+   (padOverrides note→lane), normalized onHit(lane, velocity, midiNote).
+   Identical block in all three apps (byte-compared). */
+class SharedMidiInput {
+  constructor(defaultKeybinds = null) {
+    this.onHit = () => {};
+    this.onDevices = () => {};
+    this.onActivity = () => {};                    // any note-on (pad test/echo)
+    this.keybinds = { ...(defaultKeybinds || {}) }; // code → lane
+    this.enabled = false;
+    this.midi = null; this.inputs = []; this.activeInput = null;
+    this.padOverrides = new Map();                 // midiNote → lane (remap)
+    this._rebind = null;                           // keyboard rebind {lane,cb}
+    this._padRemap = null;                         // pad remap {lane,cb}
+    this._onKey = this._onKey.bind(this);
+    this._onMidi = this._onMidi.bind(this);
+    window.addEventListener("keydown", this._onKey, { passive: false });
+  }
+  laneForMidiNote(note) {
+    if (this.padOverrides.has(note)) return this.padOverrides.get(note);
+    const lane = MIDI_NOTE_TO_LANE.get(note);
+    return lane === undefined ? null : lane;
+  }
+  async initMidi() {
+    if (!navigator.requestMIDIAccess) return { ok: false, reason: "unsupported" };
+    try {
+      this.midi = await navigator.requestMIDIAccess({ sysex: false });
+      this.midi.onstatechange = () => this.refreshDevices();
+      this.refreshDevices();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: "denied" };
+    }
+  }
+  refreshDevices() {
+    this.inputs = this.midi ? Array.from(this.midi.inputs.values()) : [];
+    this.onDevices(this.inputs);
+  }
+  selectDevice(id) {
+    if (this.activeInput) { try { this.activeInput.onmidimessage = null; } catch(_){} }
+    this.activeInput = null;
+    if (!id || !this.midi) return;
+    const dev = this.midi.inputs.get(id);
+    if (dev) { dev.onmidimessage = this._onMidi; this.activeInput = dev; }
+  }
+  _onMidi(ev) {
+    const [status, d1, d2] = ev.data;
+    if ((status & 0xf0) === 0x90 && d2 > 0) {
+      if (this._padRemap) {                        // capture next pad hit
+        this.padOverrides.set(d1, this._padRemap.lane);
+        const cb = this._padRemap.cb; this._padRemap = null;
+        cb && cb(d1);
+        return;
+      }
+      const lane = this.laneForMidiNote(d1);
+      if (lane === null) return;
+      this.onActivity(lane, d2, d1);
+      if (this.enabled) this.onHit(lane, d2, d1);
+    }
+  }
+  _onKey(e) {
+    if (this._rebind) {
+      e.preventDefault();
+      if (e.code === "Escape") { const cb = this._rebind.cb; this._rebind = null; cb(null); return; }
+      for (const k of Object.keys(this.keybinds)) if (this.keybinds[k] === this._rebind.lane) delete this.keybinds[k];
+      for (const k of Object.keys(this.keybinds)) if (k === e.code) delete this.keybinds[k];
+      this.keybinds[e.code] = this._rebind.lane;
+      const cb = this._rebind.cb, lane = this._rebind.lane; this._rebind = null; cb(lane, e.code);
+      return;
+    }
+    if (!this.enabled || e.repeat) return;
+    const lane = this.keybinds[e.code];
+    if (lane !== undefined) {
+      if (e.code === "Space") e.preventDefault();
+      this.onHit(lane, 100, null);
+    }
+  }
+  startRebind(lane, cb) { this._rebind = { lane, cb }; }
+  cancelRebind() { this._rebind = null; }
+  startPadRemap(lane, cb) { this._padRemap = { lane, cb }; }
+  cancelPadRemap() { this._padRemap = null; }
+  clearPadOverrides() { this.padOverrides.clear(); }
+}
+/* SHARED-INPUT-END */
+
+/* SHARED-ASSETS-BEGIN */
+/* ═══ SHARED-ASSETS — asset-pipeline adapters shared by the Song Creator
+   and the Asset Manager (embedded in all apps for block uniformity):
+   center-crop image op · WAV encoder · iTunes/MusicBrainz search ·
+   single-channel audition controller (one playback at a time, re-press
+   toggles stop, play/pause label swap, optional live countdown). ═══ */
+
+/** Center-crop an image Blob/File to a size×size PNG.
+    → { dataUrl, bytes:Uint8Array, size } */
+function centerCropImageBlob(blob, size) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = async () => {
+      try {
+        const side = Math.min(img.width, img.height);
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = size;
+        cv.getContext("2d").drawImage(img,
+          (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
+        const outBlob = await new Promise(r => cv.toBlob(r, "image/png"));
+        resolve({ dataUrl: cv.toDataURL("image/png"),
+                  bytes: new Uint8Array(await outBlob.arrayBuffer()), size });
+      } catch (e) { reject(e); }
+      finally { URL.revokeObjectURL(img.src); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error("not a decodable image")); };
+    img.src = URL.createObjectURL(blob);
+  });
+}
+
+/** Encode an AudioBuffer slice as 16-bit PCM WAV (≤2 channels). Pure on
+    the AudioBuffer interface — node-testable with a stub buffer. */
+function encodeWavFromBuffer(buf, startS, durS) {
+  const sr = buf.sampleRate, ch = Math.min(2, buf.numberOfChannels);
+  const s0 = Math.max(0, Math.floor(startS * sr));
+  const n = Math.max(0, Math.min(Math.floor(durS * sr), buf.length - s0));
+  const out = new DataView(new ArrayBuffer(44 + n * ch * 2));
+  const ws = (o, str) => { for (let i = 0; i < str.length; i++) out.setUint8(o + i, str.charCodeAt(i)); };
+  ws(0, "RIFF"); out.setUint32(4, 36 + n * ch * 2, true); ws(8, "WAVEfmt ");
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, ch, true);
+  out.setUint32(24, sr, true); out.setUint32(28, sr * ch * 2, true);
+  out.setUint16(32, ch * 2, true); out.setUint16(34, 16, true);
+  ws(36, "data"); out.setUint32(40, n * ch * 2, true);
+  const chans = [];
+  for (let c = 0; c < ch; c++) chans.push(buf.getChannelData(c));
+  let p = 44;
+  for (let i = 0; i < n; i++)
+    for (let c = 0; c < ch; c++) {
+      const v = Math.max(-1, Math.min(1, chans[c][s0 + i]));
+      out.setInt16(p, v < 0 ? v * 0x8000 : v * 0x7FFF, true); p += 2;
+    }
+  return new Uint8Array(out.buffer);
+}
+
+/** iTunes album-art search (CORS-friendly). → [{thumbUrl, bigUrl, album,
+    artist, year}] — throws on network failure (caller shows recovery). */
+async function searchAlbumArt(term, limit = 6) {
+  const r = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=album&limit=${limit}`);
+  const data = await r.json();
+  return (data.results || []).map(res => ({
+    thumbUrl: res.artworkUrl100,
+    bigUrl: (res.artworkUrl100 || "").replace("100x100", "600x600"),
+    album: res.collectionName || "", artist: res.artistName || "",
+    year: res.releaseDate ? res.releaseDate.slice(0, 4) : "",
+  }));
+}
+
+/** MusicBrainz recording lookup (best-effort; browser UA applies).
+    → { title, artist, album } | null */
+async function searchMusicBrainzMeta(term) {
+  const r = await fetch(`https://musicbrainz.org/ws/2/recording/?query=${encodeURIComponent(term)}&fmt=json&limit=1`);
+  const data = await r.json();
+  const rec = data.recordings && data.recordings[0];
+  if (!rec) return null;
+  return {
+    title: rec.title || "",
+    artist: rec["artist-credit"] && rec["artist-credit"][0] ? rec["artist-credit"][0].name : "",
+    album: rec.releases && rec.releases[0] ? rec.releases[0].title : "",
+  };
+}
+
+/** Single-channel audition controller bound to a SharedAudioEngine.
+    One playback at a time; start() on the active button toggles stop;
+    play/pause label swap; optional live countdown on the button. */
+function makeAudition(getEngine) {
+  let cur = null;   // { src, btn, idle, raf }
+  function stop() {
+    if (!cur) return;
+    const a = cur; cur = null;
+    if (a.raf) cancelAnimationFrame(a.raf);
+    try { a.src.onended = null; a.src.stop(); } catch (_) {}
+    if (a.btn) a.btn.textContent = a.idle;
+  }
+  function isActive(btn) { return !!(cur && cur.btn === btn); }
+  /** opts: { btn, idle, offset=0, durS, countdown=false, pauseLabel="⏸" } */
+  function start(buf, opts) {
+    stop();
+    const eng = getEngine();
+    const { btn, idle, offset = 0, durS, countdown = false } = opts;
+    const pauseLabel = opts.pauseLabel != null ? opts.pauseLabel : "⏸";
+    const dur = durS != null ? durS : Math.max(0, buf.duration - offset);
+    const src = eng.ctx.createBufferSource();
+    src.buffer = buf; src.connect(eng.master);
+    const t0 = eng.ctx.currentTime;
+    cur = { src, btn, idle, raf: 0 };
+    src.onended = () => { if (cur && cur.src === src) stop(); };
+    src.start(0, offset, dur);
+    if (btn) {
+      if (countdown) {
+        const tick = () => {
+          if (!cur || cur.src !== src) return;
+          const left = Math.max(0, dur - (eng.ctx.currentTime - t0));
+          btn.textContent = pauseLabel + " " + Math.ceil(left) + " s";
+          cur.raf = requestAnimationFrame(tick);
+        };
+        tick();
+      } else btn.textContent = pauseLabel;
+    }
+  }
+  return { start, stop, isActive };
+}
+/* SHARED-ASSETS-END */
+
+const AudioEngine = SharedAudioEngine;
+
+/* ══════════════════════════════════════════════════════════════════════
+   PART 4 — APP (edit-mode state machine, transport, wiring, rAF loop)
+   Edit ops call ONLY the shared core: ChartModel.addNote / moveByIds /
+   reclassifyByIds / deleteByIds / undo / redo and snapTime. No edit
+   logic is reimplemented here — this is the rotated renderer + input.
+   ══════════════════════════════════════════════════════════════════════ */
+const $ = id => document.getElementById(id);
+const fmtTime = s => {
+  const m = Math.floor(s / 60), ss = s % 60;
+  return `${String(m).padStart(2,"0")}:${ss.toFixed(3).padStart(6,"0")}`;
+};
+const fmtShort = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._id); toast._id = setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+const app = {
+  model: null, renderer: null, audio: null,
+  gridSubs: 4, snapOn: true,
+  prefs: { squares: false, kickLine: false, beatGrid: true, noteScale: 1.0,
+           laneVisible: [true,true,true,true,true,true,true,true] },
+  rec: new RecordSession(),
+  recState: "idle",
+  _cancelCountIn: null,
+  midiIn: null,
+  st: {  // per-frame render state
+    editMode: false, hoverNote: null, dragId: null, snapGuideT: null,
+    gridSubs: 4,
+  },
+  setModel(m) {
+    this.model = m;
+    if (this.renderer) this.renderer.model = m;
+    if (this.audio) { this.audio.stop(0); this.audio.model = m; }
+    view.pos = 0;
+    $("bpmRead").textContent = `${m.bpm} BPM`;
+    $("seekT1").textContent = fmtShort(m.duration);
+    this.dirty();
+    $("btnPlay").innerHTML = '▶ Play<span class="kbd">Space</span>';
+  },
+  dirty() { this.renderer.mainDirty = true; },
+  snap(t, skipIds = null) {
+    const r = snapTime(this.model, t, {
+      snapOn: this.snapOn, subsPerBeat: this.gridSubs,
+      noteSnapTolS: skipIds ? (8 / view.spanPx()) * view.fall : 0, skipIds,
+    });
+    this.st.snapGuideT = r.guideT;
+    return r.t;
+  },
+  hitNote(x, y) {
+    const lane = view.laneAtX(x);
+    if (lane < 0) return null;
+    const tol = view.fall * CONFIG.EDIT_HIT_TOL_FRAC;
+    return this.model.getIndex().noteAt(view.tOf(y), lane, tol);
+  },
+  noteDesc(n) {
+    return `${CONFIG.LANES[n.lane].name} @ ${fmtTime(n.time)} · vel ${n.vel}${n.flag ? " · ⚑" + n.flag : ""}`;
+  },
+  setNoteInfo(msg) { $("noteInfo").textContent = msg; },
+  setEdit(on) {
+    if (on === this.st.editMode) return;
+    if (on) { this.audio.pause(); $("btnPlay").innerHTML = '▶ Play<span class="kbd">Space</span>'; }
+    this.st.editMode = on;
+    $("stage").classList.toggle("editing", on);
+    $("btnEdit").classList.toggle("edit-on", on);
+    $("btnEdit").innerHTML = on ? '✎ Editing<span class="kbd">Esc</span>' : '✎ Edit<span class="kbd">E</span>';
+    $("statusHint").textContent = on
+      ? "EDIT — click = place at snapped grid · drag = move (vertical) / reclassify (horizontal) · right-click = delete (sweep = eraser) · wheel = scrub · Ctrl+wheel = fall zoom"
+      : "Press ✎ Edit (E) to fix notes in place — or play and use keys 1–8 to tap notes in at the hit line";
+    this.dirty();
+  },
+  togglePlay() {
+    if (this.audio.playing) {
+      this.audio.pause();
+      $("btnPlay").innerHTML = '▶ Play<span class="kbd">Space</span>';
+    } else {
+      this.setEdit(false);
+      this.audio.play();
+      $("btnPlay").innerHTML = '⏸ Pause<span class="kbd">Space</span>';
+    }
+  },
+  onPlaybackEnded() {
+    this.audio.stop(this.model.duration);
+    $("btnPlay").innerHTML = '▶ Play<span class="kbd">Space</span>';
+    toast("End of chart");
+  },
+  scrub(dt) {
+    const t = Math.max(0, Math.min(this.model.duration + 2, this.audio.pausedAt + dt));
+    this.audio.pausedAt = t;
+    this.dirty();
+  },
+  placeAt(t, lane, viaKey = false) {
+    this.model.pushUndo();
+    const snapped = this.snap(Math.max(0, t));
+    this.st.snapGuideT = null;
+    const n = this.model.addNote(snapped, lane, 100);
+    this.dirty();
+    this.setNoteInfo(`${this.noteDesc(n)} (added${viaKey ? ", key" : ""})`);
+    return n;
+  },
+  undo() {
+    if (!this.model.undo()) { toast("Nothing to undo"); return; }
+    this.dirty();
+  },
+  redo() {
+    if (!this.model.redo()) { toast("Nothing to redo"); return; }
+    this.dirty();
+  },
+};
+
+/* ── Edit-mode pointer state machine ─────────────────────────────────── */
+const stage = $("stage");
+const drag = { kind: null, startX: 0, startY: 0, note: null, origT: 0, origLane: 0,
+               downT: 0, erasedAny: false };
+function resetDrag() {
+  drag.kind = null; drag.note = null; drag.erasedAny = false;
+  app.st.dragId = null; app.st.snapGuideT = null;
+}
+function localXY(e) {
+  const r = stage.getBoundingClientRect();
+  return [e.clientX - r.left, e.clientY - r.top];
+}
+function eraseAt(x, y) {
+  const n = app.hitNote(x, y);
+  if (!n) return;
+  if (!drag.erasedAny) { app.model.pushUndo(); drag.erasedAny = true; }
+  app.model.deleteByIds(new Set([n.id]));
+  app.dirty();
+  app.setNoteInfo(`🗑 ${app.noteDesc(n)} (deleted)`);
+}
+
+stage.addEventListener("pointerdown", e => {
+  if (!app.st.editMode) return;
+  stage.setPointerCapture(e.pointerId);
+  const [x, y] = localXY(e);
+  drag.startX = x; drag.startY = y;
+  if (e.button === 2) {
+    drag.kind = "eraser"; drag.erasedAny = false;
+    eraseAt(x, y);
+    return;
+  }
+  if (e.button !== 0) return;
+  const n = app.hitNote(x, y);
+  if (n) {
+    drag.kind = "note-pending"; drag.note = n;
+    drag.origT = n.time; drag.origLane = n.lane;
+    drag.downT = view.tOf(y);
+    app.setNoteInfo(app.noteDesc(n));
+  } else {
+    drag.kind = "place-pending";
+  }
+});
+stage.addEventListener("pointermove", e => {
+  const [x, y] = localXY(e);
+  if (!app.st.editMode) return;
+  if (!drag.kind) {
+    const h = app.hitNote(x, y);
+    if (h !== app.st.hoverNote) {
+      app.st.hoverNote = h;
+      if (h) app.setNoteInfo(app.noteDesc(h));
+    }
+    stage.style.cursor = h ? "grab" : "crosshair";
+    return;
+  }
+  const dist = Math.hypot(x - drag.startX, y - drag.startY);
+  switch (drag.kind) {
+    case "note-pending":
+      if (dist > 4) { app.model.pushUndo(); drag.kind = "note"; app.st.dragId = drag.note.id; }
+      else break;
+      /* fallthrough */
+    case "note": {
+      const skip = new Set([drag.note.id]);
+      const tWant = drag.origT + (view.tOf(y) - drag.downT);
+      const tSnap = app.snap(Math.max(0, tWant), skip);
+      const lane = view.laneAtX(x);
+      // SHARED-CORE ops — same functions the MIDI editor calls
+      app.model.moveByIds(skip, tSnap - drag.note.time, 0);
+      if (lane >= 0 && lane !== drag.note.lane) app.model.reclassifyByIds(skip, lane);
+      app.dirty();
+      app.setNoteInfo(`${app.noteDesc(drag.note)} (moving…)`);
+      break;
+    }
+    case "eraser": eraseAt(x, y); break;
+  }
+});
+stage.addEventListener("pointerup", e => {
+  const [x, y] = localXY(e);
+  if (!app.st.editMode) { resetDrag(); return; }
+  switch (drag.kind) {
+    case "place-pending": {
+      const lane = view.laneAtX(x);
+      if (lane >= 0 && y >= CONFIG.PAD_TOP && y <= view.h) app.placeAt(view.tOf(y), lane);
+      break;
+    }
+    case "note": {
+      app.model.sortNotes();
+      app.model.recalcDuration();
+      app.setNoteInfo(`${app.noteDesc(drag.note)} — Ctrl+Z to undo`);
+      app.dirty();
+      break;
+    }
+  }
+  resetDrag();
+});
+stage.addEventListener("pointercancel", resetDrag);
+stage.addEventListener("contextmenu", e => e.preventDefault());
+stage.addEventListener("wheel", e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {                       // fall-window zoom
+    view.fall = Math.min(CONFIG.FALL_MAX, Math.max(CONFIG.FALL_MIN,
+      view.fall * (e.deltaY > 0 ? 1.12 : 1 / 1.12)));
+    $("fallRead").textContent = view.fall.toFixed(1) + "s";
+    app.dirty();
+    return;
+  }
+  if (app.audio.playing) return;                      // wheel-scrub only when paused
+  app.scrub((e.deltaY / view.spanPx()) * view.fall);
+}, { passive: false });
+
+/* ── Seek bar ────────────────────────────────────────────────────────── */
+let seeking = false;
+function seekTo(e) {
+  const r = $("seekBar").getBoundingClientRect();
+  const frac = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  app.audio.seek(frac * app.model.duration);
+  app.dirty();
+}
+$("seekBar").addEventListener("pointerdown", e => { seeking = true; $("seekBar").setPointerCapture(e.pointerId); seekTo(e); });
+$("seekBar").addEventListener("pointermove", e => { if (seeking) seekTo(e); });
+$("seekBar").addEventListener("pointerup", () => { seeking = false; });
+
+/* ── Keyboard ────────────────────────────────────────────────────────── */
+window.addEventListener("keydown", e => {
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  const k = e.key.toLowerCase();
+  const ctrl = e.ctrlKey || e.metaKey;
+  if (k === " ")            { e.preventDefault(); app.togglePlay(); }
+  else if (k === "home")    { app.audio.stop(0); app.dirty(); $("btnPlay").innerHTML = '▶ Play<span class="kbd">Space</span>'; }
+  else if (k === "e")       app.setEdit(!app.st.editMode);
+  else if (k === "escape")  app.setEdit(false);
+  else if (k === "g")       $("btnSnap").click();
+  else if (ctrl && k === "z") { e.preventDefault(); app.undo(); }
+  else if (ctrl && k === "y") { e.preventDefault(); app.redo(); }
+  else if (CONFIG.HOTKEY_LANES[k] !== undefined) {
+    const lane = CONFIG.HOTKEY_LANES[k];
+    if (app.recState === "recording") {
+      recCaptureNow(lane, 100);
+      app.audio.synthVoice(lane, 100);
+      app.setNoteInfo(`● captured ${CONFIG.LANES[lane].name}`);
+    } else {
+      // place at the hit line — works during playback (tap-along charting)
+      app.placeAt(app.audio.pos(), lane, true);
+    }
+  }
+});
+
+/* ── Toolbar wiring ──────────────────────────────────────────────────── */
+$("btnPlay").addEventListener("click", () => app.togglePlay());
+$("btnStop").addEventListener("click", () => {
+  app.audio.stop(0); app.dirty();
+  $("btnPlay").innerHTML = '▶ Play<span class="kbd">Space</span>';
+});
+$("btnEdit").addEventListener("click", () => app.setEdit(!app.st.editMode));
+$("speedSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  app.audio.setSpeed(+b.dataset.spd);
+  for (const x of $("speedSeg").children) x.classList.toggle("on", x === b);
+});
+$("btnFallMinus").addEventListener("click", () => {
+  view.fall = Math.max(CONFIG.FALL_MIN, view.fall - 0.5);
+  $("fallRead").textContent = view.fall.toFixed(1) + "s"; app.dirty();
+});
+$("btnFallPlus").addEventListener("click", () => {
+  view.fall = Math.min(CONFIG.FALL_MAX, view.fall + 0.5);
+  $("fallRead").textContent = view.fall.toFixed(1) + "s"; app.dirty();
+});
+$("gridSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  app.gridSubs = app.st.gridSubs = +b.dataset.res;
+  for (const x of $("gridSeg").children) x.classList.toggle("on", x === b);
+  app.dirty();
+});
+$("btnSnap").addEventListener("click", () => {
+  app.snapOn = !app.snapOn;
+  $("btnSnap").classList.toggle("toggled", app.snapOn);
+});
+$("btnUndo").addEventListener("click", () => app.undo());
+$("btnRedo").addEventListener("click", () => app.redo());
+$("densitySel").addEventListener("change", e => {
+  app.setModel(generateDemoChart(e.target.value));
+  toast(`Demo chart regenerated — ${app.model.notes.length.toLocaleString()} notes`);
+});
+$("btnExport").addEventListener("click", () => {
+  const blob = new Blob([JSON.stringify(app.model.toJSON())], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "parakit-chart.json";
+  a.click(); URL.revokeObjectURL(a.href);
+  toast(`⇩ Exported ${app.model.notes.length.toLocaleString()} notes (parakit-chart-v1)`);
+});
+$("btnImport").addEventListener("click", () => $("importFile").click());
+$("importFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { await importChartFile(f); }
+  catch (err) { toast("Import failed: " + err.message); }
+  e.target.value = "";
+});
+$("btnHelp").addEventListener("click", () => $("helpPop").classList.toggle("open"));
+
+
+/* ══ shared I/O + §4 settings + §2 record (Preview) ══ */
+app.ui = { countInText: null };
+app.loop = { on: false, a: 0, b: 0 };
+app.audioOffRead = 0;
+
+async function importChartFile(f) {
+  const name = f.name.toLowerCase();
+  let model;
+  if (name.endsWith(".mid") || name.endsWith(".midi")) {
+    const r = parseMidi(await f.arrayBuffer());
+    model = chartFromTuples(r.notes, Math.round(r.bpm * 100) / 100);
+  } else if (name.endsWith(".rlrr")) {
+    const r = parseRlrr(await f.text());
+    model = chartFromTuples(r.notes, r.bpm);
+  } else {
+    const obj = JSON.parse(await f.text());
+    if (obj.format !== "parakit-chart-v1") throw new Error("not a parakit-chart-v1 file");
+    model = ChartModel.fromJSON(obj);
+  }
+  app.setModel(model);
+  toast(`⇧ ${f.name}: ${model.notes.length.toLocaleString()} notes @ ${model.bpm} BPM`);
+}
+$("importFile").setAttribute("accept", ".json,.mid,.midi,.rlrr");
+
+async function loadStem(which, f) {
+  await app.audio.unlock();
+  const buf = await app.audio.decode(await f.arrayBuffer());
+  if (which === "mix") { app.audio.setMix(buf); $("btnMix").classList.add("toggled"); }
+  else { app.audio.setDrum(buf); $("btnDrums").classList.add("toggled"); app.audio.setTrack("drums"); }
+  if (app.audio.sourceMode === "synth") setSrcMode("both");
+  toast(`🎵 ${which} stem loaded (${buf.duration.toFixed(1)}s)`);
+}
+function setSrcMode(mode) {
+  app.audio.setSourceMode(mode);
+  for (const b of $("srcSeg").children) b.classList.toggle("on", b.dataset.src === mode);
+}
+$("btnMix").addEventListener("click", () => $("mixFile").click());
+$("btnDrums").addEventListener("click", () => $("drumsFile").click());
+$("mixFile").addEventListener("change", e => { if (e.target.files[0]) loadStem("mix", e.target.files[0]); e.target.value = ""; });
+$("drumsFile").addEventListener("change", e => { if (e.target.files[0]) loadStem("drums", e.target.files[0]); e.target.value = ""; });
+$("srcSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.src !== "synth" && !app.audio.hasAudio()) { toast("Load a Mix or Drums stem first"); return; }
+  setSrcMode(b.dataset.src);
+});
+
+/* record (count-in, metronome, keyboard 1-8 + MIDI at the hit line) */
+function recCaptureNow(lane, vel) { return app.rec.capture(app.audio.songTime(), lane, vel); }
+function startRecord() {
+  if (app.recState !== "idle") return stopRecord();
+  const begin = () => {
+    app.recState = "recording";
+    $("btnRecord").classList.add("rec");
+    $("btnRecord").textContent = "■ Stop";
+    app.rec.start();
+    app.midiIn.enabled = true;
+    app.setEdit(false);
+    app.audio.play(app.audio.pausedAt);
+    $("btnPlay").innerHTML = '⏸ Pause<span class="kbd">Space</span>';
+    app.setNoteInfo("● RECORDING — 1-8 keys / MIDI pads land at the hit line; Stop commits");
+  };
+  if ($("btnCountIn").classList.contains("toggled")) {
+    app.recState = "countin";
+    $("btnRecord").classList.add("rec");
+    $("btnRecord").textContent = "■ Cancel";
+    app.audio.ensure();
+    app._cancelCountIn = app.audio.countIn(app.model.bpm, 4,
+      n => { app.ui.countInText = String(n); },
+      () => { app.ui.countInText = null; begin(); });
+  } else begin();
+}
+function stopRecord() {
+  if (app.recState === "countin") {
+    if (app._cancelCountIn) app._cancelCountIn();
+    app.ui.countInText = null;
+    app.recState = "idle";
+    $("btnRecord").classList.remove("rec");
+    $("btnRecord").textContent = "● Record";
+    return;
+  }
+  if (app.recState !== "recording") return;
+  app.rec.stop();
+  const k = app.rec.commit(app.model, { snapOn: app.snapOn, subsPerBeat: app.gridSubs });
+  app.recState = "idle";
+  app.midiIn.enabled = false;
+  $("btnRecord").classList.remove("rec");
+  $("btnRecord").textContent = "● Record";
+  app.audio.pause();
+  $("btnPlay").innerHTML = '▶ Play<span class="kbd">Space</span>';
+  app.dirty();
+  toast(k ? `● Recorded ${k} hit(s) — Ctrl+Z undoes the take` : "● Recording stopped — no hits captured");
+}
+$("btnRecord").addEventListener("click", startRecord);
+$("btnCountIn").addEventListener("click", () => $("btnCountIn").classList.toggle("toggled"));
+$("btnMetro").addEventListener("click", () => {
+  app.audio.metronomeOn = !app.audio.metronomeOn;
+  $("btnMetro").classList.toggle("toggled", app.audio.metronomeOn);
+});
+
+app.midiIn = new SharedMidiInput({});
+app.midiIn.onHit = (lane, vel) => {
+  if (app.recState === "recording") { recCaptureNow(lane, vel); app.audio.synthVoice(lane, vel); }
+};
+app.midiIn.onDevices = devs => {
+  const sel = $("midiDevSel"), cur = sel.value;
+  sel.innerHTML = '<option value="">MIDI: none</option>' +
+    devs.map(d => `<option value="${d.id}">${d.name || d.id}</option>`).join("");
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+};
+app.midiIn.onActivity = (lane, vel, note) => {
+  const row = document.querySelector(`#padRows [data-lane="${lane}"] .dot`);
+  if (row) { row.style.opacity = 1; setTimeout(() => row.style.opacity = .25, 160); }
+  $("padStatus").textContent = `note ${note} → ${CONFIG.LANES[lane].name} (vel ${vel})`;
+  if (!app.midiIn.enabled) app.audio.synthVoice(lane, vel);
+};
+$("midiDevSel").addEventListener("focus", async () => {
+  if (!app.midiIn.midi) {
+    const r = await app.midiIn.initMidi();
+    if (!r.ok) toast(r.reason === "unsupported" ? "Web MIDI not supported here" : "MIDI access denied");
+  }
+});
+$("midiDevSel").addEventListener("change", e => app.midiIn.selectDevice(e.target.value));
+function togglePop(id) {
+  for (const p of document.querySelectorAll(".popover"))
+    p.classList.toggle("open", p.id === id ? !p.classList.contains("open") : false);
+}
+$("btnPads").addEventListener("click", async () => {
+  togglePop("popPads");
+  if (!app.midiIn.midi) await app.midiIn.initMidi();
+});
+(function buildPadRows() {
+  $("padRows").innerHTML = CONFIG.LANES.map((l, i) =>
+    `<div class="row" data-lane="${i}">
+       <span class="dot" style="width:11px;height:11px;border-radius:50%;background:${l.color};opacity:.25;transition:opacity .12s"></span>
+       <span style="width:64px;color:${l.color}">${l.name}</span>
+       <button data-remap="${i}" style="font-size:11px;padding:2px 8px">Remap</button>
+     </div>`).join("");
+  $("padRows").addEventListener("click", async e => {
+    const b = e.target.closest("button[data-remap]"); if (!b) return;
+    if (!app.midiIn.midi) { const r = await app.midiIn.initMidi(); if (!r.ok) { toast("No MIDI access"); return; } }
+    const lane = +b.dataset.remap;
+    b.textContent = "hit pad…";
+    app.midiIn.startPadRemap(lane, note => {
+      b.textContent = "Remap";
+      toast(`Pad note ${note} → ${CONFIG.LANES[lane].name}`);
+    });
+  });
+})();
+$("padClear").addEventListener("click", () => { app.midiIn.clearPadOverrides(); toast("Pad overrides reset"); });
+
+/* settings */
+$("btnSettings").addEventListener("click", () => togglePop("popSettings"));
+(function buildLaneVis() {
+  $("laneVisRow").innerHTML = CONFIG.LANES.map((l, i) =>
+    `<label style="margin-right:4px"><input type="checkbox" data-vis="${i}" checked>
+       <span style="color:${l.color}">${l.name}</span></label>`).join("");
+  $("laneVisRow").addEventListener("change", e => {
+    const cb = e.target.closest("input[data-vis]"); if (!cb) return;
+    app.prefs.laneVisible[+cb.dataset.vis] = cb.checked;
+    app.dirty();
+  });
+})();
+$("pSquares").addEventListener("change", () => { app.prefs.squares = $("pSquares").checked; app.dirty(); });
+$("pKickLine").addEventListener("change", () => { app.prefs.kickLine = $("pKickLine").checked; app.dirty(); });
+$("pBeatGrid").addEventListener("change", () => { app.prefs.beatGrid = $("pBeatGrid").checked; app.dirty(); });
+$("pNoteSize").addEventListener("input", () => {
+  app.prefs.noteScale = +$("pNoteSize").value / 100;
+  $("pNoteSizeV").textContent = app.prefs.noteScale.toFixed(1) + "×";
+  app.dirty();
+});
+$("pAudioOff").addEventListener("input", () => {
+  app.audio.stemOffsetS = +$("pAudioOff").value / 1000;
+  $("pAudioOffV").textContent = $("pAudioOff").value + " ms";
+  if (app.audio.playing) app.audio.seek(app.audio.songTime());   // re-arm stems
+});
+function loopRead() {
+  $("pLoopV").textContent = app.loop.on
+    ? `${fmtTime(app.loop.a)} → ${fmtTime(app.loop.b)}` : "off";
+}
+$("pLoopA").addEventListener("click", () => { app.loop.a = view.pos; app.loop.on = app.loop.b > app.loop.a; loopRead(); });
+$("pLoopB").addEventListener("click", () => { app.loop.b = view.pos; app.loop.on = app.loop.b > app.loop.a; loopRead(); });
+$("pLoopClear").addEventListener("click", () => { app.loop.on = false; app.loop.a = app.loop.b = 0; loopRead(); });
+
+/* receive handoff from the MIDI editor */
+$("btnReceive").addEventListener("click", () => {
+  try {
+    const raw = localStorage.getItem("parakit-handoff");
+    if (!raw) { toast("Nothing staged — use the MIDI editor's 📺 → Preview button first"); return; }
+    const obj = JSON.parse(raw);
+    app.setModel(ChartModel.fromJSON(obj));
+    toast(`⇪ Received ${app.model.notes.length.toLocaleString()} notes from the MIDI editor`);
+  } catch (e) { toast("Receive failed: " + e.message); }
+});
+
+/* ── Boot + rAF loop ─────────────────────────────────────────────────── */
+(() => {
+  app.model = generateDemoChart("dense");
+  app.renderer = new Renderer(app.model);
+  app.audio = new AudioEngine(app.model);
+  $("bpmRead").textContent = `${app.model.bpm} BPM`;
+  $("seekT1").textContent = fmtShort(app.model.duration);
+})();
+
+let _frames = 0, _lastFpsT = performance.now(), _lastStatT = 0;
+function frame(now) {
+  _frames++;
+  view.pos = app.audio.playing ? app.audio.pos() : app.audio.pausedAt;
+
+  // loop wrap + end-of-chart (engine is shared; transport policy lives here)
+  if (app.audio.playing) {
+    if (app.loop && app.loop.on && app.loop.b > app.loop.a && view.pos >= app.loop.b)
+      app.audio.seek(app.loop.a);
+    else if (view.pos > app.model.duration + 0.5 && app.recState !== "recording")
+      app.onPlaybackEnded();
+  }
+  // during playback everything moves — repaint every frame (the visible
+  // window is index-culled, so this stays cheap even on the insane chart)
+  if (app.audio.playing || app.renderer.mainDirty) app.renderer.drawMain(app.st);
+  app.renderer.drawOverlay(app.st);
+  if (app.ui && app.ui.countInText) {
+    const c = app.renderer.octx;
+    c.font = "700 72px Consolas,monospace"; c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillStyle = "rgba(255,80,80,.9)";
+    c.fillText(app.ui.countInText, view.w / 2, view.h * 0.4);
+  }
+
+  if (app.audio.playing || now - _lastStatT > 250) $("timeRead").textContent = fmtTime(view.pos);
+  const frac = app.model.duration > 0 ? Math.min(1, view.pos / app.model.duration) : 0;
+  $("seekFill").style.width = (frac * 100) + "%";
+  $("seekHandle").style.left = `calc(${frac * 100}% - 1px)`;
+
+  if (now - _lastStatT > 250) {
+    _lastStatT = now;
+    $("noteCount").textContent = app.model.notes.length.toLocaleString();
+    $("drawnCount").textContent = app.renderer.drawnNotes.toLocaleString();
+    $("seekT0").textContent = fmtShort(view.pos);
+  }
+  if (now - _lastFpsT >= 500) {
+    const fps = Math.round(_frames * 1000 / (now - _lastFpsT));
+    const el = $("fps");
+    el.textContent = fps;
+    el.className = fps >= 50 ? "good" : (fps < 30 ? "bad" : "");
+    _frames = 0; _lastFpsT = now;
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// Debug/verification handle.
+window.__parakit = { app, view, CONFIG };
+</script>
+</body>
+</html>
