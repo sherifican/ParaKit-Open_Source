@@ -295,6 +295,10 @@ source and compiling a standalone `.exe`.
   stems route to the drums bus, so at a glance you can tell which songs ship **separate drum
   stems** that "You drum" / "Mute drums on miss" will silence, versus songs whose drums are baked
   into the backing mix (and so always play).
+- **Fixed — Setup card toggles were unclickable.** The switch knob (a decorative overlay) sat on
+  top of the hidden checkbox and swallowed every click, so Auto-kick / Square notes / Kick-as-line
+  / Beat-grid / Mute-drums-on-miss never responded. The knob is now click-transparent, so clicks
+  reach the checkbox and the toggles work (verified in-browser).
 
 ### Preview Track v2 (Web Edition) — 2026-06-12
 - **Hide notes past the hit line.** New toggle in Preview Settings (off by default) — hides

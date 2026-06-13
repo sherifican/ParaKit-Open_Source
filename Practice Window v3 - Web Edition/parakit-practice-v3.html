@@ -115,7 +115,7 @@ input[type=color]{width:34px; height:26px; border:1px solid var(--line2);
 .switch{position:relative; width:42px; height:24px; flex:none; cursor:pointer}
 .switch input{position:absolute; opacity:0; inset:0; cursor:pointer}
 .switch i{position:absolute; inset:0; border-radius:5px; background:#232347;
-  border:1px solid var(--line2); transition:background .15s ease}
+  border:1px solid var(--line2); transition:background .15s ease; pointer-events:none}
 .switch i::after{content:""; position:absolute; top:2px; left:2px; width:18px;
   height:18px; border-radius:4px; background:#6f6a94; transition:all .15s ease}
 .switch input:checked + i{background:linear-gradient(90deg,#6D2BD9,#9F67FF)}
