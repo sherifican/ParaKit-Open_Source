@@ -1824,6 +1824,7 @@ _CH_NOTE_MAP = {
     35: (0, None), 36: (0, None),                 # Kick
     37: (1, None), 38: (1, None), 40: (1, None),  # Snare
     42: (2, 66),   44: (2, 66),   46: (2, 66),   # Hi-Hat -> yellow cymbal
+    26: (2, 66),   21: (2, 66),   22: (2, 66),   23: (2, 66),   # Hi-Hat alt/extended-kit notes -> yellow cymbal
     49: (2, 66),   55: (2, 66),   57: (2, 66),   # Crash  -> yellow cymbal
     51: (3, 67),   53: (3, 67),   59: (3, 67),   # Ride   -> blue cymbal
     48: (2, None), 50: (2, None),                 # Tom 1  -> yellow pad
@@ -5314,7 +5315,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.59-12"
+    VERSION = "4.4.60-12"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -12747,7 +12748,7 @@ demucs.separate.main()
     # Order matches in-game left-to-right layout.
     # shape: 'circle' for cymbals, 'bar' for drums, 'kick' for kick line
     MIDI_EDITOR_LANES = [
-        {"name": "Hi-Hat",    "midi": [42, 44, 46], "color": "#00e5ff", "shape": "circle"},
+        {"name": "Hi-Hat",    "midi": [42, 44, 46, 26, 21, 22, 23], "color": "#00e5ff", "shape": "circle"},
         {"name": "Crash",     "midi": [49, 55, 57], "color": "#ff8c00", "shape": "circle"},
         {"name": "Snare",     "midi": [37, 38, 40], "color": "#e63946", "shape": "bar"},
         {"name": "Tom 1",     "midi": [48, 50],     "color": "#1a3a8f", "shape": "bar"},
@@ -22951,6 +22952,15 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.4.60-12 - MIDI Editor: alternate hi-hat notes now import correctly\n"
+              "  Changes/Additions:\n"
+              "  - Hi-hat hits recorded with alternate MIDI notes (21/22/23/26,\n"
+              "    used by some electronic kits) now import into the Hi-Hat lane\n"
+              "    in the MIDI Editor - and export correctly to Clone Hero -\n"
+              "    instead of being silently dropped. Standard hi-hat notes\n"
+              "    (42/44/46) already worked.\n")
+
+        wn_entry(wn_latest,
               "v4.4.59-12 - MIDI Editor: Velocity Lane colored by drum\n"
               "  Changes/Additions:\n"
               "  - In the MIDI Editor's Velocity Lane, each velocity bar is now\n"
@@ -27439,7 +27449,7 @@ demucs.separate.main()
 
     # Lane definitions match MIDI Editor — same order as in-game
     VIZ_LANES = [
-        {"name": "Hi-Hat", "midi": [42,44,46], "color": "#00e5ff", "shape": "circle"},
+        {"name": "Hi-Hat", "midi": [42,44,46,26,21,22,23], "color": "#00e5ff", "shape": "circle"},
         {"name": "Crash",  "midi": [49,55,57], "color": "#ff8c00", "shape": "circle"},
         {"name": "Snare",  "midi": [37,38,40], "color": "#e63946", "shape": "bar"},
         {"name": "Tom 1",  "midi": [48,50],    "color": "#1a3a8f", "shape": "bar"},

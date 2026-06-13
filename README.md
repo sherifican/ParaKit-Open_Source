@@ -269,6 +269,12 @@ source and compiling a standalone `.exe`.
 
 ## Changelog
 
+### v4.4.60-12
+- **MIDI Editor — alternate hi-hat MIDI notes now import correctly.** Hi-hat hits recorded with
+  alternate MIDI notes (**21 / 22 / 23 / 26**, used by some electronic kits) now import into the
+  **Hi-Hat lane** in the MIDI Editor — and export correctly to Clone Hero — instead of being
+  silently dropped. Standard hi-hat notes (42 / 44 / 46) already worked.
+
 ### v4.4.59-12
 - **MIDI Editor — Velocity Lane colored by drum.** Each bar in the Velocity Lane is now drawn
   in its drum's lane color (Hi-Hat cyan, Snare red, Kick pink, toms blue/green/purple, Crash
