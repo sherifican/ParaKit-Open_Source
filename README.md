@@ -45,109 +45,6 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan
 *NOTE: *The screenshots show "MIDI Unsupported" that is just because they were not loaded in a supported browser yet, I took the screenshots
 in Firefox before I had fixed the MIDI config, see below for details, although Chrome and Edge work best for MIDI inputs**
 
-## 🥁 Practice Mode (v2 / v3) — Web Edition
-
-> ### 🎯 What these web tools are for — and what they're *not*
-> **The Practice and Preview web editions are not meant to replace Paradiddle — or any other rhythm game you play your charts on.** They're **authoring & QA tools**. The whole point is to make charting easier: to **spot and fix errors fast**, and to confirm a chart **"feels" right to actually play** — as quickly and effortlessly as possible — *before* it goes into the real game. Catch the snare that's a hair early, the crash that should be a ride, the part that just doesn't groove; fix it, and verify the fix, in seconds. And they stay **deeply customizable** (Kit Studio, lane layouts, note shapes/sizes, palettes, and more), so there's room for more abstract methods and full freedom of approach.
-
-> **Two editions are available — v2 and the new v3 — on purpose.** v3 is a from-scratch combined rebuild: the falling-note play **plus** a full **Kit Studio** and a polished, everything-up-front home. Both are kept up because I'm still deciding which parts of each I like best and what should be folded together or trimmed — so **try both and use whichever you prefer**. Your feedback helps shape the single best version that eventually folds back into the main ParaKit desktop app in **v5**.
-
-> **🎹 USB-MIDI needs the right browser.** These editions run in any modern browser, but **direct USB drum-kit input uses the [Web MIDI API](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility)**, which isn't supported everywhere. **Playing on your keyboard works in every browser** — only the MIDI-kit input depends on this:
-
-**TL;DR — for a USB drum kit, open the page in Chrome or Edge.** Keyboard play works in every browser. Full per-platform breakdown (from MDN's `requestMIDIAccess` data):
-
-| Platform | Browser | USB-MIDI input | Since |
-|----------|---------|:--------------:|:-----:|
-| 🖥️ Desktop | **Chrome** | ✅ Yes | v43 |
-| 🖥️ Desktop | **Edge** | ✅ Yes | v79 |
-| 🖥️ Desktop | **Opera** (& Chromium: Brave, etc.) | ✅ Yes | v30 |
-| 🖥️ Desktop | **Firefox** | ⚠️ Yes — see notes&nbsp;\* | v108 |
-| 🖥️ Desktop | **Safari** | ❌ No&nbsp;\* | — |
-| 📱 Mobile | **Chrome** for Android | ✅ Yes | v43 |
-| 📱 Mobile | **Opera** for Android | ✅ Yes | v30 |
-| 📱 Mobile | **Samsung Internet** | ✅ Yes | v4 |
-| 📱 Mobile | **Android WebView** | ✅ Yes | v43 |
-| 📱 Mobile | **Firefox** for Android | ❌ No | — |
-| 📱 Mobile | **Safari** on iOS | ❌ No&nbsp;\* | — |
-| 📱 Mobile | **WebView** on iOS | ❌ No&nbsp;\* | — |
-| ⚙️ Other | **Node.js** | ❌ No | — |
-
-> **\* See implementation notes.** The asterisked rows carry caveats in MDN's data — some otherwise-unsupported or limited cases **can be enabled with extra configuration** (a permission prompt, a browser flag, or a polyfill). Firefox works since v108 but MDN still flags the whole API **"not Baseline."** Sources: [MDN — Web MIDI API › Browser compatibility](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility) · [caniuse](https://caniuse.com/midi).
-
-<details>
-<summary>📸 Source screenshots (MDN — for reference)</summary>
-
-<br>
-
-<img src="screenshots/web-midi-baseline-badge.png" width="560" alt="MDN — Web MIDI API status: Limited availability. Chrome and Edge supported; Firefox and Safari not."><br><br>
-<img src="screenshots/web-midi-compat-table.png" width="760" alt="MDN — requestMIDIAccess browser compatibility: Chrome 43, Edge 79, Firefox 108 (notes), Opera 30, Safari No (notes), Chrome Android 43, Firefox for Android No, Opera Android 30, Safari on iOS No (notes), Samsung Internet 4, WebView Android 43, WebView on iOS No (notes), Node.js No.">
-
-<sub>Source: [MDN Web Docs — Web MIDI API › Browser compatibility](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility).</sub>
-
-</details>
-
-### Practice Mode v3 — the combined rebuild *(with Kit Studio)*
-
-`Kit Studio is the built in customization studio that lets you customize your experience to your liking, change the orders of lanes, change note sizes and shapes, and much much more.*`
-
-A from-scratch rebuild that folds the falling-note **play** experience together with a full **Kit Studio** and a polished home. It does everything v2 does — notes down 8 lanes, keyboard **+ USB-MIDI** play, latency calibration, a results screen with a timing histogram — and adds:
-
-- **🥁 Kit Studio (the headline)** — rearrange the lanes, set each lane's **color / shape / width**, add **aux lanes**, **lefty-flip** the whole kit, save kit presets, pin a kit to a song. Edit it live mid-song or from the home.
-- **A polished Song / Setup / Input home** — every option up front: your **songs folder** (a searchable library of `.rlrr` packages) *or* a single-chart load, the play toggles + fall-time / note-size sliders, and your **MIDI device + key bindings** shown inline.
-- **Native `.rlrr`** — point it at a Paradiddle songs folder and play any chart, or load a single `.rlrr` (+ optional audio; a synth fills in if there's none).
-- **In-play live-settings dock** (toggle with **H**), **loop A/B**, **speed control**, on-screen **pads**, accessible colorblind-safe palettes, and per-song calibration.
-
-**▶ Try it:** download **[`Practice Window v3 - Web Edition/parakit-practice-v3.html`](Practice%20Window%20v3%20-%20Web%20Edition/parakit-practice-v3.html)** and open it in any modern browser (Chrome or Edge for USB-MIDI).
-
-<p align="center">
-  <img src="screenshots/practice-v3-home.png" width="270" alt="Practice v3 — home (Song / Setup / Input)">
-  <img src="screenshots/practice-v3-gameplay.png" width="270" alt="Practice v3 — gameplay">
-  <img src="screenshots/practice-v3-kit-studio.png" width="270" alt="Practice v3 — Kit Studio">
-  <img src="screenshots/practice-v3-song-details.png" width="270" alt="Practice v3 — a song expanded in the library, showing note count + audio-stem breakdown, difficulty, speed, and kit">
-</p>
-
-### Practice Mode v2
-
-The falling-note **Practice** experience, rebuilt from scratch as a fast, **self-contained web app** — a big step up from the in-app mini-game and the `practice_v2/` alpha. Notes fall down 8 lanes in time with the music while you play along on a **USB MIDI drum kit or your keyboard**.
-
-- **Rock-solid timing** — a sample-accurate Web Audio clock, no drift.
-- **One file, zero setup** — open it in any modern browser; includes a built-in demo plus a synth that makes any chart audible even with no audio file.
-- **Latency calibration, mid-song mix/stem switching, touch support, a results screen with a timing histogram**, and full keyboard + MIDI play.
-- **Loading your own song** — the built-in demo + synth play by default, so a track is always there the moment you open it. To practice your own: click **Choose MIDI** or **Choose .rlrr** to load a chart, and **Full Mix** / **Drum Stem** to load the audio (no audio file? the chart is synthesized so it's still audible).
-
-**▶ Try it:** download **[`Practice Window v2 - Web Edition/parakit-practice.html`](Practice%20Window%20v2%20-%20Web%20Edition/parakit-practice.html)** and open it in any modern browser (Chrome or Edge for USB-MIDI).
-
-<p align="center">
-  <img src="screenshots/practice-web-setup.png" width="300" alt="Practice — setup screen">
-  <img src="screenshots/practice-web-gameplay-1.png" width="300" alt="Practice — gameplay">
-  <img src="screenshots/practice-web-gameplay-2.png" width="300" alt="Practice — gameplay, full lanes">
-</p>
-
-> **Both v2 and v3 are complete and ready to play today.** A single, best-of-both native (`.py`) version folded back into the app is planned for a later release.
-
----
-
-## 🔎 New — Preview Track v2: Web Edition
-
-**Watch your drum chart fall in time with the music — then fix what's wrong without ever leaving the view.** Preview Track is the *review* half of ParaKit's Preview/Practice tab, rebuilt as a fast, **self-contained web app**. Notes scroll down 8 lanes synced to the audio so you can **catch detection problems** — a snare a hair early, a crash that should've been a ride, a doubled hit — and the headline of v2: a **live Edit Mode that lets you fix them right there on the falling chart**, then resume. The see-it → fix-it loop, closed, with no tab switch.
-
-> **🎹 USB-MIDI here needs Chrome or Edge too.** Like the Practice editions, MIDI-kit input uses the **Web MIDI API** — supported in **Chrome / Edge / Chromium** browsers, **not in Safari**, and limited in **Firefox**. Keyboard play works in every browser; see the browser-support table under **Practice Mode** above, or [MDN's compatibility list](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility).
-
-- **✎ Edit Mode (press `E`)** — pause and the subdivision grid becomes a precise ruler. **Click** an empty spot to place a note (snapped to the grid); **drag a note vertically to move it in time, horizontally to reclassify its lane** — drag a wrong-drum note onto the right one; one gesture, two fixes. **Right-click deletes** (hold & sweep = eraser); **wheel** scrubs, **Ctrl+wheel** zooms the fall window; `Ctrl+Z` / `Ctrl+Y` undo/redo.
-- **Tap-along charting** — keys **`1`–`8` drop a note at the hit line, even during playback**, so you can play along and tap in missing notes. **● Record** captures live keyboard/MIDI hits with an optional **Count-in** + **Metronome**.
-- **Review controls** — **Speed** 0.5×–1.25× (slow a busy passage down to inspect it), **Fall time**, **Grid** (1/4–1/32) + **Snap**, **🥁 Pads** for mouse/touch, **⇪ Receive** a chart from the MIDI editor, **MIDI in** for a USB kit, and built-in demo charts.
-- **Hide notes past the hit line** — a toggle in Preview Settings (off by default) that hides notes once they cross the hit line / playhead, so only upcoming notes stay on screen — cleaner for precise timing analysis.
-- **Loading your own song** — the built-in demo + synth play by default, so a track is always there without loading anything. To review **your own**: click **Mix / Drums / Stems** to load an audio file (full mix or an isolated stem), and **⇪ Import** to load a chart (`parakit-chart-v1` JSON/MIDI); **⇪ Export** saves your edits back out. Charts round-trip with the MIDI editor and Practice v2.
-
-**▶ Try it:** download **[`Preview Track v2 - Web Edition/parakit-preview.html`](Preview%20Track%20v2%20-%20Web%20Edition/parakit-preview.html)** and open it in any modern browser (Chrome or Edge for USB-MIDI).
-
-<p align="center">
-  <img src="screenshots/preview-track-review.png" width="420" alt="Preview Track — review mode">
-  <img src="screenshots/preview-track-edit-mode.png" width="420" alt="Preview Track — Edit Mode (grid ruler + place / move / reclassify / delete)">
-</p>
-
----
-
 ## What's in this repository
 
 | Folder / file | What it is |
@@ -159,9 +56,9 @@ The falling-note **Practice** experience, rebuilt from scratch as a fast, **self
 | **`parakit_separators/`** | Neural drum-stem **separator plug-ins** (Jarredou MDX23C) for the Audio → MIDI detection pipeline |
 | **`rlrr_parse.py`** | The `.rlrr` parsing core, shared by the app's MIDI Extractor and `extractor/` |
 | **`extractor/`** | **RLRR Extractor** — converts `.rlrr` charts back into `.mid` MIDI ([readme](extractor/README.md)) |
-| **`Practice Window v3 - Web Edition/`** | **Practice Mode v3 — Web Edition** — combined rebuild: v2's falling-note play + a built-in **Kit Studio** + song-library loading; the in-progress successor, offered **alongside v2** (see the section above) |
-| **`Practice Window v2 - Web Edition/`** | **Practice Mode v2 — Web Edition** — self-contained browser rebuild of the falling-note practice game; offered **alongside v3** so you can compare (see the section above) |
-| **`Preview Track v2 - Web Edition/`** | **Preview Track v2 — Web Edition** — falling-note review + live Edit Mode for catching & fixing chart issues (see the section above) |
+| **`Practice Window v3 - Web Edition/`** | **Practice Mode v3 — Web Edition** — combined rebuild: v2's falling-note play + a built-in **Kit Studio** + song-library loading; the in-progress successor, offered **alongside v2** (see the section below) |
+| **`Practice Window v2 - Web Edition/`** | **Practice Mode v2 — Web Edition** — self-contained browser rebuild of the falling-note practice game; offered **alongside v3** so you can compare (see the section below) |
+| **`Preview Track v2 - Web Edition/`** | **Preview Track v2 — Web Edition** — falling-note review + live Edit Mode for catching & fixing chart issues (see the section below) |
 | **`practice_v2/`** | **Practice Window v2 (Python)** — standalone falling-note practice mini-game (**alpha**, [readme](practice_v2/README.md)) |
 | **`docs/`** | Building from source, troubleshooting, roadmap |
 | **`LICENSE`** | GNU GPL v3 |
@@ -173,6 +70,8 @@ The falling-note **Practice** experience, rebuilt from scratch as a fast, **self
 ---
 
 ## Features
+
+> 🎮 **Looking for the web-based Practice & Preview tools?** They live [further down this page ↓](#web-editions) — the falling-note Practice editions (v2 / v3, with **Kit Studio**) and the Preview review/edit tool, with screenshots. Everything in between is the main desktop app.
 
 - **MIDI editor** — visual note placement and refinement
 - **Audio → MIDI detection** — automatic drum transcription with three engines:
@@ -288,6 +187,111 @@ py -3.12 "ParaKit v4.0.py"
 5. **Song Tester** — confirm sync
 6. **Assets** — set metadata, album art, preview clip
 7. **Export** — Paradiddle `.rlrr` or Clone Hero `.chart`
+
+---
+
+<a id="web-editions"></a>
+
+## 🥁 Practice Mode (v2 / v3) — Web Edition
+
+> ### 🎯 What these web tools are for — and what they're *not*
+> **The Practice and Preview web editions are not meant to replace Paradiddle — or any other rhythm game you play your charts on.** They're **authoring & QA tools**. The whole point is to make charting easier: to **spot and fix errors fast**, and to confirm a chart **"feels" right to actually play** — as quickly and effortlessly as possible — *before* it goes into the real game. Catch the snare that's a hair early, the crash that should be a ride, the part that just doesn't groove; fix it, and verify the fix, in seconds. And they stay **deeply customizable** (Kit Studio, lane layouts, note shapes/sizes, palettes, and more), so there's room for more abstract methods and full freedom of approach.
+
+> **Two editions are available — v2 and the new v3 — on purpose.** v3 is a from-scratch combined rebuild: the falling-note play **plus** a full **Kit Studio** and a polished, everything-up-front home. Both are kept up because I'm still deciding which parts of each I like best and what should be folded together or trimmed — so **try both and use whichever you prefer**. Your feedback helps shape the single best version that eventually folds back into the main ParaKit desktop app in **v5**.
+
+> **🎹 USB-MIDI needs the right browser.** These editions run in any modern browser, but **direct USB drum-kit input uses the [Web MIDI API](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility)**, which isn't supported everywhere. **Playing on your keyboard works in every browser** — only the MIDI-kit input depends on this:
+
+**TL;DR — for a USB drum kit, open the page in Chrome or Edge.** Keyboard play works in every browser. Full per-platform breakdown (from MDN's `requestMIDIAccess` data):
+
+| Platform | Browser | USB-MIDI input | Since |
+|----------|---------|:--------------:|:-----:|
+| 🖥️ Desktop | **Chrome** | ✅ Yes | v43 |
+| 🖥️ Desktop | **Edge** | ✅ Yes | v79 |
+| 🖥️ Desktop | **Opera** (& Chromium: Brave, etc.) | ✅ Yes | v30 |
+| 🖥️ Desktop | **Firefox** | ⚠️ Yes — see notes&nbsp;\* | v108 |
+| 🖥️ Desktop | **Safari** | ❌ No&nbsp;\* | — |
+| 📱 Mobile | **Chrome** for Android | ✅ Yes | v43 |
+| 📱 Mobile | **Opera** for Android | ✅ Yes | v30 |
+| 📱 Mobile | **Samsung Internet** | ✅ Yes | v4 |
+| 📱 Mobile | **Android WebView** | ✅ Yes | v43 |
+| 📱 Mobile | **Firefox** for Android | ❌ No | — |
+| 📱 Mobile | **Safari** on iOS | ❌ No&nbsp;\* | — |
+| 📱 Mobile | **WebView** on iOS | ❌ No&nbsp;\* | — |
+| ⚙️ Other | **Node.js** | ❌ No | — |
+
+> **\* See implementation notes.** The asterisked rows carry caveats in MDN's data — some otherwise-unsupported or limited cases **can be enabled with extra configuration** (a permission prompt, a browser flag, or a polyfill). Firefox works since v108 but MDN still flags the whole API **"not Baseline."** Sources: [MDN — Web MIDI API › Browser compatibility](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility) · [caniuse](https://caniuse.com/midi).
+
+<details>
+<summary>📸 Source screenshots (MDN — for reference)</summary>
+
+<br>
+
+<img src="screenshots/web-midi-baseline-badge.png" width="560" alt="MDN — Web MIDI API status: Limited availability. Chrome and Edge supported; Firefox and Safari not."><br><br>
+<img src="screenshots/web-midi-compat-table.png" width="760" alt="MDN — requestMIDIAccess browser compatibility: Chrome 43, Edge 79, Firefox 108 (notes), Opera 30, Safari No (notes), Chrome Android 43, Firefox for Android No, Opera Android 30, Safari on iOS No (notes), Samsung Internet 4, WebView Android 43, WebView on iOS No (notes), Node.js No.">
+
+<sub>Source: [MDN Web Docs — Web MIDI API › Browser compatibility](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility).</sub>
+
+</details>
+
+### Practice Mode v3 — the combined rebuild *(with Kit Studio)*
+
+`Kit Studio is the built in customization studio that lets you customize your experience to your liking, change the orders of lanes, change note sizes and shapes, and much much more.*`
+
+A from-scratch rebuild that folds the falling-note **play** experience together with a full **Kit Studio** and a polished home. It does everything v2 does — notes down 8 lanes, keyboard **+ USB-MIDI** play, latency calibration, a results screen with a timing histogram — and adds:
+
+- **🥁 Kit Studio (the headline)** — rearrange the lanes, set each lane's **color / shape / width**, add **aux lanes**, **lefty-flip** the whole kit, save kit presets, pin a kit to a song. Edit it live mid-song or from the home.
+- **A polished Song / Setup / Input home** — every option up front: your **songs folder** (a searchable library of `.rlrr` packages) *or* a single-chart load, the play toggles + fall-time / note-size sliders, and your **MIDI device + key bindings** shown inline.
+- **Native `.rlrr`** — point it at a Paradiddle songs folder and play any chart, or load a single `.rlrr` (+ optional audio; a synth fills in if there's none).
+- **In-play live-settings dock** (toggle with **H**), **loop A/B**, **speed control**, on-screen **pads**, accessible colorblind-safe palettes, and per-song calibration.
+
+**▶ Try it:** download **[`Practice Window v3 - Web Edition/parakit-practice-v3.html`](Practice%20Window%20v3%20-%20Web%20Edition/parakit-practice-v3.html)** and open it in any modern browser (Chrome or Edge for USB-MIDI).
+
+<p align="center">
+  <img src="screenshots/practice-v3-home.png" width="270" alt="Practice v3 — home (Song / Setup / Input)">
+  <img src="screenshots/practice-v3-gameplay.png" width="270" alt="Practice v3 — gameplay">
+  <img src="screenshots/practice-v3-kit-studio.png" width="270" alt="Practice v3 — Kit Studio">
+  <img src="screenshots/practice-v3-song-details.png" width="270" alt="Practice v3 — a song expanded in the library, showing note count + audio-stem breakdown, difficulty, speed, and kit">
+</p>
+
+### Practice Mode v2
+
+The falling-note **Practice** experience, rebuilt from scratch as a fast, **self-contained web app** — a big step up from the in-app mini-game and the `practice_v2/` alpha. Notes fall down 8 lanes in time with the music while you play along on a **USB MIDI drum kit or your keyboard**.
+
+- **Rock-solid timing** — a sample-accurate Web Audio clock, no drift.
+- **One file, zero setup** — open it in any modern browser; includes a built-in demo plus a synth that makes any chart audible even with no audio file.
+- **Latency calibration, mid-song mix/stem switching, touch support, a results screen with a timing histogram**, and full keyboard + MIDI play.
+- **Loading your own song** — the built-in demo + synth play by default, so a track is always there the moment you open it. To practice your own: click **Choose MIDI** or **Choose .rlrr** to load a chart, and **Full Mix** / **Drum Stem** to load the audio (no audio file? the chart is synthesized so it's still audible).
+
+**▶ Try it:** download **[`Practice Window v2 - Web Edition/parakit-practice.html`](Practice%20Window%20v2%20-%20Web%20Edition/parakit-practice.html)** and open it in any modern browser (Chrome or Edge for USB-MIDI).
+
+<p align="center">
+  <img src="screenshots/practice-web-setup.png" width="300" alt="Practice — setup screen">
+  <img src="screenshots/practice-web-gameplay-1.png" width="300" alt="Practice — gameplay">
+  <img src="screenshots/practice-web-gameplay-2.png" width="300" alt="Practice — gameplay, full lanes">
+</p>
+
+> **Both v2 and v3 are complete and ready to play today.** A single, best-of-both native (`.py`) version folded back into the app is planned for a later release.
+
+---
+
+## 🔎 New — Preview Track v2: Web Edition
+
+**Watch your drum chart fall in time with the music — then fix what's wrong without ever leaving the view.** Preview Track is the *review* half of ParaKit's Preview/Practice tab, rebuilt as a fast, **self-contained web app**. Notes scroll down 8 lanes synced to the audio so you can **catch detection problems** — a snare a hair early, a crash that should've been a ride, a doubled hit — and the headline of v2: a **live Edit Mode that lets you fix them right there on the falling chart**, then resume. The see-it → fix-it loop, closed, with no tab switch.
+
+> **🎹 USB-MIDI here needs Chrome or Edge too.** Like the Practice editions, MIDI-kit input uses the **Web MIDI API** — supported in **Chrome / Edge / Chromium** browsers, **not in Safari**, and limited in **Firefox**. Keyboard play works in every browser; see the browser-support table under **Practice Mode** above, or [MDN's compatibility list](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility).
+
+- **✎ Edit Mode (press `E`)** — pause and the subdivision grid becomes a precise ruler. **Click** an empty spot to place a note (snapped to the grid); **drag a note vertically to move it in time, horizontally to reclassify its lane** — drag a wrong-drum note onto the right one; one gesture, two fixes. **Right-click deletes** (hold & sweep = eraser); **wheel** scrubs, **Ctrl+wheel** zooms the fall window; `Ctrl+Z` / `Ctrl+Y` undo/redo.
+- **Tap-along charting** — keys **`1`–`8` drop a note at the hit line, even during playback**, so you can play along and tap in missing notes. **● Record** captures live keyboard/MIDI hits with an optional **Count-in** + **Metronome**.
+- **Review controls** — **Speed** 0.5×–1.25× (slow a busy passage down to inspect it), **Fall time**, **Grid** (1/4–1/32) + **Snap**, **🥁 Pads** for mouse/touch, **⇪ Receive** a chart from the MIDI editor, **MIDI in** for a USB kit, and built-in demo charts.
+- **Hide notes past the hit line** — a toggle in Preview Settings (off by default) that hides notes once they cross the hit line / playhead, so only upcoming notes stay on screen — cleaner for precise timing analysis.
+- **Loading your own song** — the built-in demo + synth play by default, so a track is always there without loading anything. To review **your own**: click **Mix / Drums / Stems** to load an audio file (full mix or an isolated stem), and **⇪ Import** to load a chart (`parakit-chart-v1` JSON/MIDI); **⇪ Export** saves your edits back out. Charts round-trip with the MIDI editor and Practice v2.
+
+**▶ Try it:** download **[`Preview Track v2 - Web Edition/parakit-preview.html`](Preview%20Track%20v2%20-%20Web%20Edition/parakit-preview.html)** and open it in any modern browser (Chrome or Edge for USB-MIDI).
+
+<p align="center">
+  <img src="screenshots/preview-track-review.png" width="420" alt="Preview Track — review mode">
+  <img src="screenshots/preview-track-edit-mode.png" width="420" alt="Preview Track — Edit Mode (grid ruler + place / move / reclassify / delete)">
+</p>
 
 ---
 
