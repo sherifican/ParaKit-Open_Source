@@ -275,6 +275,11 @@ source and compiling a standalone `.exe`.
 
 ## Changelog
 
+### Practice Mode v3 (Web Edition) — 2026-06-12
+- **Mute synth** toggle added to the in-play Live-settings dock (key **M**) — silences the
+  synthesized drum hits while playing a loaded song, so you hear the real audio. Off by default.
+- Kit Studio: the per-lane **Voice** control is renamed **Sound** for clarity.
+
 ### Preview Track v2 (Web Edition) — 2026-06-12
 - **Hide notes past the hit line.** New toggle in Preview Settings (off by default) — hides
   notes once they cross the hit line / playhead so only upcoming notes remain on screen, for

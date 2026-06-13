@@ -540,6 +540,7 @@ body.reduceMotion *{animation:none !important; transition:none !important}
       <div class="drow" data-k="beatgrid"><span class="keycap">4</span><span>Beat grid</span><b id="dBg"></b></div>
       <div class="drow" data-k="kickline"><span class="keycap">5</span><span>Kick as line</span><b id="dKl"></b></div>
       <div class="drow" data-k="square"><span class="keycap">6</span><span>Square notes</span><b id="dSq"></b></div>
+      <div class="drow" data-k="mutesynth"><span class="keycap">M</span><span>Mute synth</span><b id="dMute"></b></div>
       <div class="drow" data-k="speed-"><span class="keycap">−</span><span>Speed down</span><b id="dSpd" class="mono"></b></div>
       <div class="drow" data-k="speed+"><span class="keycap">+</span><span>Speed up</span><b></b></div>
       <div class="drow" data-k="loopA"><span class="keycap">[</span><span>Loop A at playhead</span><b id="dLa"></b></div>
@@ -608,9 +609,9 @@ body.reduceMotion *{animation:none !important; transition:none !important}
             <div class="shapeRow" id="stShapes"></div></div>
           <div class="row"><label>Fold into</label>
             <select id="stFold" aria-label="Fold this lane into another"></select></div>
-          <div class="row"><label>Voice</label>
+          <div class="row"><label>Sound</label>
             <select id="stVoice" aria-label="Lane voice"></select>
-            <button class="btn btn-sm btn-ghost" id="stVoiceTest" title="Audition voice">♪</button></div>
+            <button class="btn btn-sm btn-ghost" id="stVoiceTest" title="Audition sound">♪</button></div>
           <div class="row"><label>Keys</label><span id="stKeys" class="hint mono"></span>
             <button class="btn btn-sm btn-ghost" id="stBindJump">Edit binds…</button></div>
         </div>
@@ -2750,7 +2751,7 @@ const DEFAULT_PREFS = {
   sort: "title",
   kbPreset: "standard",
   binds: null,                 // null → preset default
-  busSong: 1.0, busDrums: 1.0, busSynth: 0.9, busMaster: 0.92,
+  busSong: 1.0, busDrums: 1.0, busSynth: 0.9, busMaster: 0.92, muteSynth: false,
   preferredDifficulty: "Expert",
   bootDone: false,
   midiAuto: false,             // try MIDI silently on boot after first grant
@@ -3985,7 +3986,7 @@ function applyYouDrum() {
   const hasDrumStems = APP.audio.hasBus("drums");
   const you = prefs.youDrum || !hasDrumStems;   // no drum stems ⇒ you ARE the drums
   APP.audio.setBusGain("drums", you ? 0 : prefs.busDrums);
-  APP.audio.setBusGain("synth", you ? Math.max(0.7, prefs.busSynth) : prefs.busSynth);
+  APP.audio.setBusGain("synth", prefs.muteSynth ? 0 : (you ? Math.max(0.7, prefs.busSynth) : prefs.busSynth));
   APP.audio.setBusGain("song", prefs.busSong);
   APP.audio.setBusGain("master", prefs.busMaster);
 }
@@ -4072,6 +4073,7 @@ function syncDock() {
   onoff("dYou", prefs.youDrum); onoff("dMet", prefs.metronome);
   onoff("dAk", prefs.autoKick); onoff("dBg", prefs.beatGrid);
   onoff("dKl", prefs.kickLine); onoff("dSq", prefs.square);
+  onoff("dMute", prefs.muteSynth);
   $("dSpd").textContent = Math.round(prefs.speed * 100) + "%";
 }
 function dockToggle(k) {
@@ -4086,6 +4088,7 @@ function dockToggle(k) {
   else if (k === "loopA") setLoopPoint("A");
   else if (k === "loopB") setLoopPoint("B");
   else if (k === "loopX") clearLoop();
+  else if (k === "mutesynth") { setPref("muteSynth", !prefs.muteSynth); applyYouDrum(); }
   else if (k === "hideDock") { toggleDock(); return; }
   syncDock();
 }
@@ -5382,6 +5385,7 @@ function wireGlobalKeys() {
         case "Digit4": dockToggle("beatgrid"); return;
         case "Digit5": dockToggle("kickline"); return;
         case "Digit6": dockToggle("square"); return;
+        case "KeyM": dockToggle("mutesynth"); return;
         case "BracketLeft": e.preventDefault(); setLoopPoint("A"); return;
         case "BracketRight": e.preventDefault(); setLoopPoint("B"); return;
         case "Backslash": e.preventDefault(); clearLoop(); return;
