@@ -42,6 +42,9 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan
 
 ---
 
+**NOTE:** **The screenshots show "MIDI Unsupported" that is just because they were not loaded in a browser yet, 
+although Chrome and Edge work best for MIDI inputs
+
 ## 🥁 Practice Mode (v2 / v3) — Web Edition
 
 > **Two editions are available — v2 and the new v3 — on purpose.** v3 is a from-scratch combined rebuild: the falling-note play **plus** a full **Kit Studio** and a polished, everything-up-front home. Both are kept up because I'm still deciding which parts of each I like best and what should be folded together or trimmed — so **try both and use whichever you prefer**. Your feedback helps shape the single best version that eventually folds back into the main ParaKit desktop app in **v5**.
