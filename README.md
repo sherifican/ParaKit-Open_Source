@@ -289,6 +289,12 @@ source and compiling a standalone `.exe`.
 - **Fixed — drums volume slider:** the drums slider was inert while "you-drum" mode was on (the
   default), so raising it to 90% changed nothing. It now adjusts the drum-stem level live, so
   loaded drum stems are audible and controllable during play.
+- **Song info on the pre-play panel.** Clicking a song now shows, for the selected difficulty,
+  its **note count** plus an **audio-stem breakdown** — e.g. *"1 backing + 3 stems (3 drums)"* —
+  classifying each stem (drums, cymbals, bass, guitar, vocals, keys, other). It also flags that
+  stems route to the drums bus, so at a glance you can tell which songs ship **separate drum
+  stems** that "You drum" / "Mute drums on miss" will silence, versus songs whose drums are baked
+  into the backing mix (and so always play).
 
 ### Preview Track v2 (Web Edition) — 2026-06-12
 - **Hide notes past the hit line.** New toggle in Preview Settings (off by default) — hides

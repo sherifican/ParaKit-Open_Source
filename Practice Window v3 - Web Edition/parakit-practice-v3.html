@@ -3166,7 +3166,9 @@ async function scanFolder(folder) {
     try {
       const text = await fsReadText(ref);
       const chart = parseRlrr(text);
-      diffs[d] = { ref, complexity: chart.meta.complexity, notes: chart.events.length };
+      diffs[d] = { ref, complexity: chart.meta.complexity, notes: chart.events.length,
+                   songTracks: (chart.audio.songTracks || []).slice(),
+                   drumTracks: (chart.audio.drumTracks || []).slice() };
       if (!anyMeta) anyMeta = chart.meta;
       for (const inst of chart.instruments) {
         const rt = routeForClass(inst.class);
@@ -3401,6 +3403,18 @@ function selectRow(i, toggleOpen) {
   if (sel) sel.scrollIntoView({ block: "nearest" });
 }
 
+/* classify an audio-stem filename into a coarse instrument family for the song-info readout */
+function classifyStem(name) {
+  const n = (name || "").toLowerCase();
+  if (/(crash|ride|hi-?hat|\bhat\b|cymbal|china|splash|\bbell\b)/.test(n)) return "cymbals";
+  if (/(kick|snare|\btom\b|tom\d|drum|\bkit\b|perc|clap)/.test(n)) return "drums";
+  if (/bass/.test(n)) return "bass";
+  if (/(guitar|gtr)/.test(n)) return "guitar";
+  if (/(vocal|\bvox\b|voice|sing|choir)/.test(n)) return "vocals";
+  if (/(piano|\bkeys?\b|synth|organ|\bpad\b|string|brass|horn)/.test(n)) return "keys";
+  return "other";
+}
+
 /* ── pre-play panel ── */
 function buildPreplay(entry) {
   const wrap = document.createElement("div");
@@ -3421,10 +3435,55 @@ function buildPreplay(entry) {
     b.addEventListener("click", () => {
       diff = d; setPref("preferredDifficulty", d);
       seg.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+      renderInfo();
     });
     seg.appendChild(b);
   }
   r1.appendChild(seg);
+
+  // ── song info: note count (for the selected difficulty) + audio-stem breakdown ──
+  const rInfo = document.createElement("div");
+  rInfo.className = "prow ppInfoRow";
+  rInfo.style.alignItems = "flex-start";
+  rInfo.innerHTML = "<span class='label'>Song</span>";
+  const info = document.createElement("div");
+  info.className = "ppInfo";
+  info.style.cssText = "font-size:.84rem;line-height:1.55";
+  rInfo.appendChild(info);
+  const partsFor = list => {
+    const counts = {};
+    for (const t of list) { const c = classifyStem(t); counts[c] = (counts[c] || 0) + 1; }
+    return Object.keys(counts).sort((a, b) => counts[b] - counts[a]).map(c => counts[c] + " " + c);
+  };
+  function renderInfo() {
+    const dd = entry.diffs[diff] || {};
+    const notes = dd.notes != null ? dd.notes : 0;
+    let song = (dd.songTracks || []).slice(), drums = (dd.drumTracks || []).slice();
+    let guessed = false;
+    if (!song.length && !drums.length) {
+      // chart lists no tracks — mirror loadStems' folder fallback so the readout matches what will play
+      const names = Object.keys(entry.audioRefs);
+      if (names.length) { guessed = true; for (const nm of names) (/drum/i.test(nm) ? drums : song).push(nm); }
+    }
+    const total = song.length + drums.length;
+    let html = "<b>" + notes.toLocaleString() + "</b> notes <span class='dim'>· " + diff + "</span>";
+    if (!total) {
+      html += "<br><span class='dim'>No audio stems — synth hits only.</span>";
+    } else {
+      const segs = [];
+      if (song.length) segs.push(song.length + " backing");
+      if (drums.length) {
+        const parts = partsFor(drums);
+        segs.push(drums.length + " stem" + (drums.length > 1 ? "s" : "") +
+          (parts.length ? " <span class='dim'>(" + parts.join(", ") + ")</span>" : ""));
+      }
+      html += "<br>Audio: " + segs.join(" + ") + (guessed ? " <span class='dim'>(guessed from folder)</span>" : "");
+      if (drums.length)
+        html += "<br><span class='hint'>Stems route to the drums bus — “You drum” and “Mute drums on miss” silence these.</span>";
+    }
+    info.innerHTML = html;
+  }
+  renderInfo();
 
   const r2 = document.createElement("div");
   r2.className = "prow";
@@ -3494,7 +3553,7 @@ function buildPreplay(entry) {
     launchSong(entry, diff, kitSel.value);
   });
   r4.appendChild(play);
-  wrap.append(r1, r2, r3, r4);
+  wrap.append(r1, rInfo, r2, r3, r4);
   wrap.addEventListener("click", e => e.stopPropagation());
   return wrap;
 }
