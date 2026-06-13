@@ -279,6 +279,11 @@ source and compiling a standalone `.exe`.
 - **Mute synth** toggle added to the in-play Live-settings dock (key **M**) — silences the
   synthesized drum hits while playing a loaded song, so you hear the real audio. Off by default.
 - Kit Studio: the per-lane **Voice** control is renamed **Sound** for clarity.
+- **Mute drums on miss** (Paradiddle-style) — for songs with a separate drum stem, the real
+  drums now play as an audible guide (so loaded songs are heard in full, all stems layered) and
+  **drop out when you miss**, returning on your next hit. Prominent toggle — on the Setup card
+  and the in-play Live-settings dock (key **7**); on by default. Songs with a single combined
+  audio file are unaffected (it never mutes the backing).
 
 ### Preview Track v2 (Web Edition) — 2026-06-12
 - **Hide notes past the hit line.** New toggle in Preview Settings (off by default) — hides
