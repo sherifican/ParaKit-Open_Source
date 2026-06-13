@@ -54,19 +54,37 @@ although Chrome and Edge work best for MIDI inputs**
 
 > **🎹 USB-MIDI needs the right browser.** These editions run in any modern browser, but **direct USB drum-kit input uses the [Web MIDI API](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility)**, which isn't supported everywhere. **Playing on your keyboard works in every browser** — only the MIDI-kit input depends on this:
 
-| Browser | USB-MIDI input |
-|---------|----------------|
-| **Chrome** (desktop & Android) | ✅ Yes (v43+) — recommended |
-| **Edge** | ✅ Yes (v79+) — recommended |
-| **Opera / Chromium** (Brave, etc.) | ✅ Yes (v30+) |
-| **Samsung Internet** | ✅ Yes (v4+) |
-| **Firefox** (desktop) | ⚠️ Yes since v108 — see notes&nbsp;**\*** (MDN flags it "not Baseline") |
-| **Firefox** for Android | ❌ No |
-| **Safari** (macOS & iOS) | ❌ No&nbsp;**\*** |
+**TL;DR — for a USB drum kit, open the page in Chrome or Edge.** Keyboard play works in every browser. Full per-platform breakdown (from MDN's `requestMIDIAccess` data):
 
-For a USB drum kit, open the page in **Chrome or Edge**. Keyboard play works in every browser.
+| Platform | Browser | USB-MIDI input | Since |
+|----------|---------|:--------------:|:-----:|
+| 🖥️ Desktop | **Chrome** | ✅ Yes | v43 |
+| 🖥️ Desktop | **Edge** | ✅ Yes | v79 |
+| 🖥️ Desktop | **Opera** (& Chromium: Brave, etc.) | ✅ Yes | v30 |
+| 🖥️ Desktop | **Firefox** | ⚠️ Yes — see notes&nbsp;\* | v108 |
+| 🖥️ Desktop | **Safari** | ❌ No&nbsp;\* | — |
+| 📱 Mobile | **Chrome** for Android | ✅ Yes | v43 |
+| 📱 Mobile | **Opera** for Android | ✅ Yes | v30 |
+| 📱 Mobile | **Samsung Internet** | ✅ Yes | v4 |
+| 📱 Mobile | **Android WebView** | ✅ Yes | v43 |
+| 📱 Mobile | **Firefox** for Android | ❌ No | — |
+| 📱 Mobile | **Safari** on iOS | ❌ No&nbsp;\* | — |
+| 📱 Mobile | **WebView** on iOS | ❌ No&nbsp;\* | — |
+| ⚙️ Other | **Node.js** | ❌ No | — |
 
-> **\* "See implementation notes."** In [MDN's full compatibility table](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility), the asterisked entries carry implementation notes — some otherwise-unsupported or limited cases **can be enabled with extra configuration** (a permission prompt, a browser flag, or a polyfill). Check MDN's per-browser notes for the specifics. Quick cross-reference: [caniuse](https://caniuse.com/midi).
+> **\* See implementation notes.** The asterisked rows carry caveats in MDN's data — some otherwise-unsupported or limited cases **can be enabled with extra configuration** (a permission prompt, a browser flag, or a polyfill). Firefox works since v108 but MDN still flags the whole API **"not Baseline."** Sources: [MDN — Web MIDI API › Browser compatibility](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility) · [caniuse](https://caniuse.com/midi).
+
+<details>
+<summary>📸 Source screenshots (MDN — for reference)</summary>
+
+<br>
+
+<img src="screenshots/web-midi-baseline-badge.png" width="560" alt="MDN — Web MIDI API status: Limited availability. Chrome and Edge supported; Firefox and Safari not."><br><br>
+<img src="screenshots/web-midi-compat-table.png" width="760" alt="MDN — requestMIDIAccess browser compatibility: Chrome 43, Edge 79, Firefox 108 (notes), Opera 30, Safari No (notes), Chrome Android 43, Firefox for Android No, Opera Android 30, Safari on iOS No (notes), Samsung Internet 4, WebView Android 43, WebView on iOS No (notes), Node.js No.">
+
+<sub>Source: [MDN Web Docs — Web MIDI API › Browser compatibility](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility).</sub>
+
+</details>
 
 ### Practice Mode v3 — the combined rebuild *(with Kit Studio)*
 
