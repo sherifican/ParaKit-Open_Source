@@ -52,6 +52,19 @@ although Chrome and Edge work best for MIDI inputs**
 
 > **Two editions are available — v2 and the new v3 — on purpose.** v3 is a from-scratch combined rebuild: the falling-note play **plus** a full **Kit Studio** and a polished, everything-up-front home. Both are kept up because I'm still deciding which parts of each I like best and what should be folded together or trimmed — so **try both and use whichever you prefer**. Your feedback helps shape the single best version that eventually folds back into the main ParaKit desktop app in **v5**.
 
+> **🎹 USB-MIDI needs the right browser.** These editions run in any modern browser, but **direct USB drum-kit input uses the [Web MIDI API](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility)**, which isn't supported everywhere. **Playing on your keyboard works in every browser** — only the MIDI-kit input depends on this:
+
+| Browser | USB-MIDI input |
+|---------|----------------|
+| **Chrome** (desktop & Android) | ✅ Yes — recommended |
+| **Edge** | ✅ Yes — recommended |
+| **Opera / Brave** (Chromium) | ✅ Yes |
+| **Firefox** (desktop) | ⚠️ Limited — works since v108, but MDN flags it "not Baseline" |
+| **Firefox** for Android | ❌ No |
+| **Safari** (macOS & iOS) | ❌ No |
+
+For a USB drum kit, open the page in **Chrome or Edge**. Always-current status: [MDN — Web MIDI API compatibility](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility) · [caniuse](https://caniuse.com/midi).
+
 ### Practice Mode v3 — the combined rebuild *(with Kit Studio)*
 
 `Kit Studio is the built in customization studio that lets you customize your experience to your liking, change the orders of lanes, change note sizes and shapes, and much much more.*`
@@ -95,6 +108,8 @@ The falling-note **Practice** experience, rebuilt from scratch as a fast, **self
 ## 🔎 New — Preview Track v2: Web Edition
 
 **Watch your drum chart fall in time with the music — then fix what's wrong without ever leaving the view.** Preview Track is the *review* half of ParaKit's Preview/Practice tab, rebuilt as a fast, **self-contained web app**. Notes scroll down 8 lanes synced to the audio so you can **catch detection problems** — a snare a hair early, a crash that should've been a ride, a doubled hit — and the headline of v2: a **live Edit Mode that lets you fix them right there on the falling chart**, then resume. The see-it → fix-it loop, closed, with no tab switch.
+
+> **🎹 USB-MIDI here needs Chrome or Edge too.** Like the Practice editions, MIDI-kit input uses the **Web MIDI API** — supported in **Chrome / Edge / Chromium** browsers, **not in Safari**, and limited in **Firefox**. Keyboard play works in every browser; see the browser-support table under **Practice Mode** above, or [MDN's compatibility list](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility).
 
 - **✎ Edit Mode (press `E`)** — pause and the subdivision grid becomes a precise ruler. **Click** an empty spot to place a note (snapped to the grid); **drag a note vertically to move it in time, horizontally to reclassify its lane** — drag a wrong-drum note onto the right one; one gesture, two fixes. **Right-click deletes** (hold & sweep = eraser); **wheel** scrubs, **Ctrl+wheel** zooms the fall window; `Ctrl+Z` / `Ctrl+Y` undo/redo.
 - **Tap-along charting** — keys **`1`–`8` drop a note at the hit line, even during playback**, so you can play along and tap in missing notes. **● Record** captures live keyboard/MIDI hits with an optional **Count-in** + **Metronome**.
