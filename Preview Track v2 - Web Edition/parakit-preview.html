@@ -321,6 +321,7 @@ select{
     <div class="row"><label><input type="checkbox" id="pSquares"> Square notes</label>
       <label><input type="checkbox" id="pKickLine"> Kick as full-width line</label></div>
     <div class="row"><label><input type="checkbox" id="pBeatGrid" checked> Beat grid during play</label></div>
+    <div class="row"><label><input type="checkbox" id="pHidePassed"> Hide notes past the hit line <span style="color:var(--dim)">(cleaner analysis)</span></label></div>
     <div class="row"><span class="tb-label">Note size</span>
       <input type="range" id="pNoteSize" min="50" max="160" value="100"><span class="val" id="pNoteSizeV">1.0×</span></div>
     <div class="row"><span class="tb-label">Audio offset</span>
@@ -1890,6 +1891,7 @@ class Renderer {
     let drawn = 0;
     this.model.getIndex().forRange(tBot - 0.1, tTop + 0.1, n => {
       if (!app.prefs.laneVisible[n.lane]) return;
+      if (app.prefs.hidePassed && n.time < view.pos) return;   // hide notes once they cross/pass the hit line (analysis aid)
       drawn++;
       const g = this.noteGeom(n);
       if (g.y < padT - 30 || g.y > h + 20) return;
@@ -2531,7 +2533,7 @@ function toast(msg) {
 const app = {
   model: null, renderer: null, audio: null,
   gridSubs: 4, snapOn: true,
-  prefs: { squares: false, kickLine: false, beatGrid: true, noteScale: 1.0,
+  prefs: { squares: false, kickLine: false, beatGrid: true, hidePassed: false, noteScale: 1.0,
            laneVisible: [true,true,true,true,true,true,true,true] },
   rec: new RecordSession(),
   recState: "idle",
@@ -2986,6 +2988,7 @@ $("btnSettings").addEventListener("click", () => togglePop("popSettings"));
 $("pSquares").addEventListener("change", () => { app.prefs.squares = $("pSquares").checked; app.dirty(); });
 $("pKickLine").addEventListener("change", () => { app.prefs.kickLine = $("pKickLine").checked; app.dirty(); });
 $("pBeatGrid").addEventListener("change", () => { app.prefs.beatGrid = $("pBeatGrid").checked; app.dirty(); });
+$("pHidePassed").addEventListener("change", () => { app.prefs.hidePassed = $("pHidePassed").checked; app.dirty(); });
 $("pNoteSize").addEventListener("input", () => {
   app.prefs.noteScale = +$("pNoteSize").value / 100;
   $("pNoteSizeV").textContent = app.prefs.noteScale.toFixed(1) + "×";

@@ -29,6 +29,7 @@ Pause and the subdivision grid brightens into a precise ruler the notes cross; t
 - **⇪ Receive** — pull in the chart staged by the MIDI editor's "→ Preview" button.
 - **MIDI in** — review / edit with a USB drum kit.
 - Built-in **demo charts**, including a dense ~4.2k-note stress chart, so it does something the moment you open it.
+- **Hide notes past the hit line** — a toggle in Preview Settings (off by default) that hides notes once they cross the hit line / playhead, so only upcoming notes stay on screen for cleaner timing analysis.
 - Live **fps / note** counters and a status line naming the note under your cursor (lane · time · velocity).
 
 ## Loading your own song

@@ -94,6 +94,7 @@ The falling-note **Practice** experience, rebuilt from scratch as a fast, **self
 - **✎ Edit Mode (press `E`)** — pause and the subdivision grid becomes a precise ruler. **Click** an empty spot to place a note (snapped to the grid); **drag a note vertically to move it in time, horizontally to reclassify its lane** — drag a wrong-drum note onto the right one; one gesture, two fixes. **Right-click deletes** (hold & sweep = eraser); **wheel** scrubs, **Ctrl+wheel** zooms the fall window; `Ctrl+Z` / `Ctrl+Y` undo/redo.
 - **Tap-along charting** — keys **`1`–`8` drop a note at the hit line, even during playback**, so you can play along and tap in missing notes. **● Record** captures live keyboard/MIDI hits with an optional **Count-in** + **Metronome**.
 - **Review controls** — **Speed** 0.5×–1.25× (slow a busy passage down to inspect it), **Fall time**, **Grid** (1/4–1/32) + **Snap**, **🥁 Pads** for mouse/touch, **⇪ Receive** a chart from the MIDI editor, **MIDI in** for a USB kit, and built-in demo charts.
+- **Hide notes past the hit line** — a toggle in Preview Settings (off by default) that hides notes once they cross the hit line / playhead, so only upcoming notes stay on screen — cleaner for precise timing analysis.
 - **Loading your own song** — the built-in demo + synth play by default, so a track is always there without loading anything. To review **your own**: click **Mix / Drums / Stems** to load an audio file (full mix or an isolated stem), and **⇪ Import** to load a chart (`parakit-chart-v1` JSON); **⇪ Export** saves your edits back out. Charts round-trip with the MIDI editor and Practice v2.
 
 **▶ Try it:** download **[`Preview Track v2 - Web Edition/parakit-preview.html`](Preview%20Track%20v2%20-%20Web%20Edition/parakit-preview.html)** and open it in any modern browser (Chrome or Edge for USB-MIDI).
@@ -271,6 +272,11 @@ source and compiling a standalone `.exe`.
 ---
 
 ## Changelog
+
+### Preview Track v2 (Web Edition) — 2026-06-12
+- **Hide notes past the hit line.** New toggle in Preview Settings (off by default) — hides
+  notes once they cross the hit line / playhead so only upcoming notes remain on screen, for
+  cleaner timing analysis. Leave it off for the default behavior (notes linger briefly past it).
 
 ### v4.4.60-12
 - **MIDI Editor — alternate hi-hat MIDI notes now import correctly.** Hi-hat hits recorded with
