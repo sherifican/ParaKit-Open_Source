@@ -350,6 +350,10 @@ source and compiling a standalone `.exe`.
 - Library: the song list is **taller** so an expanded song's details no longer get cut off, and
   the folder-picker fallback button (next to **Open songs folder…**) is relabeled **"Pick 1 song
   via folder"** for clarity.
+- **Fixed — drum-stem audibility vs. mute-on-miss.** With **"Mute drums on miss" off**, the drum
+  stems now stay **audible at all times** — they were wrongly silenced by "You drum." Drum
+  audibility is now governed **only** by mute-on-miss: off = always audible; on = audible but
+  ducked during a miss. "You drum" now only controls whether *your own* hits make synth sounds.
 
 ### Preview Track v2 (Web Edition) — 2026-06-12
 - **Hide notes past the hit line.** New toggle in Preview Settings (off by default) — hides

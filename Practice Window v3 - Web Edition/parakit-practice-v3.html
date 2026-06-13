@@ -3865,9 +3865,9 @@ function startSession() {
   syncDock();
   if (cur.audioProblems.length) toast(cur.audioProblems[0]);
   else if (cur.entry && APP.audio.hasBus("drums"))
-    toast(prefs.youDrum
-      ? "You-drum ON — the chart's drum stems are muted; your hits make the drums (1 toggles)"
-      : "Chart drum stems ON — your hits are judged but silent (1 = you drum)");
+    toast(prefs.muteOnMiss
+      ? "Drum stems play as a guide and duck on a miss — Mute-on-miss ON (7 toggles)"
+      : "Drum stems play throughout — Mute-on-miss OFF (7 toggles)");
   startPlayback(-leadIn());
   announce("Playing " + cur.chart.meta.title);
 }
@@ -4051,8 +4051,11 @@ function wireInputs() {
 function applyYouDrum() {
   const hasDrumStems = APP.audio.hasBus("drums");
   const mom = prefs.muteOnMiss && hasDrumStems;   // mute-on-miss: the real drums play as an audible guide, ducked on a miss
-  const you = (prefs.youDrum && !mom) || !hasDrumStems;   // no drum stems ⇒ you ARE the drums
-  APP.audio.setBusGain("drums", mom ? (APP._missDuck ? 0 : prefs.busDrums) : (you ? 0 : prefs.busDrums));
+  const you = (prefs.youDrum && !mom) || !hasDrumStems;   // kept for synth prominence only
+  // Drum stems are audible whenever they exist; the ONLY thing that silences them is
+  // mute-on-miss, and only during a miss-duck. (you-drum no longer mutes the recording —
+  // that was the bug: with mute-on-miss OFF the stems must stay audible at all times.)
+  APP.audio.setBusGain("drums", (mom && APP._missDuck) ? 0 : prefs.busDrums);
   APP.audio.setBusGain("synth", prefs.muteSynth ? 0 : (you ? Math.max(0.7, prefs.busSynth) : prefs.busSynth));
   APP.audio.setBusGain("song", prefs.busSong);
   APP.audio.setBusGain("master", prefs.busMaster);
