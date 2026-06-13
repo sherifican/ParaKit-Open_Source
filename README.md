@@ -17,7 +17,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.4.59-12`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.4.60-12`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
