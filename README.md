@@ -42,9 +42,30 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan
 
 ---
 
-## 🥁 New — Practice Mode v2: Web Edition
+## 🥁 Practice Mode (v2 / v3) — Web Edition
 
-The falling-note **Practice** experience has been rebuilt from scratch as a fast, **self-contained web app** — a big step up from the in-app mini-game and the `practice_v2/` alpha. Notes fall down 8 lanes in time with the music while you play along on a **USB MIDI drum kit or your keyboard**.
+> **Two editions are available — v2 and the new v3 — on purpose.** v3 is a from-scratch combined rebuild: the falling-note play **plus** a full **Kit Studio** and a polished, everything-up-front home. Both are kept up because I'm still deciding which parts of each I like best and what should be folded together or trimmed — so **try both and use whichever you prefer**. Your feedback helps shape the single best version that eventually folds back into the main ParaKit desktop app in **v5**.
+
+### Practice Mode v3 — the combined rebuild *(with Kit Studio)*
+
+A from-scratch rebuild that folds the falling-note **play** experience together with a full **Kit Studio** and a polished home. It does everything v2 does — notes down 8 lanes, keyboard **+ USB-MIDI** play, latency calibration, a results screen with a timing histogram — and adds:
+
+- **🥁 Kit Studio (the headline)** — rearrange the lanes, set each lane's **color / shape / width**, add **aux lanes**, **lefty-flip** the whole kit, save kit presets, pin a kit to a song. Edit it live mid-song or from the home.
+- **A polished Song / Setup / Input home** — every option up front: your **songs folder** (a searchable library of `.rlrr` packages) *or* a single-chart load, the play toggles + fall-time / note-size sliders, and your **MIDI device + key bindings** shown inline.
+- **Native `.rlrr`** — point it at a Paradiddle songs folder and play any chart, or load a single `.rlrr` (+ optional audio; a synth fills in if there's none).
+- **In-play live-settings dock** (toggle with **H**), **loop A/B**, **speed control**, on-screen **pads**, accessible colorblind-safe palettes, and per-song calibration.
+
+**▶ Try it:** download **[`Practice Window v3 - Web Edition/parakit-practice-v3.html`](Practice%20Window%20v3%20-%20Web%20Edition/parakit-practice-v3.html)** and open it in any modern browser (Chrome or Edge for USB-MIDI).
+
+<p align="center">
+  <img src="screenshots/practice-v3-home.png" width="270" alt="Practice v3 — home (Song / Setup / Input)">
+  <img src="screenshots/practice-v3-gameplay.png" width="270" alt="Practice v3 — gameplay">
+  <img src="screenshots/practice-v3-kit-studio.png" width="270" alt="Practice v3 — Kit Studio">
+</p>
+
+### Practice Mode v2
+
+The falling-note **Practice** experience, rebuilt from scratch as a fast, **self-contained web app** — a big step up from the in-app mini-game and the `practice_v2/` alpha. Notes fall down 8 lanes in time with the music while you play along on a **USB MIDI drum kit or your keyboard**.
 
 - **Rock-solid timing** — a sample-accurate Web Audio clock, no drift.
 - **One file, zero setup** — open it in any modern browser; includes a built-in demo plus a synth that makes any chart audible even with no audio file.
@@ -59,7 +80,7 @@ The falling-note **Practice** experience has been rebuilt from scratch as a fast
   <img src="screenshots/practice-web-gameplay-2.png" width="300" alt="Practice — gameplay, full lanes">
 </p>
 
-> **This web edition is the de-facto final version of Practice Mode v2 for now.** An updated native (`.py`) version folded back into the app is planned for a later release — but you don't need to wait: the web edition is complete and ready to play today.
+> **Both v2 and v3 are complete and ready to play today.** A single, best-of-both native (`.py`) version folded back into the app is planned for a later release — no need to wait.
 
 ---
 
