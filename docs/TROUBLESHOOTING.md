@@ -105,7 +105,9 @@ On Windows: `certutil -hashfile "MDX23C-DrumSep-aufr33-jarredou.ckpt" SHA256`
   API**, which only some browsers support: **Chrome, Edge, and other Chromium browsers** (Opera /
   Brave) work; **Safari (macOS + iOS) does not**, and **Firefox** is limited (supported since
   v108 but flagged "not Baseline"). Use **Chrome or Edge** for a USB drum kit, or play with the
-  keyboard (works in every browser). Live compatibility:
+  keyboard (works in every browser). Some of the browsers MDN marks unsupported (the `*` entries
+  in its table) can still be coaxed into working with a **flag, permission, or polyfill** — see
+  the per-browser implementation notes. Live compatibility:
   <https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility>
 - **Practice opens but shows no notes** → the MIDI file needs drum notes in the standard GM
   mapping (35/36 kick, 38 snare, 42/44/46 hi-hat, etc.).

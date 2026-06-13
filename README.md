@@ -56,14 +56,17 @@ although Chrome and Edge work best for MIDI inputs**
 
 | Browser | USB-MIDI input |
 |---------|----------------|
-| **Chrome** (desktop & Android) | ✅ Yes — recommended |
-| **Edge** | ✅ Yes — recommended |
-| **Opera / Brave** (Chromium) | ✅ Yes |
-| **Firefox** (desktop) | ⚠️ Limited — works since v108, but MDN flags it "not Baseline" |
+| **Chrome** (desktop & Android) | ✅ Yes (v43+) — recommended |
+| **Edge** | ✅ Yes (v79+) — recommended |
+| **Opera / Chromium** (Brave, etc.) | ✅ Yes (v30+) |
+| **Samsung Internet** | ✅ Yes (v4+) |
+| **Firefox** (desktop) | ⚠️ Yes since v108 — see notes&nbsp;**\*** (MDN flags it "not Baseline") |
 | **Firefox** for Android | ❌ No |
-| **Safari** (macOS & iOS) | ❌ No |
+| **Safari** (macOS & iOS) | ❌ No&nbsp;**\*** |
 
-For a USB drum kit, open the page in **Chrome or Edge**. Always-current status: [MDN — Web MIDI API compatibility](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility) · [caniuse](https://caniuse.com/midi).
+For a USB drum kit, open the page in **Chrome or Edge**. Keyboard play works in every browser.
+
+> **\* "See implementation notes."** In [MDN's full compatibility table](https://developer.mozilla.org/en-US/docs/Web/API/Web_MIDI_API#browser_compatibility), the asterisked entries carry implementation notes — some otherwise-unsupported or limited cases **can be enabled with extra configuration** (a permission prompt, a browser flag, or a polyfill). Check MDN's per-browser notes for the specifics. Quick cross-reference: [caniuse](https://caniuse.com/midi).
 
 ### Practice Mode v3 — the combined rebuild *(with Kit Studio)*
 
