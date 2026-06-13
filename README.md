@@ -83,7 +83,7 @@ The falling-note **Practice** experience, rebuilt from scratch as a fast, **self
   <img src="screenshots/practice-web-gameplay-2.png" width="300" alt="Practice — gameplay, full lanes">
 </p>
 
-> **Both v2 and v3 are complete and ready to play today.** A single, best-of-both native (`.py`) version folded back into the app is planned for a later release — no need to wait.
+> **Both v2 and v3 are complete and ready to play today.** A single, best-of-both native (`.py`) version folded back into the app is planned for a later release.
 
 ---
 
