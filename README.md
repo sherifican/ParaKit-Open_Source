@@ -342,6 +342,8 @@ source and compiling a standalone `.exe`.
   top of the hidden checkbox and swallowed every click, so Auto-kick / Square notes / Kick-as-line
   / Beat-grid / Mute-drums-on-miss never responded. The knob is now click-transparent, so clicks
   reach the checkbox and the toggles work (verified in-browser).
+- Library: the folder-picker fallback button (next to **Open songs folder…**) is relabeled
+  **"Pick 1 song via folder"** for clarity.
 
 ### Preview Track v2 (Web Edition) — 2026-06-12
 - **Hide notes past the hit line.** New toggle in Preview Settings (off by default) — hides
