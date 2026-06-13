@@ -2497,11 +2497,7 @@ class Renderer {
         const h = Math.max(3, 4 * g.noteScale) * vScale;
         this._rr(c, g.padX, y - h / 2, g.playW, h, 2); c.fill();
       }
-      // kick receptor
-      c.shadowBlur = 0;
-      c.strokeStyle = hexA(ln.color, 0.5); c.lineWidth = 2;
-      const h = Math.max(4, 5 * g.noteScale);
-      this._rr(c, g.padX, g.hitLineY - h / 2, g.playW, h, 2); c.stroke();
+      c.shadowBlur = 0;   // reset shadow from the kick-bar pass; no persistent kick receptor line (the shared hit line is the target)
     }
     // receptors per lane
     for (const col of g.cols) {
@@ -5139,7 +5135,7 @@ function openMixer() {
     el.oninput = () => {
       setPref(pref, Number(el.value));
       val.textContent = Math.round(Number(el.value) * 100) + "%";
-      if (bus === "drums" && prefs.youDrum) return;     // youDrum holds drums at 0
+      if (bus === "drums") { applyYouDrum(); return; }  // applyYouDrum owns the drums bus (you-drum / mute-on-miss); the slider just feeds prefs.busDrums
       APP.audio.setBusGain(bus, Number(el.value));
     };
   };

@@ -284,6 +284,11 @@ source and compiling a standalone `.exe`.
   **drop out when you miss**, returning on your next hit. Prominent toggle — on the Setup card
   and the in-play Live-settings dock (key **7**); on by default. Songs with a single combined
   audio file are unaffected (it never mutes the backing).
+- **Fixed — "Kick as line":** removed a pink kick line that stayed stuck across the hit line the
+  whole time the mode was on; the kick bars still fall and land on the shared hit line.
+- **Fixed — drums volume slider:** the drums slider was inert while "you-drum" mode was on (the
+  default), so raising it to 90% changed nothing. It now adjusts the drum-stem level live, so
+  loaded drum stems are audible and controllable during play.
 
 ### Preview Track v2 (Web Edition) — 2026-06-12
 - **Hide notes past the hit line.** New toggle in Preview Settings (off by default) — hides
