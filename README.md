@@ -103,6 +103,7 @@ A from-scratch rebuild that folds the falling-note **play** experience together 
   <img src="screenshots/practice-v3-home.png" width="270" alt="Practice v3 — home (Song / Setup / Input)">
   <img src="screenshots/practice-v3-gameplay.png" width="270" alt="Practice v3 — gameplay">
   <img src="screenshots/practice-v3-kit-studio.png" width="270" alt="Practice v3 — Kit Studio">
+  <img src="screenshots/practice-v3-song-details.png" width="270" alt="Practice v3 — a song expanded in the library, showing note count + audio-stem breakdown, difficulty, speed, and kit">
 </p>
 
 ### Practice Mode v2
@@ -342,8 +343,9 @@ source and compiling a standalone `.exe`.
   top of the hidden checkbox and swallowed every click, so Auto-kick / Square notes / Kick-as-line
   / Beat-grid / Mute-drums-on-miss never responded. The knob is now click-transparent, so clicks
   reach the checkbox and the toggles work (verified in-browser).
-- Library: the folder-picker fallback button (next to **Open songs folder…**) is relabeled
-  **"Pick 1 song via folder"** for clarity.
+- Library: the song list is **taller** so an expanded song's details no longer get cut off, and
+  the folder-picker fallback button (next to **Open songs folder…**) is relabeled **"Pick 1 song
+  via folder"** for clarity.
 
 ### Preview Track v2 (Web Edition) — 2026-06-12
 - **Hide notes past the hit line.** New toggle in Preview Settings (off by default) — hides
