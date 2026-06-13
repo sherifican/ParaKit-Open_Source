@@ -42,8 +42,8 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan
 
 ---
 
-**NOTE:** **The screenshots show "MIDI Unsupported" that is just because they were not loaded in a browser yet, 
-although Chrome and Edge work best for MIDI inputs
+*NOTE: *The screenshots show "MIDI Unsupported" that is just because they were not loaded in a browser yet, 
+although Chrome and Edge work best for MIDI inputs**
 
 ## 🥁 Practice Mode (v2 / v3) — Web Edition
 
