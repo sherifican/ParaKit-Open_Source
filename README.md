@@ -354,6 +354,9 @@ source and compiling a standalone `.exe`.
   stems now stay **audible at all times** — they were wrongly silenced by "You drum." Drum
   audibility is now governed **only** by mute-on-miss: off = always audible; on = audible but
   ducked during a miss. "You drum" now only controls whether *your own* hits make synth sounds.
+- **Compact lanes** — new toggle on the **Setup** card (and the in-play Live-settings dock, key
+  **8**) that pulls the lanes closer to centre for a less stretched, less full-width highway
+  (~65% of the normal width). Off by default.
 
 ### Preview Track v2 (Web Edition) — 2026-06-12
 - **Hide notes past the hit line.** New toggle in Preview Settings (off by default) — hides

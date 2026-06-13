@@ -472,6 +472,8 @@ body.reduceMotion *{animation:none !important; transition:none !important}
           <span class="switch"><input type="checkbox" id="suBeatGrid"><i></i></span></div>
         <div class="row"><label>Mute drums on miss <span class="hint">(songs with a drum stem)</span></label>
           <span class="switch"><input type="checkbox" id="suMuteMiss"><i></i></span></div>
+        <div class="row"><label>Compact lanes <span class="hint">(pull lanes closer — less stretched)</span></label>
+          <span class="switch"><input type="checkbox" id="suCompact"><i></i></span></div>
 
         <div class="sep"></div>
         <div class="row"><label>Fall time</label>
@@ -544,6 +546,7 @@ body.reduceMotion *{animation:none !important; transition:none !important}
       <div class="drow" data-k="square"><span class="keycap">6</span><span>Square notes</span><b id="dSq"></b></div>
       <div class="drow" data-k="mutesynth"><span class="keycap">M</span><span>Mute synth</span><b id="dMute"></b></div>
       <div class="drow" data-k="muteonmiss"><span class="keycap">7</span><span>Mute drums on miss</span><b id="dMom"></b></div>
+      <div class="drow" data-k="compact"><span class="keycap">8</span><span>Compact lanes</span><b id="dCmp"></b></div>
       <div class="drow" data-k="speed-"><span class="keycap">−</span><span>Speed down</span><b id="dSpd" class="mono"></b></div>
       <div class="drow" data-k="speed+"><span class="keycap">+</span><span>Speed up</span><b></b></div>
       <div class="drow" data-k="loopA"><span class="keycap">[</span><span>Loop A at playhead</span><b id="dLa"></b></div>
@@ -2737,6 +2740,7 @@ const DEFAULT_PREFS = {
   laneGap: 4,
   kickLine: true,
   square: false,
+  compact: false,
   beatGrid: true,
   autoKick: false,
   youDrum: true,
@@ -3724,7 +3728,7 @@ function syncSetupCard() {
   const ck = (id, v) => { const e = $(id); if (e) e.checked = !!v; };
   ck("suAutoKick", prefs.autoKick); ck("suSquare", prefs.square);
   ck("suKickLine", prefs.kickLine); ck("suBeatGrid", prefs.beatGrid);
-  ck("suMuteMiss", prefs.muteOnMiss);
+  ck("suMuteMiss", prefs.muteOnMiss); ck("suCompact", prefs.compact);
   const fall = $("suFall"); if (fall) { const v = prefs.fallTime || 4; fall.value = v; $("suFallV").textContent = (+v).toFixed(1) + " s"; }
   const size = $("suSize"); if (size) { const v = prefs.noteSize || 1; size.value = v; $("suSizeV").textContent = parseFloat((+v).toFixed(2)) + "×"; }
 }
@@ -3735,6 +3739,7 @@ function wireHome() {
   tog("suKickLine", "kickLine", () => { if (APP.renderer) APP.renderer.setLayoutDirty(); });
   tog("suBeatGrid", "beatGrid");
   tog("suMuteMiss", "muteOnMiss");
+  tog("suCompact", "compact", () => { if (APP.renderer) APP.renderer.setLayoutDirty(); });
   const fall = $("suFall"); if (fall) fall.addEventListener("input", () => { setPref("fallTime", +fall.value); $("suFallV").textContent = (+fall.value).toFixed(1) + " s"; });
   const size = $("suSize"); if (size) size.addEventListener("input", () => { setPref("noteSize", +size.value); $("suSizeV").textContent = parseFloat((+size.value).toFixed(2)) + "×"; });
   const inCfg = $("btnInputCfg"); if (inCfg) inCfg.addEventListener("click", () => openSettings("input"));
@@ -3833,7 +3838,7 @@ function viewForRender() {
         bindLabel: APP.kb.bindsForLane(id).map(b => keyLabel(b.code)).join(" "),
       };
     }),
-    posX: prefs.hwPos, widthFrac: prefs.hwWidth, hitLineFrac: prefs.hitLineFrac,
+    posX: prefs.hwPos, widthFrac: prefs.hwWidth * (prefs.compact ? 0.65 : 1), hitLineFrac: prefs.hitLineFrac,
     laneGap: prefs.laneGap, wellOpacity: 0.06,
     kickLine: prefs.kickLine, kickIdx: order.indexOf("kk"),
     noteScale: prefs.noteSize, fallTime: prefs.fallTime,
@@ -4144,7 +4149,7 @@ function syncDock() {
   onoff("dAk", prefs.autoKick); onoff("dBg", prefs.beatGrid);
   onoff("dKl", prefs.kickLine); onoff("dSq", prefs.square);
   onoff("dMute", prefs.muteSynth);
-  onoff("dMom", prefs.muteOnMiss);
+  onoff("dMom", prefs.muteOnMiss); onoff("dCmp", prefs.compact);
   $("dSpd").textContent = Math.round(prefs.speed * 100) + "%";
 }
 function dockToggle(k) {
@@ -4161,6 +4166,7 @@ function dockToggle(k) {
   else if (k === "loopX") clearLoop();
   else if (k === "mutesynth") { setPref("muteSynth", !prefs.muteSynth); applyYouDrum(); }
   else if (k === "muteonmiss") { setPref("muteOnMiss", !prefs.muteOnMiss); applyYouDrum(); }
+  else if (k === "compact") { setPref("compact", !prefs.compact); if (APP.renderer) APP.renderer.setLayoutDirty(); }
   else if (k === "hideDock") { toggleDock(); return; }
   syncDock();
 }
@@ -5459,6 +5465,7 @@ function wireGlobalKeys() {
         case "Digit6": dockToggle("square"); return;
         case "KeyM": dockToggle("mutesynth"); return;
         case "Digit7": dockToggle("muteonmiss"); return;
+        case "Digit8": dockToggle("compact"); return;
         case "BracketLeft": e.preventDefault(); setLoopPoint("A"); return;
         case "BracketRight": e.preventDefault(); setLoopPoint("B"); return;
         case "Backslash": e.preventDefault(); clearLoop(); return;
