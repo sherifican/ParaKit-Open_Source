@@ -115,10 +115,14 @@ The falling-note **Practice** experience, rebuilt from scratch as a fast, **self
 | **`ParaKit v4.0.py`** | The full ParaKit v4.x app (single file) |
 | **`Run ParaKit v4.0.bat`** | Windows double-click launcher |
 | **`requirements.txt`** | Python dependencies for the main app |
+| **`parakit_drum_model.onnx`** | Neural drum-detection model loaded by the ML / Hybrid Audio → MIDI engines |
+| **`parakit_separators/`** | Neural drum-stem **separator plug-ins** (Jarredou MDX23C) for the Audio → MIDI detection pipeline |
+| **`rlrr_parse.py`** | The `.rlrr` parsing core, shared by the app's MIDI Extractor and `extractor/` |
 | **`extractor/`** | **RLRR Extractor** — converts `.rlrr` charts back into `.mid` MIDI ([readme](extractor/README.md)) |
-| **`practice_v2/`** | **Practice Window v2** — standalone falling-note practice mini-game (**alpha**, [readme](practice_v2/README.md)) |
-| **`Practice Window v2 - Web Edition/`** | **Practice Mode v2 — Web Edition** — the new self-contained browser rebuild (recommended; see the section above) |
+| **`Practice Window v3 - Web Edition/`** | **Practice Mode v3 — Web Edition** — combined rebuild: v2's falling-note play + a built-in **Kit Studio** + song-library loading; the in-progress successor, offered **alongside v2** (see the section above) |
+| **`Practice Window v2 - Web Edition/`** | **Practice Mode v2 — Web Edition** — self-contained browser rebuild of the falling-note practice game; offered **alongside v3** so you can compare (see the section above) |
 | **`Preview Track v2 - Web Edition/`** | **Preview Track v2 — Web Edition** — falling-note review + live Edit Mode for catching & fixing chart issues (see the section above) |
+| **`practice_v2/`** | **Practice Window v2 (Python)** — standalone falling-note practice mini-game (**alpha**, [readme](practice_v2/README.md)) |
 | **`docs/`** | Building from source, troubleshooting, roadmap |
 | **`LICENSE`** | GNU GPL v3 |
 
