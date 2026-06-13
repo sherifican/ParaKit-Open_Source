@@ -51,6 +51,8 @@ although Chrome and Edge work best for MIDI inputs**
 
 ### Practice Mode v3 — the combined rebuild *(with Kit Studio)*
 
+**Kit Studio* is the built in customization studio that lets you customize your experience to your liking, change the orders of lanes, change note sizes and shapes, and much much more.*
+
 A from-scratch rebuild that folds the falling-note **play** experience together with a full **Kit Studio** and a polished home. It does everything v2 does — notes down 8 lanes, keyboard **+ USB-MIDI** play, latency calibration, a results screen with a timing histogram — and adds:
 
 - **🥁 Kit Studio (the headline)** — rearrange the lanes, set each lane's **color / shape / width**, add **aux lanes**, **lefty-flip** the whole kit, save kit presets, pin a kit to a song. Edit it live mid-song or from the home.
