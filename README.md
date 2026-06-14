@@ -79,7 +79,7 @@ in Firefox before I had fixed the MIDI config, see below for details, although C
   plus genre presets (Pop / Rock / Metal / Funk)
 - **Stem splitter** — isolate a drums-only track from any song (Demucs)
 - **MusicXML → MIDI** — convert sheet music into a chart
-- **YouTube → FLAC** — download lossless audio to chart from
+- **YouTube → FLAC** — download lossless audio to chart from YouTube
 - **Asset management** — metadata, album art, preview clips
 - **Preview & Practice** — falling notes synced to the audio, keyboard or USB MIDI kit
 - **Song Tester** — verify sync before export
