@@ -7,11 +7,9 @@ with the .py version so that's what I'm more actively supporting, I will periodi
 pile up or there are significant fixes. I will also compile the v5 rebiuld when it's finished for those who want it.`
 
 > The old LimeWire link is about to expire so I made a website to host the .exe versions:
-> I'm having some issue's with my homepage HTML getting wiped by the server repeadedly so i'll remove this note when
-> I fix that, but until then the link below may be broken.
 
 `.exe DOWNLOAD:
-` [ParaKit Official Homepage](https://parakit.builtonweb.com/parakit/)
+` [ParaKit Official Homepage](https://parakit.builtonweb.com/)
 
 `README FOR .EXE VERSION:
 ` https://github.com/sherifican/ParaKit---Releases
