@@ -6,6 +6,11 @@
 with the .py version so that's what I'm more actively supporting, I will periodically update the .exe version when enough changes
 pile up or there are significant fixes. I will also compile the v5 rebiuld when it's finished for those who want it.`
 
+The LimeWire download will expire if nobody downloads it for more than 7 days so I built a page to host the
+.exe releases on. Once the LimeWire download expires naturally I'll take it off of this page so the ALT link
+will become the *only* link.
+
+.exe VER ALT LINK: https://parakit.builtonweb.com/
 STANDALONE .EXE VERSION: https://limewire.com/d/UV9Zm#DHqxKgEtmn
 
 REPO FOR .EXE VERSION: https://github.com/sherifican/ParaKit---Releases
