@@ -8,7 +8,7 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 The LimeWire download will expire if nobody downloads it for more than 7 days so I built a page to host the
 .exe releases on. Once the LimeWire download expires naturally I'll take it off of this page so the ALT link
-will become the *only* link.
+will become the *only* link. LimeWire is most likely gonna have faster download speeds FYI.
 
 .exe VER ALT LINK: https://parakit.builtonweb.com/
 
