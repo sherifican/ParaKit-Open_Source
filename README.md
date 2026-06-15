@@ -10,11 +10,17 @@ The LimeWire download will expire if nobody downloads it for more than 7 days so
 .exe releases on. Once the LimeWire download expires naturally I'll take it off of this page so the homepage link
 will become the *only* link. LimeWire is most likely gonna have faster download speeds FYI.
 
-.exe DOWNLOAD: [ParaKit Official Homepage](https://parakit.builtonweb.com/parakit/)
 
-ALT .exe VER DOWNLOAD: https://limewire.com/d/UV9Zm#DHqxKgEtmn
+`.exe DOWNLOAD:
+` [ParaKit Official Homepage](https://parakit.builtonweb.com/parakit/)
 
-REPO FOR .EXE VERSION: https://github.com/sherifican/ParaKit---Releases
+
+`ALT .exe VER DOWNLOAD:
+` https://limewire.com/d/UV9Zm#DHqxKgEtmn
+
+
+`REPO FOR .EXE VERSION:
+` https://github.com/sherifican/ParaKit---Releases
 
 Note: Both the Practice and Preview mode updates that are currently HTMLs will be folded into ParaKit propper in a future update,
 but for now the HTML/web versions function fine as a quick and easy substitute until then.
