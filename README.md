@@ -11,7 +11,7 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 `.exe DOWNLOAD:
 ` [ParaKit Official Homepage](https://parakit.builtonweb.com/parakit/)
 
-`REPO FOR .EXE VERSION:
+`README FOR .EXE VERSION:
 ` https://github.com/sherifican/ParaKit---Releases
 
 Note: Both the Practice and Preview mode updates that are currently HTMLs will be folded into ParaKit propper in a future update,
