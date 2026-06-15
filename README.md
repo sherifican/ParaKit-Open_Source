@@ -28,7 +28,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.4.60-12`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.4.61-1`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -333,6 +333,21 @@ source and compiling a standalone `.exe`.
 ---
 
 ## Changelog
+
+### ParaKit v4.4.61-1 — YouTube → FLAC: Send-to-Stem + Downloaded Songs library — 2026-06-15
+- **New — "Send to Stem Splitter →" button.** After a download finishes, one click loads that
+  file into the Stem Splitter and switches to it — no manual browsing.
+- **New — Downloaded Songs library** beside the activity log. Every download is listed with its
+  cover art, title, format, duration, and badges showing whether it has been split into **STEMS**
+  and converted to **MIDI** yet. Click a song to Send it to the Stem Splitter, or Open its stems
+  folder once it has been split. Search + sort; the list persists between sessions and includes
+  downloads you already had.
+- **Layout reorg.** Format, JS Runtime, and Cookies now sit in one band beside the thumbnail
+  preview, freeing vertical space so the activity log and the library can expand.
+- **New — re-split warning.** The Stem Splitter now warns before re-splitting a song you have
+  already split (with a "don't show this again" option), so you don't overwrite stems by accident.
+- **New — Audio → MIDI overwrite reminder.** A note now warns that converting a song whose MIDI
+  already exists silently overwrites the old MIDI file.
 
 ### Preview Track v2 (Web Edition) — 2026-06-14
 - **Fixed — ⇪ Export now writes a real `.midi` file.** Export was saving the internal
