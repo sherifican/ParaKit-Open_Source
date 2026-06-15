@@ -72,6 +72,22 @@ except ImportError:
 CONFIG_PATH     = os.path.join(os.path.expanduser("~"), ".songmaker_config.json")
 CONFIG_BAK_PATH = CONFIG_PATH + ".bak"
 
+# YouTube → FLAC "Downloaded Songs" library (v4.4.61-1). Standalone registry +
+# art cache, deliberately separate from the main config so a corrupt/huge
+# library file can never take the app config down with it. The registry is
+# written atomically (tmp + fsync + os.replace + .bak mirror) — same discipline
+# as save_config — so a mid-write process kill cannot wipe the user's library.
+YT_LIBRARY_PATH     = os.path.join(os.path.expanduser("~"), ".parakit_yt_library.json")
+YT_LIBRARY_BAK_PATH = YT_LIBRARY_PATH + ".bak"
+YT_ART_CACHE_DIR    = os.path.join(os.path.expanduser("~"), ".parakit_yt_art_cache")
+# Serializes registry read-modify-write across the Tk thread (download add) and
+# the two background workers (file backfill + art backfill) so concurrent
+# load->modify->save cycles can't clobber each other's rows. Slow work (duration
+# probe, art extraction) is done OUTSIDE this lock; only the fast reload-merge-
+# save span holds it, so the Tk thread never blocks on slow I/O.
+import threading as _threading
+YT_LIBRARY_LOCK     = _threading.Lock()
+
 
 def _read_config_file(path):
     """Return a parsed dict from `path`, or None if missing / unreadable / not a dict.
@@ -5315,7 +5331,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.60-12"
+    VERSION = "4.4.61-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -6552,16 +6568,15 @@ class MidiToRlrrApp:
             pass
         threading.Thread(target=lambda: self._update_worker(silent=False), daemon=True).start()
 
-    # v4.4.52 — Update-check rewritten to LimeWire flow.
-    # Owner instruction 2026-05-11: previous GitHub-API + Google-Drive
-    # auto-update path replaced. ParaKit now publishes via a single
-    # LimeWire link whose page title is swapped at each release to
-    # include the new version number. The app fetches that page,
-    # extracts the version from the <title> tag, compares against
-    # `self.VERSION`. If newer, the user is asked; clicking Yes opens
-    # the LimeWire page in their default browser for manual download.
-    # No silent download, no .exe hot-swap, no Google Drive.
-    PARAKIT_RELEASE_URL = "https://limewire.com/d/UV9Zm#DHqxKgEtmn"
+    # 2026-06-15 — Update-check repointed from LimeWire (link retired) to
+    # the official ParaKit download page. The app fetches that page and
+    # reads the version from its download-card version chip
+    # (<span class="ver">vX.Y.Z</span>) — the owner updates that chip on
+    # each new .exe release, so it is the version source of truth. The
+    # version is compared against `self.VERSION`; if newer, the user is
+    # asked, and clicking Yes opens the download page in their browser for
+    # manual download. No silent download, no .exe hot-swap, no Google Drive.
+    PARAKIT_RELEASE_URL = "https://parakit.builtonweb.com/parakit/"
 
     def _update_worker(self, silent=True):
         """Background: fetch ParaKit's LimeWire release page and compare versions.
@@ -6605,18 +6620,16 @@ class MidiToRlrrApp:
             with urllib.request.urlopen(req, timeout=8) as resp:
                 html = resp.read().decode("utf-8", errors="ignore")
 
-            # Pull the page <title> and look for a v-style version number.
-            title_match = re.search(
-                r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
-            if not title_match:
-                raise ValueError("Release page has no <title> tag")
-            page_title = title_match.group(1).strip()
-
+            # Read the version from the download page's version chip
+            # (<span class="ver">v4.4.52</span>). Short chips like "v3" /
+            # "v2" don't match — only a full X.Y.Z(-N) version does, so the
+            # .exe chip is selected automatically.
             version_match = re.search(
-                r"v?(\d+(?:\.\d+){2,3}(?:-\d+)?)", page_title)
+                r'class="ver"[^>]*>\s*v?(\d+(?:\.\d+){2,3}(?:-\d+)?)',
+                html, re.IGNORECASE)
             if not version_match:
                 raise ValueError(
-                    f"No version pattern in page title: {page_title!r}")
+                    "No version chip found on the download page")
             latest_version = version_match.group(1)
 
             if _ver(latest_version) is None:
@@ -6651,7 +6664,7 @@ class MidiToRlrrApp:
                     f"page manually:\n{release_url}"))
 
     def _prompt_update(self, new_ver, release_url):
-        """Show update dialog. Yes opens the LimeWire page in the browser."""
+        """Show update dialog. Yes opens the download page in the browser."""
         msg = (f"ParaKit v{new_ver} is available!\n"
                f"You have v{self.VERSION}\n\n"
                f"Open the download page in your browser?\n"
@@ -8764,6 +8777,14 @@ demucs.separate.main()
             messagebox.showerror("No Output Folder", "Please select an output folder.")
             return
 
+        # v4.4.61-1 — Re-split guard. If ParaKit can already see split stems for
+        # this song on disk, warn before overwriting (unless dismissed). Shares
+        # the path-based _stem_is_split detector with the YT library (D1).
+        if (self._stem_is_split(input_path)
+                and not load_config().get("stem_resplit_warn_dismissed")):
+            if not self._stem_confirm_resplit(input_path, output_base):
+                return  # user cancelled — abort the split
+
         self.stem_btn.configure(state="disabled", text="Splitting...")
         self.stem_progress.start(12)
         self.stem_timer_lbl.configure(text="⏱  00:00")
@@ -9268,10 +9289,32 @@ demucs.separate.main()
 
         reality_col = ttk.LabelFrame(header_cols, text=" Reality Check ", padding=10)
         reality_col.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        ttk.Label(reality_col,
+        # v4.4.61-1 — two-column row inside the box: keep the orange reality note
+        # at col 0; add a medium-red overwrite disclaimer at col 1. This box is
+        # the LEFT half of header_cols, so each inner column is ~half-of-half; a
+        # fixed wraplength either under-fills (roomy) or overflows (compact/1080p).
+        # Fix (UI-audit): make wraplength RESPONSIVE — recompute per column from
+        # the box's measured width on <Configure>, so roomy gets the plan's wider
+        # wrap and compact never forces the columns past their share.
+        reality_col.columnconfigure(0, weight=1, uniform="rc")
+        reality_col.columnconfigure(1, weight=1, uniform="rc")
+        reality_orange = ttk.Label(reality_col,
                   text="Audio detection gets you a strong first draft, not a finished chart. Always check the generated MIDI in the MIDI Editor before building the song.",
                   style="Sub.TLabel", foreground="#e09a3a",
-                  justify=tk.LEFT, wraplength=410).pack(anchor="w")
+                  justify=tk.LEFT, wraplength=230)
+        reality_orange.grid(row=0, column=0, sticky="nw", padx=(0, 8))
+        reality_red = ttk.Label(reality_col,
+                  text="Heads up: running a song whose MIDI already exists (same output filename) "
+                       "SILENTLY OVERWRITES the old MIDI — check the output filename before you hit Convert.",
+                  style="Sub.TLabel", foreground="#e05650",
+                  justify=tk.LEFT, wraplength=230)
+        reality_red.grid(row=0, column=1, sticky="nw")
+
+        def _reality_resize(event, _o=reality_orange, _r=reality_red):
+            wl = max(150, (event.width // 2) - 22)
+            _o.configure(wraplength=wl)
+            _r.configure(wraplength=wl)
+        reality_col.bind("<Configure>", _reality_resize)
 
         engine_col = ttk.LabelFrame(header_cols, text=" Engine Cheat Sheet ", padding=10)
         engine_col.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
@@ -21008,9 +21051,18 @@ demucs.separate.main()
         ttk.Button(url_row, text="✕", width=2,
                    command=lambda: self.yt_url_var.set("")).pack(side=tk.LEFT)
 
-        # ── Thumbnail preview ─────────────────────────────────────────────────
-        thumb_outer = ttk.Frame(main)
-        thumb_outer.pack(fill=tk.X, pady=(0, 8))
+        # v4.4.61-1 (owner layout revision) — TOP BAND. The asset preview sits at
+        # the left; the Format, JS-Runtime and Cookies boxes move UP beside it,
+        # into the empty space that used to sit right of the thumbnail. This
+        # collapses ~4 stacked sections into one band so the bottom [log|library]
+        # split reclaims the vertical space. _yt_relayout_band (defined after the
+        # boxes exist) reflows to a 2×2 grid when the tab is narrow (compact/1080p)
+        # so the Runtime/Cookies boxes never overflow their column.
+        top_band = ttk.Frame(main)
+        top_band.pack(fill=tk.X, pady=(0, 8))
+
+        # ── Asset preview (band col 0) — gridded by _yt_relayout_band ─────────
+        thumb_outer = ttk.Frame(top_band)
 
         # Fixed 240×135 image box — holds its size even when empty
         thumb_img_box = tk.Frame(thumb_outer, width=240, height=135,
@@ -21029,7 +21081,7 @@ demucs.separate.main()
         self.yt_thumb_title_var = tk.StringVar(value="")
         ttk.Label(thumb_text_col, textvariable=self.yt_thumb_title_var,
                   foreground="#e0e0ff", font=("Segoe UI", 10, "bold"),
-                  wraplength=440, justify=tk.LEFT).pack(anchor="w", pady=(6, 0))
+                  wraplength=180, justify=tk.LEFT).pack(anchor="w", pady=(6, 0))
 
         self._yt_thumb_image   = None   # keep PhotoImage reference (prevents GC)
         self._yt_thumb_after_id = None  # debounce timer ID
@@ -21061,9 +21113,10 @@ demucs.separate.main()
         self.yt_out_var.trace_add("write",
             lambda *_: save_config({"output_folder_yt": self.yt_out_var.get()}))
 
-        # Format options
-        fmt_frame = ttk.LabelFrame(main, text=" Format ", padding=8)
-        fmt_frame.pack(fill=tk.X, pady=(0, 8))
+        # Format options (band col 1) — gridded by _yt_relayout_band. Radios
+        # stack vertically since this is now a narrower band column, not a
+        # full-width row.
+        fmt_frame = ttk.LabelFrame(top_band, text=" Format ", padding=8)
         fmt_row = ttk.Frame(fmt_frame)
         fmt_row.pack(anchor="w")
         self.yt_fmt_var = tk.StringVar(value="flac")
@@ -21074,10 +21127,11 @@ demucs.separate.main()
         for fmt, lbl in [("flac", "FLAC (recommended — best quality)"),
                           ("wav",  "WAV (uncompressed, large files)")]:
             ttk.Radiobutton(fmt_row, text=lbl,
-                            variable=self.yt_fmt_var, value=fmt).pack(side=tk.LEFT, padx=(0, 16))
+                            variable=self.yt_fmt_var, value=fmt).pack(anchor="w")
         ttk.Label(fmt_frame,
                   text="💡  FLAC is the best choice for Stem Splitter input — lossless and compact.",
-                  style="Sub.TLabel", foreground="#b388ff").pack(anchor="w", pady=(4, 0))
+                  style="Sub.TLabel", foreground="#b388ff",
+                  wraplength=220, justify=tk.LEFT).pack(anchor="w", pady=(4, 0))
 
         # Custom filename — opt-in override of the default video-title basename.
         # Off by default: the file is saved as the YouTube video title (the
@@ -21169,8 +21223,8 @@ demucs.separate.main()
         # Cookie options + Node.js custom path (loaded once from shared config)
         cookie_cfg = load_config()
         self.yt_node_path_var = tk.StringVar(value=cookie_cfg.get("yt_node_path", ""))
-        cookie_frame = ttk.LabelFrame(main, text=" YouTube Login / Cookies ", padding=8)
-        cookie_frame.pack(fill=tk.X, pady=(0, 8))
+        # Cookies (band col 3 wide / row 1 narrow) — gridded by _yt_relayout_band
+        cookie_frame = ttk.LabelFrame(top_band, text=" YouTube Login / Cookies ", padding=8)
 
         self.yt_cookie_mode_var = tk.StringVar(value=cookie_cfg.get("yt_cookie_mode", "none"))
         self.yt_cookie_browser_var = tk.StringVar(value=cookie_cfg.get("yt_cookie_browser", "Chrome"))
@@ -21207,7 +21261,7 @@ demucs.separate.main()
         browser_note = ttk.Label(
             cookie_frame,
             text="Leave profile blank for the default browser profile. For OperaGX, a full profile path works best.",
-            style="Sub.TLabel", foreground="#888", justify=tk.LEFT, wraplength=900)
+            style="Sub.TLabel", foreground="#888", justify=tk.LEFT, wraplength=360)
         browser_note.pack(anchor="w", pady=(4, 0))
 
         file_row = ttk.Frame(cookie_frame)
@@ -21228,7 +21282,7 @@ demucs.separate.main()
         file_note = ttk.Label(
             cookie_frame,
             text="Use a Netscape-format cookies.txt file if browser extraction does not work for a specific video.",
-            style="Sub.TLabel", foreground="#888", justify=tk.LEFT, wraplength=900)
+            style="Sub.TLabel", foreground="#888", justify=tk.LEFT, wraplength=360)
         file_note.pack(anchor="w", pady=(4, 0))
 
         def _yt_save_cookie_settings(*_):
@@ -21275,26 +21329,33 @@ demucs.separate.main()
 
         # JS Runtime — needed by yt-dlp to solve YouTube's signature challenge.
         # Mirrors the model-row pattern: status label + Check + Get-Deno button.
+        # JS Runtime (band col 2 wide / row 1 narrow) — gridded by _yt_relayout_band
         runtime_frame = ttk.LabelFrame(
-            main, text=" JavaScript Runtime (for YouTube signature solving) ",
+            top_band, text=" JavaScript Runtime (for YouTube signature solving) ",
             padding=8)
-        runtime_frame.pack(fill=tk.X, pady=(0, 8))
+        # v4.4.61-1 — This box is a band column (not full width), so its contents
+        # reflow VERTICALLY instead of one wide side=LEFT row. Status + node-path
+        # get wraplength so a long absolute Deno/Node path can't force the box
+        # past its column share; the 3 buttons sit on their own row so text and
+        # buttons never compete for horizontal space.
         runtime_row = ttk.Frame(runtime_frame)
         runtime_row.pack(fill=tk.X)
-        # Buttons sit left, immediately after the status label, so they're
-        # visually adjacent to the information they act on.
         self._yt_runtime_status_lbl = ttk.Label(
             runtime_row, text="Checking...",
-            style="Sub.TLabel", foreground="#888")
-        self._yt_runtime_status_lbl.pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Button(runtime_row, text="🔍  Check",
+            style="Sub.TLabel", foreground="#888",
+            wraplength=360, justify=tk.LEFT)
+        self._yt_runtime_status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        runtime_btn_row = ttk.Frame(runtime_frame)
+        runtime_btn_row.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(runtime_btn_row, text="🔍  Check",
                    command=self._yt_check_runtime_status).pack(side=tk.LEFT, padx=(0, 4))
         # v4.4.16 — Bind to self so the v4.4.5 gray-out pattern
         # (toggled in _yt_check_runtime_status below) can disable the
         # button when Deno is already detected on disk. Anonymous-pack
         # left the button always-clickable, allowing redundant downloads.
         self._yt_deno_btn = ttk.Button(
-            runtime_row, text="↓  Get Deno",
+            runtime_btn_row, text="↓  Get Deno",
             command=self._yt_download_deno)
         self._yt_deno_btn.pack(side=tk.LEFT, padx=(0, 4))
 
@@ -21308,12 +21369,13 @@ demucs.separate.main()
                 save_config({"yt_node_path": path})
                 self._yt_check_runtime_status()
 
-        ttk.Button(runtime_row, text="📁  Node.js Path",
+        ttk.Button(runtime_btn_row, text="📁  Node.js Path",
                    command=_yt_browse_node).pack(side=tk.LEFT, padx=(0, 4))
         self._yt_node_path_lbl = ttk.Label(
-            runtime_row, textvariable=self.yt_node_path_var,
-            style="Sub.TLabel", foreground="#aaaaaa")
-        self._yt_node_path_lbl.pack(side=tk.LEFT, padx=(4, 0))
+            runtime_frame, textvariable=self.yt_node_path_var,
+            style="Sub.TLabel", foreground="#aaaaaa",
+            wraplength=360, justify=tk.LEFT)
+        self._yt_node_path_lbl.pack(anchor="w", fill=tk.X, pady=(2, 0))
 
         ttk.Label(runtime_frame,
                   text="Required by recent yt-dlp builds. Click Get Deno to "
@@ -21321,10 +21383,51 @@ demucs.separate.main()
                        "or install Node.js from https://nodejs.org/ and click Check. "
                        "Use Node.js Path if Node is installed outside the default location.",
                   style="Sub.TLabel", foreground="#888",
-                  wraplength=640, justify=tk.LEFT).pack(anchor="w", pady=(4, 0))
+                  wraplength=360, justify=tk.LEFT).pack(anchor="w", pady=(4, 0))
         # Initial detection — defer one tick so the label widget is fully
         # mapped before the first text update.
         self.root.after(50, self._yt_check_runtime_status)
+
+        # ── Top-band reflow ──────────────────────────────────────────────────
+        # Wide: [ preview | Format | Runtime | Cookies ] on one row.
+        # Narrow (compact/1080p): 2×2 grid [preview|Format] / [Runtime|Cookies]
+        # so the Runtime/Cookies boxes never overflow a too-thin column. Guarded
+        # so it only re-grids when crossing the width threshold (no thrash).
+        self._yt_band_wide = None
+
+        def _yt_relayout_band(_e=None):
+            try:
+                w = top_band.winfo_width()
+            except Exception:
+                return
+            if w <= 1:
+                return
+            wide = w >= 1300
+            if self._yt_band_wide == wide:
+                return
+            self._yt_band_wide = wide
+            for _c in range(4):
+                top_band.columnconfigure(_c, weight=0, minsize=0)
+            for _child in (thumb_outer, fmt_frame, runtime_frame, cookie_frame):
+                _child.grid_forget()
+            if wide:
+                thumb_outer.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+                fmt_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 6))
+                runtime_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 6))
+                cookie_frame.grid(row=0, column=3, sticky="nsew")
+                top_band.columnconfigure(0, minsize=440)
+                top_band.columnconfigure(1, weight=2)
+                top_band.columnconfigure(2, weight=3)
+                top_band.columnconfigure(3, weight=3)
+            else:
+                thumb_outer.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 6))
+                fmt_frame.grid(row=0, column=1, sticky="nsew", pady=(0, 6))
+                runtime_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
+                cookie_frame.grid(row=1, column=1, sticky="nsew")
+                top_band.columnconfigure(0, weight=1)
+                top_band.columnconfigure(1, weight=1)
+        top_band.bind("<Configure>", _yt_relayout_band)
+        self.root.after(60, _yt_relayout_band)
 
         # Download button
         dl_row = ttk.Frame(main)
@@ -21347,6 +21450,20 @@ demucs.separate.main()
         self.yt_embed_art_var.trace_add("write",
             lambda *_: save_config({"yt_embed_art": self.yt_embed_art_var.get()}))
 
+        # v4.4.61-1 — "Send to Stem Splitter" header action. Disabled until a
+        # download completes this session; enabled by _yt_on_download_complete,
+        # which also records self._yt_last_downloaded. Sends the just-downloaded
+        # file straight into the Stem Splitter tab + switches to it.
+        send_row = ttk.Frame(main)
+        send_row.pack(anchor="w", pady=(0, 8))
+        self.yt_send_stem_btn = ttk.Button(
+            send_row, text="Send to Stem Splitter  →",
+            command=self._yt_send_last_to_stem, state="disabled")
+        self.yt_send_stem_btn.pack(side=tk.LEFT)
+        ttk.Label(send_row,
+                  text="  (enabled after a download completes)",
+                  style="Sub.TLabel", foreground="#888").pack(side=tk.LEFT)
+
         # Progress text (yt-dlp percentage line) + indeterminate bar + elapsed timer
         self.yt_progress_var = tk.StringVar(value="")
         ttk.Label(main, textvariable=self.yt_progress_var,
@@ -21356,13 +21473,998 @@ demucs.separate.main()
         self.yt_timer_lbl = ttk.Label(main, text="", style="Sub.TLabel")
         self.yt_timer_lbl.pack(anchor="w", pady=(0, 4))
 
-        # Log
-        self.yt_log = scrolledtext.ScrolledText(main, height=14, state="disabled",
+        # v4.4.61-1 — Bottom split: log (left) + Downloaded-Songs library (right).
+        # In compact (1080p) mode the tab body lives inside a scroll-canvas whose
+        # <Configure> only syncs WIDTH, so a child packed with expand=True
+        # collapses to zero height. Give the bottom container an explicit height
+        # + pack_propagate(False) in that mode so both panes stay visible and
+        # scroll. Roomy mode keeps fill=BOTH/expand so it grows with the window.
+        bottom = ttk.Frame(main)
+        if getattr(self, "_compact_layout", False):
+            bottom.configure(height=320)
+            bottom.pack(fill=tk.X, pady=(4, 0))
+            bottom.pack_propagate(False)
+        else:
+            bottom.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+
+        # LEFT — the activity log (created with log_col as master; a Tk widget
+        # cannot be re-parented after creation, so build it here, not move it).
+        log_col = ttk.Frame(bottom)
+        log_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        ttk.Label(log_col, text="ACTIVITY LOG",
+                  font=("Segoe UI", 8, "bold"), foreground="#9a9ab0").pack(anchor="w")
+        self.yt_log = scrolledtext.ScrolledText(log_col, height=14, state="disabled",
                                                  font=("Consolas", 9), bg="#0d0d1a",
                                                  fg="#c0c0d0", wrap=tk.WORD)
         self.yt_log.pack(fill=tk.BOTH, expand=True)
         self._setup_pretty_log_widget(self.yt_log, bg="#0d0d1a")
         self.yt_log.after(100, lambda: self._setup_pretty_log_widget(self.yt_log, bg="#0d0d1a"))
+
+        # RIGHT — the persistent Downloaded-Songs library.
+        lib_col = ttk.Frame(bottom)
+        lib_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0))
+        self._yt_library_build(lib_col)
+
+    # =====================================================================
+    # v4.4.61-1 — YouTube → FLAC: Send-to-Stem + Downloaded-Songs Library
+    # UI + file-management glue only. No protected functions, no download /
+    # Demucs logic change. Split / MIDI pairing is computed live from disk;
+    # the registry stores only the list of downloads.
+    # =====================================================================
+
+    @staticmethod
+    def _yt_ellipsize(text, n):
+        """Approximate single-line ellipsis (Tk labels have no native one)."""
+        text = text or ""
+        return text if len(text) <= n else text[:max(1, n - 1)].rstrip() + "…"
+
+    def _yt_fmt_duration(self, sec):
+        try:
+            if sec is None:
+                return ""
+            sec = int(round(float(sec)))
+            m, s = divmod(sec, 60)
+            if m >= 60:
+                h, m = divmod(m, 60)
+                return f"{h}:{m:02d}:{s:02d}"
+            return f"{m}:{s:02d}"
+        except Exception:
+            return ""
+
+    def _open_folder_crossplatform(self, folder):
+        """Open a folder in the OS file browser (mirror of _stem_open_output)."""
+        import subprocess, platform
+        try:
+            if platform.system() == "Windows":
+                os.startfile(folder)
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open folder:\n{e}")
+
+    # ── Split / MIDI detection (path-based, guarded, ISO-aware) ──────────────
+    def _stem_is_split(self, audio_path):
+        """True if ParaKit can see split drum stems for this song on disk.
+
+        Best-effort + path-based (D1). Probes the standard DRUMS ONLY/ folder
+        and the ISO DRUMS/ folder under both the main stem-output base and the
+        dedicated ISO output base. Renamed outputs can still evade this — a
+        documented limitation, not a guarantee.
+        """
+        try:
+            song = os.path.splitext(os.path.basename(audio_path))[0]
+        except Exception:
+            return False
+        candidates = []
+        base_var = getattr(self, "stem_output_var", None)
+        base = base_var.get().strip() if base_var else ""
+        if base and os.path.isdir(base):
+            candidates.append(os.path.join(base, "DRUMS ONLY", f"{song}_drums.ogg"))
+            candidates.append(os.path.join(base, "DRUMS", f"{song}_drums.ogg"))
+        iso_var = getattr(self, "stem_iso_output_var", None)
+        iso_base = iso_var.get().strip() if iso_var else ""
+        if iso_base and os.path.isdir(iso_base):
+            candidates.append(os.path.join(iso_base, "DRUMS", f"{song}_drums.ogg"))
+        for c in candidates:
+            try:
+                if os.path.isfile(c):
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _midi_paired(self, audio_path):
+        """True if an A2M MIDI exists for this song (D4).
+
+        A2M writes <out>/MIDIs/<song> MIDI.mid; the Stem→A2M flow feeds the
+        DRUMS stem so the real file is often <song>_drums MIDI.mid — scan both.
+        Guards empty a2m_output_var. A custom output folder or a moved MIDI
+        defeats it (documented limitation).
+        """
+        out_var = getattr(self, "a2m_output_var", None)
+        out = out_var.get().strip() if out_var else ""
+        if not out:
+            return False
+        try:
+            song = os.path.splitext(os.path.basename(audio_path))[0]
+        except Exception:
+            return False
+        for name in (f"{song} MIDI.mid", f"{song}_drums MIDI.mid"):
+            try:
+                if os.path.isfile(os.path.join(out, "MIDIs", name)):
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _open_stems_folder(self, audio_path):
+        """Open whichever split folder actually holds this song's drums."""
+        try:
+            song = os.path.splitext(os.path.basename(audio_path))[0]
+        except Exception:
+            song = ""
+        base_var = getattr(self, "stem_output_var", None)
+        base = base_var.get().strip() if base_var else ""
+        iso_var = getattr(self, "stem_iso_output_var", None)
+        iso_base = iso_var.get().strip() if iso_var else ""
+        probes = []
+        if base:
+            probes.append((os.path.join(base, "DRUMS ONLY"), f"{song}_drums.ogg"))
+            probes.append((os.path.join(base, "DRUMS"), f"{song}_drums.ogg"))
+        if iso_base:
+            probes.append((os.path.join(iso_base, "DRUMS"), f"{song}_drums.ogg"))
+        target = None
+        for folder, fname in probes:
+            try:
+                if os.path.isfile(os.path.join(folder, fname)):
+                    target = folder
+                    break
+            except Exception:
+                pass
+        if not target:
+            # Don't fall back to os.getcwd() — for a frozen exe that can be the
+            # install dir / System32. Use a real existing stem base, else tell
+            # the user the stems are gone (race: deleted after the badge showed).
+            for fallback in (base, iso_base):
+                if fallback and os.path.isdir(fallback):
+                    target = fallback
+                    break
+            if not target:
+                messagebox.showinfo(
+                    "Stems not found",
+                    "Couldn't find this song's split stems — they may have been "
+                    "moved or deleted.")
+                return
+        self._open_folder_crossplatform(target)
+
+    # ── Send-to-Stem (shared by header button + library rows) ───────────────
+    def _send_audio_to_stem(self, path):
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning(
+                "File not found",
+                "That download is no longer on disk:\n" + str(path))
+            return
+        try:
+            self.stem_input_var.set(path)        # no trace → inert, just sets text
+        except Exception:
+            pass
+        try:
+            self._add_recent_file("recent_stem_audio", path)
+        except Exception:
+            pass
+        try:
+            self.notebook.select(self._tab_indexes["stem"])
+        except Exception:
+            pass
+        try:
+            self._stem_log(f"Loaded from YouTube library: {os.path.basename(path)}")
+        except Exception:
+            pass
+
+    def _yt_send_last_to_stem(self):
+        path = getattr(self, "_yt_last_downloaded", None)
+        if not path:
+            messagebox.showinfo("Nothing to send", "Download a song first.")
+            return
+        self._send_audio_to_stem(path)
+
+    # ── Registry (standalone, atomic — clone of save_config discipline) ──────
+    def _yt_library_load(self):
+        for p in (YT_LIBRARY_PATH, YT_LIBRARY_BAK_PATH):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    return data
+            except Exception:
+                continue
+        return []
+
+    def _yt_library_save(self, entries):
+        try:
+            tmp = YT_LIBRARY_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(entries, f, indent=2)
+                try:
+                    f.flush()
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+            os.replace(tmp, YT_LIBRARY_PATH)
+            try:
+                shutil.copyfile(YT_LIBRARY_PATH, YT_LIBRARY_BAK_PATH)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _yt_library_add(self, path, fmt, duration, art, title=None, artist=None):
+        """Upsert one download by path, then persist (atomic). Fast (no slow
+        I/O), so it holds YT_LIBRARY_LOCK for its whole load-modify-save."""
+        import time as _t
+        try:
+            norm = os.path.normcase(os.path.abspath(path))
+        except Exception:
+            norm = path
+        with YT_LIBRARY_LOCK:
+            entries = self._yt_library_load()
+            found = None
+            for e in entries:
+                try:
+                    if os.path.normcase(os.path.abspath(e.get("path", ""))) == norm:
+                        found = e
+                        break
+                except Exception:
+                    continue
+            if found is None:
+                entries.append({
+                    "path": path,
+                    "title": title or os.path.splitext(os.path.basename(path))[0],
+                    "artist": artist or "",
+                    "fmt": (fmt or "").lower(),
+                    "duration_sec": duration,
+                    "art_cache": art,
+                    "added_ts": _t.time(),
+                })
+            else:
+                if title:
+                    found["title"] = title
+                if artist:
+                    found["artist"] = artist
+                if fmt:
+                    found["fmt"] = fmt.lower()
+                if duration is not None:
+                    found["duration_sec"] = duration
+                if art:
+                    found["art_cache"] = art
+            self._yt_library_save(entries)
+
+    # ── Duration + art + metadata helpers (worker-thread safe) ───────────────
+    def _yt_audio_duration(self, path):
+        try:
+            ext = os.path.splitext(path)[1].lower()
+            if ext == ".flac":
+                from mutagen.flac import FLAC
+                return float(FLAC(path).info.length)
+            if ext == ".wav":
+                try:
+                    from mutagen.wave import WAVE
+                    return float(WAVE(path).info.length)
+                except Exception:
+                    import wave, contextlib
+                    with contextlib.closing(wave.open(path, "rb")) as w:
+                        return w.getnframes() / float(w.getframerate())
+            from mutagen import File as _MF
+            mf = _MF(path)
+            if mf is not None and getattr(mf, "info", None) is not None:
+                return float(mf.info.length)
+        except Exception:
+            pass
+        return None
+
+    def _yt_lib_oembed_meta(self, video_id):
+        """Best-effort title + author (channel) via YouTube oEmbed."""
+        try:
+            import urllib.request, urllib.parse, json as _json
+            watch = f"https://www.youtube.com/watch?v={video_id}"
+            oembed = ("https://www.youtube.com/oembed?"
+                      f"url={urllib.parse.quote(watch, safe='')}&format=json")
+            with urllib.request.urlopen(oembed, timeout=8) as resp:
+                info = _json.loads(resp.read().decode("utf-8"))
+            return {"title": info.get("title", ""),
+                    "author": info.get("author_name", "")}
+        except Exception:
+            return None
+
+    def _yt_fetch_art_cache(self, path, video_id):
+        """Cache a 44px rounded PNG for a library row → returns the PNG path.
+
+        Prefers the cover art ALREADY EMBEDDED in the audio file — ParaKit bakes
+        the YouTube thumbnail into each download via "Embed thumbnail as album
+        art", so this works offline AND for backfilled songs (no video id). Falls
+        back to fetching the YouTube thumbnail by video_id only when the file has
+        no embedded art (e.g. WAV, or art-embed was off). Worker-thread safe;
+        returns None on any failure. Never touches Tk.
+        """
+        try:
+            import hashlib, io
+            os.makedirs(YT_ART_CACHE_DIR, exist_ok=True)
+            key = hashlib.sha1(path.encode("utf-8")).hexdigest()
+            out_png = os.path.join(YT_ART_CACHE_DIR, key + ".png")
+            if os.path.isfile(out_png):
+                return out_png
+            data = None
+            # 1) Embedded cover art (the common case for ParaKit FLAC downloads).
+            try:
+                art_bytes, _mime = self._extract_album_art_from_audio(path)
+                if art_bytes and len(art_bytes) > 200:
+                    data = art_bytes
+            except Exception:
+                data = None
+            # 2) Fall back to the YouTube thumbnail when there's no embedded art.
+            if not data and video_id:
+                import urllib.request
+                for q in ("mqdefault", "hqdefault", "default"):
+                    try:
+                        with urllib.request.urlopen(
+                                f"https://img.youtube.com/vi/{video_id}/{q}.jpg",
+                                timeout=8) as r:
+                            d = r.read()
+                        if len(d) > 1500:
+                            data = d
+                            break
+                    except Exception:
+                        continue
+            if not data:
+                return None
+            from PIL import Image, ImageDraw
+            img = Image.open(io.BytesIO(data)).convert("RGBA")
+            iw, ih = img.size
+            side = min(iw, ih)
+            left, top = (iw - side) // 2, (ih - side) // 2
+            img = img.crop((left, top, left + side, top + side)).resize(
+                (44, 44), Image.LANCZOS)
+            mask = Image.new("L", (44, 44), 0)
+            ImageDraw.Draw(mask).rounded_rectangle([0, 0, 43, 43], radius=8, fill=255)
+            img.putalpha(mask)
+            img.save(out_png, format="PNG")
+            return out_png
+        except Exception:
+            return None
+
+    # ── Download-completion hook (called via root.after from the worker) ─────
+    def _yt_newest_audio_in(self, out_dir, fmt):
+        try:
+            import glob
+            exts = set([(fmt or "").lower(), "flac", "wav"])
+            exts.discard("")
+            cands = []
+            for ext in exts:
+                cands.extend(glob.glob(os.path.join(out_dir, f"*.{ext}")))
+            if not cands:
+                return None
+            return max(cands, key=lambda p: os.path.getmtime(p))
+        except Exception:
+            return None
+
+    def _yt_on_download_complete(self, path, fmt, out_dir, video_id=None):
+        """Record the download, enable Send-to-Stem, add it to the library.
+
+        `path` comes from yt-dlp's [ExtractAudio] Destination line but can be
+        None even on success → fall back to the newest matching file in out_dir.
+        """
+        final = path
+        if not final or not os.path.isfile(final):
+            final = self._yt_newest_audio_in(out_dir, fmt)
+        if not final or not os.path.isfile(final):
+            try:
+                self._yt_log("Library: couldn't locate the downloaded file to add it.")
+            except Exception:
+                pass
+            return
+        self._yt_last_downloaded = final
+        try:
+            if hasattr(self, "yt_send_stem_btn"):
+                self.yt_send_stem_btn.configure(state="normal")
+        except Exception:
+            pass
+
+        def _meta_worker(p=final, f=fmt, vid=video_id):
+            dur = self._yt_audio_duration(p)
+            title = os.path.splitext(os.path.basename(p))[0]
+            artist = ""
+            if vid:
+                meta = self._yt_lib_oembed_meta(vid)
+                if meta:
+                    title = meta.get("title") or title
+                    artist = meta.get("author", "") or ""
+            # Art: embedded cover first (always available on FLAC downloads),
+            # then the YouTube thumbnail by id — so art shows even without vid.
+            art = self._yt_fetch_art_cache(p, vid)
+            self.root.after(0, lambda: (
+                self._yt_library_add(p, f, dur, art, title, artist),
+                self._yt_library_refresh()))
+
+        import threading
+        threading.Thread(target=_meta_worker, daemon=True).start()
+
+    def _yt_library_maybe_backfill(self):
+        """D5b — one-time scan of the YT output folder for pre-existing
+        FLAC/WAV files, on a worker thread, guarded by a config flag."""
+        cfg = load_config()
+        if cfg.get("yt_library_backfilled"):
+            return
+        out_dir = ""
+        try:
+            out_dir = self.yt_out_var.get().strip()
+        except Exception:
+            pass
+
+        def _worker(folder=out_dir):
+            added = 0
+            try:
+                if folder and os.path.isdir(folder):
+                    import glob
+                    # 1) Slow phase (NO lock): scan files + probe durations,
+                    # building candidate rows. De-dup against a snapshot.
+                    snap_existing = set()
+                    for e in self._yt_library_load():
+                        try:
+                            snap_existing.add(os.path.normcase(
+                                os.path.abspath(e.get("path", ""))))
+                        except Exception:
+                            pass
+                    files = []
+                    for ext in ("flac", "wav"):
+                        files.extend(glob.glob(os.path.join(folder, f"*.{ext}")))
+                    candidates = []
+                    for fp in files:
+                        try:
+                            npath = os.path.normcase(os.path.abspath(fp))
+                        except Exception:
+                            npath = fp
+                        if npath in snap_existing:
+                            continue
+                        snap_existing.add(npath)
+                        candidates.append({
+                            "path": fp,
+                            "title": os.path.splitext(os.path.basename(fp))[0],
+                            "artist": "",
+                            "fmt": os.path.splitext(fp)[1].lstrip(".").lower(),
+                            "duration_sec": self._yt_audio_duration(fp),
+                            "art_cache": None,
+                            "added_ts": os.path.getmtime(fp),
+                        })
+                    # 2) Fast phase (LOCKED): reload + re-dedup + merge + save,
+                    # so rows added by a concurrent download aren't clobbered.
+                    if candidates:
+                        with YT_LIBRARY_LOCK:
+                            entries = self._yt_library_load()
+                            have = set()
+                            for e in entries:
+                                try:
+                                    have.add(os.path.normcase(
+                                        os.path.abspath(e.get("path", ""))))
+                                except Exception:
+                                    pass
+                            for c in candidates:
+                                try:
+                                    cp = os.path.normcase(os.path.abspath(c["path"]))
+                                except Exception:
+                                    cp = c["path"]
+                                if cp not in have:
+                                    entries.append(c)
+                                    have.add(cp)
+                                    added += 1
+                            if added:
+                                self._yt_library_save(entries)
+            except Exception:
+                pass
+            # Mark done regardless so we don't rescan every launch.
+            save_config({"yt_library_backfilled": True})
+            if added:
+                self.root.after(0, self._yt_library_refresh)
+
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _yt_library_ensure_art(self):
+        """Backfill missing row art from EMBEDDED cover art, on a worker thread.
+
+        Runs each launch but only touches entries that still lack a valid
+        art_cache — so registry rows added before this fix (or via the file
+        backfill, which stores art_cache=None) get their cover art populated
+        from the art ParaKit already embedded in the file. Idempotent + cheap.
+        """
+        def _worker():
+            try:
+                # 1) Slow phase (NO lock): extract embedded art for entries that
+                # still lack it, into a {path: art_png} map.
+                updates = {}
+                for e in self._yt_library_load():
+                    p = e.get("path")
+                    if not p or not os.path.isfile(p):
+                        continue
+                    ac = e.get("art_cache")
+                    if ac and os.path.isfile(ac):
+                        continue  # already has art
+                    art = self._yt_fetch_art_cache(p, None)  # embedded art
+                    if art:
+                        updates[p] = art
+                if not updates:
+                    return
+                # 2) Fast phase (LOCKED): reload + apply + save so a concurrent
+                # download add / file-backfill isn't clobbered.
+                with YT_LIBRARY_LOCK:
+                    entries = self._yt_library_load()
+                    changed = False
+                    for e in entries:
+                        p = e.get("path")
+                        ac = e.get("art_cache")
+                        if p in updates and not (ac and os.path.isfile(ac)):
+                            e["art_cache"] = updates[p]
+                            changed = True
+                    if changed:
+                        self._yt_library_save(entries)
+                self.root.after(0, self._yt_library_refresh)
+            except Exception:
+                pass
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
+
+    # ── Library UI ───────────────────────────────────────────────────────────
+    def _yt_library_build(self, parent):
+        self._yt_lib_art_refs = getattr(self, "_yt_lib_art_refs", {})
+        self._yt_lib_rows = []
+        self._yt_lib_selected_path = None
+        self._yt_lib_show_all = False
+        self._yt_lib_refresh_after = None
+
+        ttk.Label(parent, text="YOUR DOWNLOADS",
+                  font=("Segoe UI", 8, "bold"), foreground="#9a9ab0").pack(anchor="w")
+
+        bar = ttk.Frame(parent)
+        bar.pack(fill=tk.X, pady=(2, 4))
+        self._yt_lib_search_var = tk.StringVar()
+        search_entry = ttk.Entry(bar, textvariable=self._yt_lib_search_var)
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._yt_lib_search_var.trace_add("write", self._yt_library_refresh)
+        # Lightweight placeholder shim (ttk.Entry has no native placeholder):
+        # show a grey cue when empty+unfocused, clear it on focus. A sentinel
+        # flag distinguishes the cue from a real query so search ignores it.
+        self._yt_lib_search_placeholder = "Search downloads…"
+        self._yt_lib_search_is_placeholder = True
+
+        def _yt_search_show_placeholder():
+            self._yt_lib_search_is_placeholder = True
+            search_entry.configure(foreground="#7e7e96")
+            self._yt_lib_search_var.set(self._yt_lib_search_placeholder)
+
+        def _yt_search_on_focus_in(_e):
+            if self._yt_lib_search_is_placeholder:
+                self._yt_lib_search_is_placeholder = False
+                self._yt_lib_search_var.set("")
+                search_entry.configure(foreground="#e8e8f0")
+
+        def _yt_search_on_focus_out(_e):
+            if not self._yt_lib_search_var.get().strip():
+                _yt_search_show_placeholder()
+        search_entry.bind("<FocusIn>", _yt_search_on_focus_in)
+        search_entry.bind("<FocusOut>", _yt_search_on_focus_out)
+        _yt_search_show_placeholder()
+        ttk.Label(bar, text="Sort:", style="Sub.TLabel").pack(side=tk.LEFT, padx=(6, 2))
+        self._yt_lib_sort_var = tk.StringVar(value="Newest")
+        sort_combo = ttk.Combobox(bar, textvariable=self._yt_lib_sort_var,
+                                  values=("Newest", "Title", "Not-split first"),
+                                  width=14, state="readonly")
+        sort_combo.pack(side=tk.LEFT)
+        sort_combo.bind("<<ComboboxSelected>>", self._yt_library_refresh)
+
+        canvas_wrap = ttk.Frame(parent)
+        canvas_wrap.pack(fill=tk.BOTH, expand=True)
+        self._yt_lib_canvas = tk.Canvas(canvas_wrap, bg="#15152a",
+                                        highlightthickness=0, bd=0)
+        vsb = ttk.Scrollbar(canvas_wrap, orient="vertical",
+                            command=self._yt_lib_canvas.yview)
+        self._yt_lib_canvas.configure(yscrollcommand=vsb.set)
+        self._yt_lib_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._yt_lib_inner = tk.Frame(self._yt_lib_canvas, bg="#15152a")
+        self._yt_lib_inner_id = self._yt_lib_canvas.create_window(
+            (0, 0), window=self._yt_lib_inner, anchor="nw")
+
+        def _on_inner_cfg(_e):
+            try:
+                self._yt_lib_canvas.configure(
+                    scrollregion=self._yt_lib_canvas.bbox("all"))
+            except Exception:
+                pass
+        self._yt_lib_inner.bind("<Configure>", _on_inner_cfg)
+
+        def _on_canvas_cfg(e):
+            try:
+                self._yt_lib_canvas.itemconfigure(self._yt_lib_inner_id, width=e.width)
+            except Exception:
+                pass
+        self._yt_lib_canvas.bind("<Configure>", _on_canvas_cfg)
+        # No <MouseWheel> binding here on purpose: the app-level global
+        # _on_mousewheel walker (bound via bind_all at init, ~line 6452) walks up
+        # from the event widget to the first Canvas/Text and scrolls it — so it
+        # already scrolls THIS canvas when the cursor is over a row, in both
+        # roomy and compact mode (where this canvas nests inside the tab's
+        # scroll-canvas). Adding a local canvas.bind would double-scroll against
+        # the walker; bind_all would re-introduce the v4.4.53.7 regression.
+        # One exception: the scrollbar (vsb) is a SIBLING of the canvas, so the
+        # walker would climb past it to the outer tab canvas. Bind the wheel
+        # LOCALLY on vsb (not bind_all) to forward it to this canvas.
+        def _vsb_wheel(e):
+            try:
+                self._yt_lib_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            except Exception:
+                pass
+            return "break"
+        vsb.bind("<MouseWheel>", _vsb_wheel)
+
+        self._yt_library_refresh()
+        self.root.after(600, self._yt_library_maybe_backfill)
+        # Fill any missing row art from the files' embedded cover art (covers
+        # rows added before this fix + file-backfilled rows). Worker-thread.
+        self.root.after(900, self._yt_library_ensure_art)
+
+    def _yt_library_refresh(self, *_):
+        """Debounced entry point (search keystrokes / sort / completion)."""
+        if not hasattr(self, "_yt_lib_inner"):
+            return
+        prev = getattr(self, "_yt_lib_refresh_after", None)
+        if prev:
+            try:
+                self.root.after_cancel(prev)
+            except Exception:
+                pass
+        self._yt_lib_refresh_after = self.root.after(200, self._yt_library_do_refresh)
+
+    def _yt_library_do_refresh(self):
+        self._yt_lib_refresh_after = None
+        if not hasattr(self, "_yt_lib_inner"):
+            return
+        try:
+            if not self._yt_lib_inner.winfo_exists():
+                return
+        except Exception:
+            return
+
+        for child in list(self._yt_lib_inner.winfo_children()):
+            try:
+                child.destroy()
+            except Exception:
+                pass
+        self._yt_lib_rows = []
+
+        entries = self._yt_library_load()
+        live = []
+        for e in entries:
+            try:
+                if e.get("path") and os.path.isfile(e["path"]):
+                    live.append(e)
+            except Exception:
+                pass
+
+        # Ignore the grey placeholder cue — it is not a real query.
+        if getattr(self, "_yt_lib_search_is_placeholder", False):
+            q = ""
+        else:
+            q = (self._yt_lib_search_var.get() or "").strip().lower()
+        if q:
+            live = [e for e in live
+                    if q in (e.get("title", "") or "").lower()
+                    or q in (e.get("artist", "") or "").lower()]
+
+        sort_mode = self._yt_lib_sort_var.get()
+        if sort_mode == "Title":
+            live.sort(key=lambda e: (e.get("title", "") or "").lower())
+        elif sort_mode == "Not-split first":
+            live.sort(key=lambda e: (self._stem_is_split(e.get("path", "")),
+                                     (e.get("title", "") or "").lower()))
+        else:
+            live.sort(key=lambda e: e.get("added_ts", 0), reverse=True)
+
+        if not live:
+            msg = ("No downloads yet — grab one above." if not q
+                   else "No matches.")
+            tk.Label(self._yt_lib_inner, text=msg, bg="#15152a",
+                     fg="#7e7e96", font=("Segoe UI", 9),
+                     padx=10, pady=14).pack(anchor="w")
+        else:
+            cap = 60
+            show = live if self._yt_lib_show_all else live[:cap]
+            for i, e in enumerate(show):
+                split = self._stem_is_split(e.get("path", ""))
+                midi = self._midi_paired(e.get("path", ""))
+                self._yt_lib_row(self._yt_lib_inner, e, split, midi, i)
+            if (not self._yt_lib_show_all) and len(live) > cap:
+                more = tk.Label(self._yt_lib_inner,
+                                text=f"▾  Show all {len(live)} downloads",
+                                bg="#15152a", fg="#b388ff", cursor="hand2",
+                                font=("Segoe UI", 9, "bold"), pady=6)
+                more.pack(fill=tk.X)
+
+                def _show_all(_e):
+                    self._yt_lib_show_all = True
+                    self._yt_library_do_refresh()
+                more.bind("<Button-1>", _show_all)
+
+        # Prune cached PhotoImage refs to currently-rendered rows so the dict
+        # doesn't grow unbounded across refreshes/sessions (UI-audit MINOR).
+        try:
+            rendered = {getattr(r, "_yt_path", None) for r in self._yt_lib_rows}
+            self._yt_lib_art_refs = {
+                p: v for p, v in self._yt_lib_art_refs.items() if p in rendered}
+        except Exception:
+            pass
+
+        try:
+            self._yt_lib_canvas.update_idletasks()
+            self._yt_lib_canvas.configure(
+                scrollregion=self._yt_lib_canvas.bbox("all"))
+        except Exception:
+            pass
+
+    def _yt_make_badge(self, parent, text, present, neutral=False, row=None):
+        """Outlined pill. Neutral = format; present = green; absent = dim.
+
+        Contrast (UI-audit fix): absent text #8a8aa2 clears 4.5:1 on the rest/
+        odd/hover bands and is ~4.18:1 on the transient selected band only —
+        kept intentionally dimmer than the neutral #9a9ab0 per the plan's
+        dim-absent intent (the old #7e7e96 failed on odd/hover/select too).
+        Border #4a4a6b is perceptible vs the old near-invisible #3a3a55 (~1.6:1).
+        """
+        if neutral:
+            border, fg = "#4a4a6b", "#9a9ab0"
+        elif present:
+            border, fg = "#46d18a", "#46d18a"
+        else:
+            border, fg = "#4a4a6b", "#8a8aa2"
+        b = tk.Label(parent, text=text, bg=parent["bg"], fg=fg,
+                     font=("Segoe UI", 8), padx=4, pady=0, bd=0,
+                     highlightthickness=1, highlightbackground=border,
+                     highlightcolor=border)
+        b.pack(side=tk.LEFT, padx=2)
+        if row is not None:
+            row._yt_color_targets.append(b)
+        return b
+
+    def _yt_lib_select_path(self, path):
+        self._yt_lib_selected_path = path
+        for r in self._yt_lib_rows:
+            try:
+                r._yt_set_state("selected" if getattr(r, "_yt_path", None) == path
+                                else "rest")
+            except Exception:
+                pass
+
+    def _yt_lib_row(self, parent, entry, split, midi, idx):
+        path = entry.get("path", "")
+        rest_bg = "#181830" if (idx % 2) else "#15152a"
+        HOVER_BG, SEL_BG, ACCENT = "#22203c", "#2c2748", "#b388ff"
+
+        row = tk.Frame(parent, bg=rest_bg)
+        row.pack(fill=tk.X)
+        # text column expands; action chips size to content (no reserved gutter —
+        # the old col-5/6 minsize left a permanent ~172px dead zone the title
+        # could not reclaim; UI-audit MAJOR).
+        row.columnconfigure(2, weight=1)
+        row._yt_path = path
+        row._yt_split = split
+        row._yt_color_targets = []
+
+        accent = tk.Frame(row, bg=rest_bg, width=3)
+        accent.grid(row=0, column=0, sticky="ns")
+        row._yt_accent = accent
+
+        # Art (col 1) — never recolored on hover (it's the artwork tile).
+        art_path = entry.get("art_cache")
+        photo = None
+        if art_path and os.path.isfile(art_path):
+            try:
+                from PIL import Image, ImageTk
+                if path in self._yt_lib_art_refs:
+                    photo = self._yt_lib_art_refs[path]
+                else:
+                    photo = ImageTk.PhotoImage(Image.open(art_path))
+                    self._yt_lib_art_refs[path] = photo
+            except Exception:
+                photo = None
+        if photo is not None:
+            art_lbl = tk.Label(row, image=photo, bg=rest_bg, bd=0)
+        else:
+            art_lbl = tk.Label(row, text="♪", bg="#0d0d1a", fg="#6f6f8f",
+                               font=("Segoe UI", 15), width=3, height=2)
+        art_lbl.grid(row=0, column=1, padx=(6, 8), pady=4)
+
+        textcol = tk.Frame(row, bg=rest_bg)
+        textcol.grid(row=0, column=2, sticky="ew")
+        row._yt_color_targets.append(textcol)
+        title = entry.get("title") or os.path.splitext(os.path.basename(path))[0]
+        title_lbl = tk.Label(textcol, text=self._yt_ellipsize(title, 42),
+                             bg=rest_bg, fg="#e8e8f0",
+                             font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
+        title_lbl.pack(fill=tk.X, anchor="w")
+        row._yt_color_targets.append(title_lbl)
+        artist = entry.get("artist") or ""
+        if artist:
+            art_sub = tk.Label(textcol, text=self._yt_ellipsize(artist, 42),
+                               bg=rest_bg, fg="#9a9ab0",
+                               font=("Segoe UI", 9), anchor="w", justify="left")
+            art_sub.pack(fill=tk.X, anchor="w")
+            row._yt_color_targets.append(art_sub)
+
+        badges = tk.Frame(row, bg=rest_bg)
+        badges.grid(row=0, column=3, padx=(6, 6))
+        row._yt_color_targets.append(badges)
+        self._yt_make_badge(badges, (entry.get("fmt") or "flac").upper(),
+                            present=True, neutral=True, row=row)
+        self._yt_make_badge(badges, "STEMS", present=split, row=row)
+        self._yt_make_badge(badges, "MIDI", present=midi, row=row)
+
+        dur_lbl = tk.Label(row, text=self._yt_fmt_duration(entry.get("duration_sec")),
+                           bg=rest_bg, fg="#9a9ab0", font=("Segoe UI", 9))
+        dur_lbl.grid(row=0, column=4, padx=(0, 8))
+        row._yt_color_targets.append(dur_lbl)
+
+        # v4.4.61-1 (UI-audit fix) — PERSISTENT bordered action chips, not
+        # hover-only ~18px labels. The Practice-v3 reference shows always-visible
+        # right-side controls; hover-only tiny targets were a precision-click
+        # hazard. padx=8/pady=4 + a 1px border give a ~28px tappable chip; the
+        # chip bg tracks the row band (in _yt_color_targets) so the band stays
+        # continuous. "Open Stems" only when a split exists.
+        def _mk_chip(text, fg, cmd, col):
+            chip = tk.Label(row, text=text, bg=rest_bg, fg=fg,
+                            font=("Segoe UI", 9, "bold"), cursor="hand2",
+                            padx=8, pady=4, bd=0, highlightthickness=1,
+                            highlightbackground="#4a4a6b", highlightcolor="#4a4a6b")
+            chip.bind("<Button-1>", lambda _e, p=path: cmd(p))
+            chip.grid(row=0, column=col, padx=(0, 4), sticky="e")
+            row._yt_color_targets.append(chip)
+            return chip
+        _mk_chip("Send →", ACCENT, self._send_audio_to_stem, 5)
+        if split:
+            _mk_chip("Open Stems", "#46d18a", self._open_stems_folder, 6)
+
+        sep = tk.Frame(parent, bg="#222238", height=1)
+        sep.pack(fill=tk.X)
+
+        def _set_state(state):
+            if state == "selected":
+                bg = SEL_BG
+                accent.configure(bg=ACCENT)
+            elif state == "hover":
+                bg = HOVER_BG
+                accent.configure(bg=ACCENT)
+            else:
+                bg = rest_bg
+                accent.configure(bg=rest_bg)
+            try:
+                row.configure(bg=bg)
+            except Exception:
+                pass
+            for w in row._yt_color_targets:
+                try:
+                    w.configure(bg=bg)
+                except Exception:
+                    pass
+        row._yt_set_state = _set_state
+
+        def _is_selected():
+            return self._yt_lib_selected_path == path
+
+        def _on_enter(_e):
+            _set_state("selected" if _is_selected() else "hover")
+
+        def _on_leave(_e):
+            # Child-crossing guard: a child <Enter> fires <Leave> on the parent.
+            # Only collapse if the pointer truly left the row's widget subtree.
+            try:
+                x, y = self.root.winfo_pointerxy()
+                w = row.winfo_containing(x, y)
+            except Exception:
+                w = None
+            inside = False
+            while w is not None:
+                if w is row:
+                    inside = True
+                    break
+                w = getattr(w, "master", None)
+            if inside:
+                return
+            _set_state("selected" if _is_selected() else "rest")
+
+        def _on_click(_e):
+            self._yt_lib_select_path(path)
+
+        def _bind_recursive(w):
+            w.bind("<Enter>", _on_enter, add="+")
+            w.bind("<Leave>", _on_leave, add="+")
+            w.bind("<Button-1>", _on_click, add="+")
+            for c in w.winfo_children():
+                _bind_recursive(c)
+        _bind_recursive(row)
+
+        self._yt_lib_rows.append(row)
+        _set_state("selected" if _is_selected() else "rest")
+
+    def _stem_confirm_resplit(self, input_path, output_base):
+        """Modal re-split warning with a persistent 'don't show again' option.
+        Returns True to proceed with the split, False to abort."""
+        try:
+            song = os.path.splitext(os.path.basename(input_path))[0]
+        except Exception:
+            song = os.path.basename(input_path)
+        folder = output_base
+        for cand in (os.path.join(output_base, "DRUMS ONLY"),
+                     os.path.join(output_base, "DRUMS")):
+            if os.path.isfile(os.path.join(cand, f"{song}_drums.ogg")):
+                folder = cand
+                break
+        else:
+            iso_var = getattr(self, "stem_iso_output_var", None)
+            iso_base = iso_var.get().strip() if iso_var else ""
+            if iso_base and os.path.isfile(
+                    os.path.join(iso_base, "DRUMS", f"{song}_drums.ogg")):
+                folder = os.path.join(iso_base, "DRUMS")
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Already split")
+        dlg.configure(bg="#222222")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        pw, ph = 480, 240
+        try:
+            px = self.root.winfo_x() + (self.root.winfo_width() - pw) // 2
+            py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
+            dlg.geometry(f"{pw}x{ph}+{px}+{py}")
+        except Exception:
+            dlg.geometry(f"{pw}x{ph}")
+
+        frame = ttk.Frame(dlg, padding=18)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="⚠  Already split",
+                  font=("Segoe UI", 12, "bold"),
+                  foreground="#e09a3a").pack(anchor="w", pady=(0, 8))
+        ttk.Label(frame, text=f"{song} already has split stems in:",
+                  style="TLabel", wraplength=440, justify=tk.LEFT).pack(anchor="w")
+        ttk.Label(frame, text=folder, style="Sub.TLabel", foreground="#9a9ab0",
+                  wraplength=440, justify=tk.LEFT).pack(anchor="w", pady=(2, 8))
+        ttk.Label(frame, text="Splitting again will overwrite them. Continue?",
+                  style="TLabel", wraplength=440, justify=tk.LEFT).pack(anchor="w")
+
+        dismiss_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(frame, text="Don't show this warning again",
+                        variable=dismiss_var).pack(anchor="w", pady=(10, 0))
+
+        result = {"proceed": False}
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(anchor="e", pady=(14, 0))
+
+        def _do_cancel():
+            result["proceed"] = False
+            dlg.destroy()
+
+        def _do_continue():
+            result["proceed"] = True
+            if dismiss_var.get():
+                save_config({"stem_resplit_warn_dismissed": True})
+            dlg.destroy()
+
+        ttk.Button(btn_row, text="Cancel", command=_do_cancel).pack(
+            side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="Continue", style="Convert.TButton",
+                   command=_do_continue).pack(side=tk.LEFT)
+        dlg.protocol("WM_DELETE_WINDOW", _do_cancel)
+        dlg.wait_window()
+        return result["proceed"]
 
     def _yt_fetch_thumbnail(self):
         """Fetch and display a YouTube thumbnail + title for the pasted URL.
@@ -21912,6 +23014,19 @@ demucs.separate.main()
                 prog("✓  Complete!")
                 if embed_art:
                     self._yt_embed_thumbnail(url, final_audio_path, fmt, log)
+                # v4.4.61-1 — library completion hook. Fires on EVERY successful
+                # download (independent of embed_art) and ONLY in this success
+                # branch (an earlier auditor mis-anchored this in the failure
+                # branch). Marshalled to the Tk thread; capture out_dir (a worker
+                # local, not in scope on the Tk handler) for the fallback glob,
+                # plus the parsed video id for the row art/metadata.
+                import re as _re
+                _m = _re.search(
+                    r'(?:v=|youtu\.be/|embed/|shorts/)([A-Za-z0-9_-]{11})',
+                    url or "")
+                _vid = _m.group(1) if _m else None
+                self.root.after(0, lambda p=final_audio_path, f=fmt, d=out_dir,
+                                v=_vid: self._yt_on_download_complete(p, f, d, v))
             else:
                 for extra_line in _yt_extra_error_guidance("\n".join(seen_lines)):
                     log(extra_line)
@@ -22950,6 +24065,26 @@ demucs.separate.main()
                           .replace("\n  MIDI Editor —",
                                    "\n\n  MIDI Editor —"))
             entry(card, normalized, color=color)
+
+        wn_entry(wn_latest,
+              "v4.4.61-1 - YouTube to FLAC: Send to Stem Splitter + Downloaded Songs library\n"
+              "  Changes/Additions:\n"
+              "  - New \"Send to Stem Splitter\" button on the YouTube to FLAC\n"
+              "    tab sends your just-downloaded file straight into the Stem\n"
+              "    Splitter and switches to it, with no manual browsing.\n"
+              "  - The tab now keeps a Downloaded Songs library beside the log.\n"
+              "    Every download is listed with its cover art, title, format,\n"
+              "    duration, and badges showing whether it has been split into\n"
+              "    stems and converted to MIDI yet. Click a song to Send it to\n"
+              "    the Stem Splitter, or Open its stems folder once it's split.\n"
+              "  - Search and sort the library; it remembers your downloads\n"
+              "    between sessions and lists ones you already had.\n"
+              "  - The JS Runtime and Cookies settings now sit side by side to\n"
+              "    make room for the library.\n"
+              "  - The Stem Splitter now warns before re-splitting a song you've\n"
+              "    already split (with a \"don't show this again\" option).\n"
+              "  - Audio to MIDI now reminds you that converting a song whose\n"
+              "    MIDI already exists overwrites the old MIDI file.\n")
 
         wn_entry(wn_latest,
               "v4.4.60-12 - MIDI Editor: alternate hi-hat notes now import correctly\n"
@@ -26420,6 +27555,19 @@ demucs.separate.main()
               "Formats:\n"
               "  FLAC — lossless, best quality for Stem Splitter input (~30MB/song)\n"
               "  WAV  — uncompressed, same quality as FLAC but much larger files")
+        entry(s,
+              "New in v4.4.61-1 — Send to Stem Splitter + Downloaded Songs library:\n"
+              "  - After a download finishes, click 'Send to Stem Splitter' to\n"
+              "    load that file into the Stem Splitter and jump straight there.\n"
+              "  - The Downloaded Songs library (right of the log) lists every\n"
+              "    song you've downloaded, with cover art, format, duration, and\n"
+              "    badges for STEMS (split yet?) and MIDI (converted yet?). Click\n"
+              "    a song to Send it to the Stem Splitter, or Open its stems\n"
+              "    folder once it has been split. Search and sort are at the top;\n"
+              "    the list persists between sessions.\n"
+              "  - The Stem Splitter now warns before re-splitting a song you've\n"
+              "    already split, so you don't overwrite stems by accident (with\n"
+              "    a 'don't show this again' option).")
         warn(s,
              "Only download content you have the legal right to use.\n"
              "Downloading copyrighted audio without permission may violate YouTube's\n"
