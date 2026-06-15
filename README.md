@@ -81,7 +81,7 @@ in Firefox before I had fixed the MIDI config, see below for details, although C
 
 ## Features
 
-> 🎮 **Looking for the web-based Practice & Preview tools?** They live [further down this page ↓](#web-editions) — the falling-note Practice editions (v2 / v3, with **Kit Studio**) and the Preview review/edit tool, with screenshots. Everything in between is the main desktop app.
+> **Looking for the web-based Practice & Preview tools?** They live [further down this page ↓](#web-editions) — the falling-note Practice editions (v2 / v3, with **Kit Studio**) and the Preview review/edit tool, with screenshots. Everything in between is the main desktop app.
 
 - **MIDI editor** — visual note placement and refinement
 - **Audio → MIDI detection** — automatic drum transcription with three engines:
