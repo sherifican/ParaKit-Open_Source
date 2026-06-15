@@ -1,0 +1,61 @@
+name: Repo traffic (clones)
+
+# Runs once a day, pulls the last-14-days clone numbers from GitHub's
+# traffic API, and accumulates an all-time total into traffic/clones.json
+# (committed back to the repo so your website can read it publicly).
+
+on:
+  schedule:
+    - cron: "17 6 * * *"     # every day at 06:17 UTC (change if you like)
+  workflow_dispatch: {}        # lets you run it on demand from the Actions tab
+
+permissions:
+  contents: write              # lets the job commit the updated JSON
+
+jobs:
+  clones:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch + accumulate clone counts
+        env:
+          TRAFFIC_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json, os, datetime, urllib.request
+          repo  = os.environ["REPO"]
+          token = os.environ["TRAFFIC_TOKEN"]
+          url   = f"https://api.github.com/repos/{repo}/traffic/clones"
+          req = urllib.request.Request(url, headers={
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "User-Agent": "parakit-traffic-bot",
+          })
+          data = json.load(urllib.request.urlopen(req))
+
+          os.makedirs("traffic", exist_ok=True)
+          path = "traffic/clones.json"
+          store = json.load(open(path)) if os.path.exists(path) else {"per_day": {}}
+
+          # GitHub only returns the last 14 days. We key each day by date and
+          # overwrite, so re-running never double-counts and the total keeps growing.
+          for d in data.get("clones", []):
+              day = d["timestamp"][:10]
+              store["per_day"][day] = {"count": d["count"], "uniques": d["uniques"]}
+
+          store["total_clones"]  = sum(v["count"]   for v in store["per_day"].values())
+          store["total_uniques"] = sum(v["uniques"] for v in store["per_day"].values())
+          store["updated"] = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+          json.dump(store, open(path, "w"), indent=2)
+          print("Total clones tracked:", store["total_clones"])
+          PY
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add traffic/clones.json
+          git diff --quiet --staged || git commit -m "chore: update clone traffic [skip ci]"
+          git push
