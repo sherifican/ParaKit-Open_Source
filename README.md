@@ -333,6 +333,13 @@ source and compiling a standalone `.exe`.
 
 ## Changelog
 
+### Preview Track v2 (Web Edition) — 2026-06-14
+- **Fixed — ⇪ Export now writes a real `.midi` file.** Export was saving the internal
+  `parakit-chart-v1` JSON as `parakit-chart.json` instead of a MIDI file. It now exports a
+  standard MIDI file (format-0 SMF via the shared MIDI writer) as `parakit-chart.midi`, so
+  exported charts open in any DAW / notation tool and round-trip with the MIDI editor. Import is
+  unchanged — it still accepts `.json`, `.mid` / `.midi`, and `.rlrr`.
+
 ### Practice Mode v3 (Web Edition) — 2026-06-12
 - **Mute synth** toggle added to the in-play Live-settings dock (key **M**) — silences the
   synthesized drum hits while playing a loaded song, so you hear the real audio. Off by default.

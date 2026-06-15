@@ -2806,12 +2806,12 @@ $("densitySel").addEventListener("change", e => {
   toast(`Demo chart regenerated — ${app.model.notes.length.toLocaleString()} notes`);
 });
 $("btnExport").addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify(app.model.toJSON())], { type: "application/json" });
+  const blob = new Blob([writeMidi(app.model)], { type: "audio/midi" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "parakit-chart.json";
+  a.download = "parakit-chart.midi";
   a.click(); URL.revokeObjectURL(a.href);
-  toast(`⇩ Exported ${app.model.notes.length.toLocaleString()} notes (parakit-chart-v1)`);
+  toast(`⇩ Exported ${app.model.notes.length.toLocaleString()} notes (.midi)`);
 });
 $("btnImport").addEventListener("click", () => $("importFile").click());
 $("importFile").addEventListener("change", async e => {
