@@ -1,8 +1,10 @@
 name: Repo traffic (clones)
 
-# Runs once a day, pulls the last-14-days clone numbers from GitHub's
-# traffic API, and accumulates an all-time total into traffic/clones.json
-# (committed back to the repo so your website can read it publicly).
+# Runs once a day, pulls the last-14-days clone numbers from GitHub's traffic API,
+# and accumulates an all-time total. The data is stored on a dedicated, isolated
+# `traffic-data` branch (a single-commit snapshot, force-replaced each run) so the
+# MAIN branch and its history stay completely clean. The website reads the JSON
+# from that branch publicly.
 
 on:
   schedule:
@@ -10,13 +12,24 @@ on:
   workflow_dispatch: {}        # lets you run it on demand from the Actions tab
 
 permissions:
-  contents: write              # lets the job commit the updated JSON
+  contents: write              # lets the job push to the traffic-data branch
 
 jobs:
   clones:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Load prior totals from traffic-data branch (if it exists)
+        run: |
+          git fetch origin traffic-data || true
+          mkdir -p traffic
+          if git show origin/traffic-data:traffic/clones.json > "$RUNNER_TEMP/prev.json" 2>/dev/null && [ -s "$RUNNER_TEMP/prev.json" ]; then
+            cp "$RUNNER_TEMP/prev.json" traffic/clones.json
+            echo "Loaded prior data."
+          else
+            echo "No prior traffic-data yet — starting fresh."
+          fi
 
       - name: Fetch + accumulate clone counts
         env:
@@ -52,10 +65,16 @@ jobs:
           print("Total clones tracked:", store["total_clones"])
           PY
 
-      - name: Commit if changed
+      - name: Publish to traffic-data branch (keeps main clean)
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp traffic/clones.json "$RUNNER_TEMP/clones.json"
+          # Build a fresh single-commit orphan branch that contains ONLY the data file.
+          git checkout --orphan traffic-data
+          git rm -rf . >/dev/null 2>&1 || true
+          mkdir -p traffic
+          cp "$RUNNER_TEMP/clones.json" traffic/clones.json
           git add traffic/clones.json
-          git diff --quiet --staged || git commit -m "chore: update clone traffic [skip ci]"
-          git push
+          git commit -m "clone traffic snapshot [skip ci]"
+          git push -f origin traffic-data
