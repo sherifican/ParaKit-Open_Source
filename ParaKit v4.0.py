@@ -5331,7 +5331,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.62-1"
+    VERSION = "4.4.63-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -7109,36 +7109,11 @@ class MidiToRlrrApp:
                   relief=[("pressed", "sunken"),
                           ("!pressed", "raised")])
 
-        # v4.4.62-1 — Cyan button (Fetch.TButton): for the MIDI Editor's
-        # "Auto Fetch Audio" action, deliberately NOT purple so it stands out
-        # from the rest of the button language. Matches the app's #00d4d4 cyan.
-        style.configure("Fetch.TButton",
-                        background="#0aa5a5",
-                        foreground="#ffffff",
-                        bordercolor="#00d4d4",
-                        lightcolor="#22e0e0",
-                        darkcolor="#053b3b",
-                        focuscolor="#00d4d4",
-                        focusthickness=1,
-                        font=("Segoe UI", base_font_size, "bold"),
-                        padding=button_pad,
-                        borderwidth=1,
-                        relief="raised")
-        style.map("Fetch.TButton",
-                  foreground=[("disabled", "#888888"),
-                              ("active", "#ffffff"),
-                              ("pressed", "#ffffff"),
-                              ("!active", "#ffffff")],
-                  background=[("disabled", "#2a2a30"),
-                              ("pressed", "#077e7e"),
-                              ("active", "#0fc4c4"),
-                              ("!active", "#0aa5a5")],
-                  bordercolor=[("disabled", "#444444"),
-                               ("active", "#aef5f5"),
-                               ("pressed", "#ffffff"),
-                               ("!active", "#00d4d4")],
-                  relief=[("pressed", "sunken"),
-                          ("!pressed", "raised")])
+        # v4.4.62 follow-up — The MIDI Editor "Auto Fetch Audio" button keeps the
+        # DEFAULT purple ttk button look (so it matches Play/Stop) and gets its
+        # standout from a CYAN BORDER drawn by a tk.Frame wrapper around it (see
+        # the MIDI Editor build). A custom cyan ttk style / tk.Button bg did not
+        # render reliably under the ttkbootstrap theme, so no Fetch.TButton style.
 
         # Header/sub labels
         style.configure("TFrame", background=BG)
@@ -13264,26 +13239,23 @@ demucs.separate.main()
             command=self._me_schedule_redraw,
             label_width=14).pack(side=tk.LEFT)
 
-        # v4.4.62-1 — "Auto Fetch Audio" (cyan, owner QoL): sits ABOVE Play/Stop
+        # v4.4.62-1 — "Auto Fetch Audio" (purple button + cyan border, owner QoL): sits ABOVE Play/Stop
         # and spans their combined width. From the loaded MIDI's song name it
         # finds the Drums stem + Full Mix from the configured Stem/YouTube output
         # folders (and next to the MIDI) and fills ONLY the Drums + Full Mix
         # fields — never Stem 3/4.
         af_row = ttk.Frame(playback_col)
         af_row.pack(fill=tk.X, pady=(0, 3))
-        # v4.4.62-1 — a plain tk.Button (NOT ttk) so the cyan actually renders:
-        # the ttkbootstrap theme forces every ttk.Button to the purple button
-        # language, so a custom `Fetch.TButton` background was ignored (it showed
-        # purple). tk.Button honors bg/fg directly → genuine cyan, which also
-        # makes it stand out from the purple buttons as intended.
-        self.me_auto_fetch_btn = tk.Button(
-            af_row, text="Auto Fetch Audio",
-            command=self._me_auto_fetch_audio,
-            bg="#0aa5a5", fg="#ffffff",
-            activebackground="#0fc4c4", activeforeground="#ffffff",
-            font=("Segoe UI", 9, "bold"), relief="raised", bd=1,
-            cursor="hand2", width=18, padx=6, pady=3, highlightthickness=0)
-        self.me_auto_fetch_btn.pack(side=tk.LEFT)
+        # v4.4.62 follow-up — Owner spec: keep the button PURPLE (matching the
+        # Play/Stop buttons) but wrap it in a CYAN BORDER so it still stands out.
+        # The border is a 2px cyan tk.Frame around a default-purple ttk.Button;
+        # this renders reliably, whereas a cyan ttk style / tk.Button bg did not.
+        af_border = tk.Frame(af_row, bg="#00d4d4")
+        af_border.pack(side=tk.LEFT)
+        self.me_auto_fetch_btn = ttk.Button(
+            af_border, text="Auto Fetch Audio",
+            command=self._me_auto_fetch_audio, width=18)
+        self.me_auto_fetch_btn.pack(padx=2, pady=2)
         self._add_tooltip(
             self.me_auto_fetch_btn,
             "Finds the Drums stem + Full Mix audio for the loaded MIDI's song\n"
@@ -23848,20 +23820,28 @@ demucs.separate.main()
                   wraplength=800, justify=tk.LEFT).pack(anchor="w")
 
         # Art preview canvas
-        self.am_art_canvas = tk.Canvas(meta_frame, width=120, height=120,
+        # v4.4.62 — enlarged the preview to a 240px square (was 120) per owner,
+        # for an easier-to-see thumbnail. This is DISPLAY-ONLY and keeps the 1:1
+        # aspect; the applied/saved cover art is unchanged (still downscaled to
+        # 120x120 in _am_show_art_preview). All placeholder + art coords derive
+        # from self._am_art_px so the size lives in one place.
+        self._am_art_px = 240
+        _ap = self._am_art_px
+        _inset = 12
+        self.am_art_canvas = tk.Canvas(meta_frame, width=_ap, height=_ap,
                                         bg="#0d0d1a", highlightthickness=1,
                                         highlightbackground="#3a3a5c")
         self.am_art_canvas.pack(anchor="w", pady=(4, 0))
         # Placeholder — cleared and replaced when art loads
         # v4.4.57.93-10 Patch 15: cyan placeholder for visibility (was muted
         # purple #2e2e5e / #3a3a5a — too dim to read on dark background)
-        self.am_art_canvas.create_rectangle(6, 6, 114, 114,
+        self.am_art_canvas.create_rectangle(_inset, _inset, _ap - _inset, _ap - _inset,
                                              outline="#00d4d4", width=1,
                                              dash=(4, 4), tags="placeholder")
-        self.am_art_canvas.create_text(60, 50, text="♪", fill="#00e0e0",
-                                        font=("Segoe UI", 28), tags="placeholder")
-        self.am_art_canvas.create_text(60, 85, text="No art loaded", fill="#00e0e0",
-                                        font=("Segoe UI", 8), tags="placeholder")
+        self.am_art_canvas.create_text(_ap // 2, int(_ap * 0.42), text="♪", fill="#00e0e0",
+                                        font=("Segoe UI", 56), tags="placeholder")
+        self.am_art_canvas.create_text(_ap // 2, int(_ap * 0.71), text="No art loaded", fill="#00e0e0",
+                                        font=("Segoe UI", 14), tags="placeholder")
         self._am_art_image = None  # keep reference
 
         apply_row = ttk.Frame(meta_frame)
@@ -24099,14 +24079,18 @@ demucs.separate.main()
         try:
             from PIL import Image, ImageTk
             import io
-            img = Image.open(io.BytesIO(image_data)).resize((120, 120))
-            self._am_art_image = ImageTk.PhotoImage(img)
+            img = Image.open(io.BytesIO(image_data))
+            # v4.4.62 — render the preview at the (enlarged) canvas size; the
+            # saved/applied cover art stays 120x120 (unchanged behavior).
+            _ap = getattr(self, "_am_art_px", 240)
+            preview = img.resize((_ap, _ap))
+            self._am_art_image = ImageTk.PhotoImage(preview)
             self.am_art_canvas.delete("all")
-            self.am_art_canvas.create_image(60, 60, image=self._am_art_image)
-            # Save art to temp file for use in Song Creator
+            self.am_art_canvas.create_image(_ap // 2, _ap // 2, image=self._am_art_image)
+            # Save art to temp file for use in Song Creator (still 120x120)
             import tempfile
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-            img.save(tmp.name)
+            img.resize((120, 120)).save(tmp.name)
             tmp.close()
             self._am_last_meta["art_path"] = tmp.name
         except Exception:
@@ -24719,6 +24703,16 @@ demucs.separate.main()
                           .replace("\n  MIDI Editor —",
                                    "\n\n  MIDI Editor —"))
             entry(card, normalized, color=color)
+
+        wn_entry(wn_latest,
+              "v4.4.63-1 - Asset Manager: bigger album-art preview + Auto Fetch button restyle\n"
+              "  Changes/Additions:\n"
+              "  - Asset Manager: the Auto-Fetch-Metadata album-art preview is now\n"
+              "    much larger (a 240px square, was 120) so you can actually see the\n"
+              "    fetched cover before applying it. Display-only - the art that gets\n"
+              "    applied to the Song Creator is unchanged.\n"
+              "  - MIDI Editor: the 'Auto Fetch Audio' button is now purple (matching\n"
+              "    Play/Stop) with a cyan border, instead of the previous cyan fill.\n")
 
         wn_entry(wn_latest,
               "v4.4.62-1 - Library tools (preview / right-click / delete) + Auto Fetch Audio + GitHub updates\n"
