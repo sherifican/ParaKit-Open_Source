@@ -19,6 +19,12 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 `README FOR .EXE VERSION:
 ` https://github.com/sherifican/ParaKit---Releases
 
+>putting this up at the top so its found easier. KNOWN QUIRK WITH THE AUDIO TO MIDI CHART GENERATION: sometimes the chart generator will group kicks together and they will be almost on top of each other, annoying yes, BUT very easily fixed!
+>Step 1. Zoom out all the way on your chart in the midi editor tab
+>step 2. Hold Shift + Left Click + drag to multi select all the kicks
+>Step 3. Press the "Dedup x" button in the tool hot bar above your chart and set the ms slider to ~50 - 65ms.
+>Done! this will fix the vast majority of instances when this happens, getting rid of the layered extra kicks while leaving your correct kick note placements nearly untouched.
+
 Note: Both the Practice and Preview mode updates that are currently HTMLs will be folded into ParaKit propper in a future update,
 but for now the HTML/web versions function fine as a quick and easy substitute until then.
 
