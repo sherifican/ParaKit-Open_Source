@@ -5331,7 +5331,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.63-1"
+    VERSION = "4.4.64-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -21742,7 +21742,8 @@ demucs.separate.main()
         self.yt_timer_lbl = ttk.Label(main, text="", style="Sub.TLabel")
         self.yt_timer_lbl.pack(anchor="w", pady=(0, 4))
 
-        # v4.4.61-1 — Bottom split: log (left) + Downloaded-Songs library (right).
+        # v4.4.61-1 — Bottom split: Downloaded-Songs library + activity log.
+        # (v4.4.63 swapped sides: library LEFT, log RIGHT — see below.)
         # In compact (1080p) mode the tab body lives inside a scroll-canvas whose
         # <Configure> only syncs WIDTH, so a child packed with expand=True
         # collapses to zero height. Give the bottom container an explicit height
@@ -21756,10 +21757,13 @@ demucs.separate.main()
         else:
             bottom.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
 
-        # LEFT — the activity log (created with log_col as master; a Tk widget
+        # RIGHT — the activity log (created with log_col as master; a Tk widget
         # cannot be re-parented after creation, so build it here, not move it).
+        # v4.4.63 — log moved to the RIGHT, library to the LEFT (owner: the
+        # library sits more directly in the user's natural vertical path). Same
+        # creation order; only the pack side/padding flips.
         log_col = ttk.Frame(bottom)
-        log_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        log_col.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(8, 0))
         ttk.Label(log_col, text="ACTIVITY LOG",
                   font=("Segoe UI", 8, "bold"), foreground="#9a9ab0").pack(anchor="w")
         self.yt_log = scrolledtext.ScrolledText(log_col, height=14, state="disabled",
@@ -21769,9 +21773,9 @@ demucs.separate.main()
         self._setup_pretty_log_widget(self.yt_log, bg="#0d0d1a")
         self.yt_log.after(100, lambda: self._setup_pretty_log_widget(self.yt_log, bg="#0d0d1a"))
 
-        # RIGHT — the persistent Downloaded-Songs library.
+        # LEFT — the persistent Downloaded-Songs library.
         lib_col = ttk.Frame(bottom)
-        lib_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0))
+        lib_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self._yt_library_build(lib_col)
 
         # v4.4.62-1 — stop the library preview whenever the user leaves this tab,
@@ -24703,6 +24707,14 @@ demucs.separate.main()
                           .replace("\n  MIDI Editor —",
                                    "\n\n  MIDI Editor —"))
             entry(card, normalized, color=color)
+
+        wn_entry(wn_latest,
+              "v4.4.64-1 - YouTube to FLAC: Downloaded Songs library and activity log swapped sides\n"
+              "  Changes/Additions:\n"
+              "  - On the YouTube to FLAC tab, the Downloaded Songs library is now\n"
+              "    on the LEFT and the activity log on the RIGHT (they were the\n"
+              "    other way round), so the library sits more directly in your\n"
+              "    natural line of sight.\n")
 
         wn_entry(wn_latest,
               "v4.4.63-1 - Asset Manager: bigger album-art preview + Auto Fetch button restyle\n"
@@ -28231,7 +28243,7 @@ demucs.separate.main()
               "New in v4.4.61-1 — Send to Stem Splitter + Downloaded Songs library:\n"
               "  - After a download finishes, click 'Send to Stem Splitter' to\n"
               "    load that file into the Stem Splitter and jump straight there.\n"
-              "  - The Downloaded Songs library (right of the log) lists every\n"
+              "  - The Downloaded Songs library (left of the log) lists every\n"
               "    song you've downloaded, with cover art, format, duration, and\n"
               "    badges for STEMS (split yet?) and MIDI (converted yet?). Click\n"
               "    a song to Send it to the Stem Splitter, or Open its stems\n"
