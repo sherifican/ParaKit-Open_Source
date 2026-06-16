@@ -14,19 +14,17 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 > Until then just be aware that until I remove this disclaimer, the link below for the homepage may be down. Sorry folks.
 > If you really wanted the .exe version, I'm sorry, but I reccomend the .py version anyways, its newer.
 
->**.exe DOWNLOAD:** 
+>**.exe DOWNLOAD:** [LimeWire Bundle Link](https://limewire.com/d/UV9Zm#DHqxKgEtmn)
+
+>**Jarredou Model / Requirements Link:** [LimWire Jarredou/Req Bundle](https://limewire.com/d/HrcqC#lS73gPUpJa)
+
+>[ParaKit Official Homepage](https://parakit.builtonweb.com/) ***(CURRENTLY BROKEN)***
+
+>**README FOR .EXE VERSION:** (https://github.com/sherifican/ParaKit---Releases)
+
+>**Putting this up at the top so its found easier.**
 >
->[LimeWire Bundle Link](https://limewire.com/d/UV9Zm#DHqxKgEtmn)
-
->Jarredou Model / Requirements Link: [LimWire Jarredou/Req Bundle](https://limewire.com/d/HrcqC#lS73gPUpJa)
-
->[ParaKit Official Homepage](https://parakit.builtonweb.com/)
-
->README FOR .EXE VERSION: (https://github.com/sherifican/ParaKit---Releases)
-
->Putting this up at the top so its found easier.
->
->KNOWN QUIRK WITH THE AUDIO TO MIDI CHART GENERATION:
+>**KNOWN QUIRK WITH THE AUDIO TO MIDI CHART GENERATION:**
 >
 >Sometimes the chart generator will group kicks together and they will be almost on top of each other,
 >annoying yes, BUT very easily fixed!
