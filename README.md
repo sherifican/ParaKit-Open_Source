@@ -4,9 +4,9 @@
 
 `Check the bottom of the page for the Change/fix log`
 
-`Note: the compiled .exe version is a little bit behind the .py version at the moment (4.4.52), I've seen a LOT more engagement
+>Note: the compiled .exe version is a little bit behind the .py version at the moment (4.4.52), I've seen a LOT more engagement
 with the .py version so that's what I'm more actively supporting, I will periodically update the .exe version when enough changes
-pile up or there are significant fixes. I will also compile the v5 rebiuld when it's finished for those who want it.`
+pile up or there are significant fixes. I will also compile the v5 rebiuld when it's finished for those who want it.
 
 > The old LimeWire link is about to expire so I made a website to host the .exe versions:
 >NOTE: I've been wrestling with my stupid website with the html going on and offline over and over. I'm still working on a fix.
