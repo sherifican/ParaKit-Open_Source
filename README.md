@@ -48,7 +48,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.4.64.1-1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.4.65-1`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -356,6 +356,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.4.65-1**<br>2026-06-16 | <ul><li>**Search for missing album art** — a new right-click menu item on each song in the Downloaded Songs library looks up cover art on iTunes by the song's library name and embeds the first match straight into the file. Re-run any time to overwrite the current art (e.g. after renaming the song). The search drops anything in `(parentheses)` or `[brackets]` first (usually "Official Video" / "Lyric Video" noise). Works on FLAC, MP3, OGG, and M4A.</li><li>**Fixed:** the YouTube tab's progress bar could be scrolled out of view with the mouse wheel.</li><li>**Fixed:** "Permission denied" when searching album art on a song you had just played via the library's Play button — the preview player now releases the file before the art re-embed.</li><li>**Fixed:** the art search now uses the song's renamed library name, not the original file name — so right-click → Rename, then Search now does what you'd expect.</li></ul> |
 | **v4.4.64.1-1**<br>2026-06-16 | <ul><li>**Coloured Play/Pause buttons** in the Downloaded Songs library — a filled **purple** Play (matching the app's purple buttons) and **pink/magenta** Pause (matching the logo), for better visibility.</li><li>**Badge tooltips** — hovering the FLAC/WAV, STEMS, or MIDI badge now tells you whether that file exists (✔) or wasn't found (✖).</li></ul> |
 | **v4.4.64-1**<br>2026-06-16 | <ul><li>**YouTube → FLAC layout** — the Downloaded Songs library and the activity log swapped sides: the **library is now on the left**, the log on the right, so the library sits more directly in your line of sight.</li></ul> |
 | **v4.4.63-1**<br>2026-06-16 | <ul><li>**Bigger album-art preview** in the Asset Manager — the Auto-Fetch-Metadata cover preview is now a 240px square (was 120) so the fetched art is easy to see. Display-only; the art applied to the Song Creator is unchanged.</li><li>**Auto Fetch Audio button restyled** (MIDI Editor) — now a purple button (matching Play/Stop) with a cyan border.</li></ul> |

@@ -5337,7 +5337,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.64.1-1"
+    VERSION = "4.4.65-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -6455,10 +6455,12 @@ class MidiToRlrrApp:
                 return  # MIDI editor handles its own scrolling
             widget = event.widget
             while widget:
-                # NeonDotProgressBar is a Canvas subclass but is a UI element,
-                # not scrollable content — walk past it to find the real
-                # scrollable container.
-                if isinstance(widget, NeonDotProgressBar):
+                # The neon-dot AND snare-node-line progress bars are Canvas
+                # subclasses but are UI elements, not scrollable content — walk
+                # past them to find the real scrollable container. (Without this
+                # the wheel scrolls the bar's own canvas, sliding the bar graphic
+                # out of view — the YouTube-tab progress-bar bug, owner 2026-06-16.)
+                if isinstance(widget, (NeonDotProgressBar, _G85AltSnareProgressBar)):
                     try:
                         widget = widget.master
                     except Exception:
@@ -6493,9 +6495,10 @@ class MidiToRlrrApp:
                     'viz_canvas', 'viz_practice_canvas',
                     'viz_density', 'viz_legend', 'viz_practice_legend')}:
                 return  # Practice Mini-Game — no scrolling
-            # NeonDotProgressBar is a Canvas subclass used as a UI element,
-            # not as scrollable content — walk past it.
-            if isinstance(widget, NeonDotProgressBar):
+            # The neon-dot AND snare-node-line progress bars are Canvas
+            # subclasses used as UI elements, not scrollable content — walk
+            # past them (else the wheel slides the bar graphic out of view).
+            if isinstance(widget, (NeonDotProgressBar, _G85AltSnareProgressBar)):
                 try:
                     widget = widget.master
                 except Exception:
@@ -22056,6 +22059,13 @@ demucs.separate.main()
         try:
             import pygame
             if pygame.mixer.get_init() and not pygame.mixer.music.get_busy():
+                try:
+                    # Release the file handle on natural end too (not only in
+                    # _yt_preview_stop) so a song that played to completion does
+                    # not leave the file locked against a later art re-embed.
+                    pygame.mixer.music.unload()
+                except Exception:
+                    pass
                 self._yt_preview_path = None
                 self._yt_preview_state = None
                 self._yt_preview_update_chips()
@@ -22995,6 +23005,8 @@ demucs.separate.main()
         menu.add_command(label="Open file location",
                          command=lambda: self._yt_lib_open_location(path))
         menu.add_separator()
+        menu.add_command(label="Search for missing album art",
+                         command=lambda: self._yt_lib_search_art(path))
         menu.add_command(label="Send to Stem Splitter",
                          command=lambda: self._send_audio_to_stem(path))
         try:
@@ -23055,6 +23067,215 @@ demucs.separate.main()
                 subprocess.Popen(["xdg-open", os.path.dirname(path)])
         except Exception as e:
             messagebox.showerror("Error", f"Could not open the file location:\n{e}")
+
+    # ── Right-click → "Search for missing album art" (owner, 2026-06-16) ──────
+    def _yt_lib_search_art(self, path):
+        """Search iTunes for cover art by the song's LIBRARY NAME (title) and
+        embed the first match into the file, then refresh its library thumbnail.
+
+        Lets the user fill in (or overwrite) a song's album art without leaving
+        the YouTube tab — the same iTunes lookup the Asset Manager uses, applied
+        straight to the library file. Repeatable: each run re-searches by the
+        song's CURRENT library name (title) and overwrites whatever art is
+        already there, so a user can right-click → Rename and re-run to swap in
+        different art."""
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning(
+                "File not found",
+                "That download is no longer on disk:\n" + str(path))
+            return
+        fmt_l = os.path.splitext(path)[1].lower().lstrip(".")
+        if fmt_l not in ("flac", "mp3", "ogg", "m4a", "mp4"):
+            messagebox.showinfo(
+                "Can't embed art in this format",
+                (f"Cover art can't be embedded in .{fmt_l} files"
+                 if fmt_l else "This file has no extension")
+                + (" — WAV has no standard cover-art tag." if fmt_l == "wav"
+                   else ".")
+                + "\n\nSupported: FLAC, MP3, OGG, and M4A.")
+            return
+        import re as _re
+        # Owner 2026-06-16: search by the song's DISPLAY name — the registry
+        # `title` that right-click Rename edits — NOT the on-disk file name.
+        # Rename deliberately never renames the file (it would break the
+        # name-based links to <song>_drums.* / <song> MIDI.mid), so the file
+        # name can stay stale ("Home Soon") after the user renamed the row to
+        # "Issues - Headspace". Match the row label (_yt_lib_row): title first,
+        # file-name stem only as a fallback.
+        raw_name = ""
+        try:
+            _norm = os.path.normcase(os.path.abspath(path))
+        except Exception:
+            _norm = path
+        for _e in self._yt_library_load():
+            try:
+                if os.path.normcase(os.path.abspath(_e.get("path", ""))) == _norm:
+                    raw_name = (_e.get("title") or "").strip()
+                    break
+            except Exception:
+                pass
+        if not raw_name:
+            raw_name = os.path.splitext(os.path.basename(path))[0]
+        # Names are usually "Song - Artist (extra info / cover / version /
+        # live / …)" — the bracketed tail is almost always noise for a
+        # cover-art lookup, so drop (...) and [...] groups before searching
+        # iTunes. Fall back to the raw name if stripping leaves nothing.
+        cleaned = _re.sub(r"\([^()]*\)", " ", raw_name)
+        cleaned = _re.sub(r"\[[^\[\]]*\]", " ", cleaned)
+        cleaned = _re.sub(r"\s{2,}", " ", cleaned).strip(" -_·–—")
+        query = cleaned or raw_name.strip()
+        if not query:
+            messagebox.showinfo(
+                "No song name", "This file has no name to search album art with.")
+            return
+        # If THIS song is the one loaded in the preview player, stop + unload it
+        # first: pygame keeps the file handle open while playing OR paused, and
+        # Windows won't let mutagen rewrite a file that still has an open handle
+        # (the "[Errno 13] Permission denied" the owner hit). No-op otherwise.
+        if getattr(self, "_yt_preview_path", None) == path:
+            try:
+                self._yt_preview_stop()
+            except Exception:
+                pass
+        self._yt_log(f"\n\U0001F50D  Searching album art for “{query}”…")
+        import threading
+        threading.Thread(
+            target=self._yt_lib_search_art_worker,
+            args=(path, fmt_l, query), daemon=True).start()
+
+    def _yt_lib_search_art_worker(self, path, fmt_l, query):
+        """Worker thread: iTunes lookup -> crop/resize -> embed -> refresh row.
+        All Tk touches go back through root.after per the app's threading rule."""
+        def _log(m):
+            self.root.after(0, lambda: self._yt_log(m))
+        try:
+            result = _itunes_fetch_album_art(query, "", getattr(self, "VERSION", ""))
+            if not result:
+                _log(f"   ⚠  No album art found for “{query}”.")
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "No album art found",
+                    f"iTunes returned no cover art for:\n\n   {query}\n\n"
+                    "Tip: right-click → Rename to give it a cleaner "
+                    "“Artist - Title” name, then search again — the search "
+                    "uses the song's library name."))
+                return
+            art_bytes, _mime, _url = result
+
+            # Center-crop to square + resize, matching the download embed path.
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(art_bytes))
+            iw, ih = img.size
+            side = min(iw, ih)
+            left, top = (iw - side) // 2, (ih - side) // 2
+            img = img.crop((left, top, left + side, top + side))
+            img = img.resize((600, 600), Image.LANCZOS)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=92)
+            jpeg_bytes = buf.getvalue()
+
+            if not self._embed_album_art_bytes(path, fmt_l, jpeg_bytes, _log):
+                return  # helper logged the reason
+
+            # The cached row thumbnail (keyed by sha1(path)) is now stale -> drop
+            # it so _yt_fetch_art_cache regenerates from the freshly embedded art.
+            try:
+                import hashlib
+                key = hashlib.sha1(path.encode("utf-8")).hexdigest()
+                old_png = os.path.join(YT_ART_CACHE_DIR, key + ".png")
+                if os.path.isfile(old_png):
+                    os.remove(old_png)
+            except Exception:
+                pass
+            new_png = self._yt_fetch_art_cache(path, None)
+
+            # Persist the (re)generated art_cache path onto the registry entry.
+            if new_png:
+                try:
+                    norm = os.path.normcase(os.path.abspath(path))
+                except Exception:
+                    norm = path
+                with YT_LIBRARY_LOCK:
+                    entries = self._yt_library_load()
+                    for e in entries:
+                        try:
+                            if os.path.normcase(
+                                    os.path.abspath(e.get("path", ""))) == norm:
+                                e["art_cache"] = new_png
+                        except Exception:
+                            pass
+                    self._yt_library_save(entries)
+
+            # Evict the in-memory PhotoImage so the refresh reloads from disk,
+            # then refresh (FIFO: pop runs before refresh).
+            self.root.after(0, lambda: self._yt_lib_art_refs.pop(path, None))
+            _log(f"   ✓  Album art applied to “{query}”.")
+            self.root.after(0, self._yt_library_refresh)
+        except Exception as exc:
+            _log(f"   ⚠  Album art search failed: {exc}")
+
+    def _embed_album_art_bytes(self, audio_path, fmt_l, jpeg_bytes, log):
+        """Embed JPEG cover-art bytes into an audio file via mutagen. Returns
+        True on success. Supports FLAC, MP3, OGG Vorbis, and M4A/MP4 (the FLAC
+        and MP3 writes mirror the download-time embed in _yt_embed_thumbnail)."""
+        try:
+            if fmt_l == "flac":
+                from mutagen.flac import FLAC, Picture
+                audio = FLAC(audio_path)
+                pic = Picture()
+                pic.type, pic.mime, pic.desc = 3, "image/jpeg", "Cover"
+                pic.width = pic.height = 600
+                pic.depth = 24
+                pic.data = jpeg_bytes
+                audio.clear_pictures()
+                audio.add_picture(pic)
+                audio.save()
+            elif fmt_l == "mp3":
+                from mutagen.id3 import ID3, APIC, ID3NoHeaderError
+                try:
+                    audio = ID3(audio_path)
+                except ID3NoHeaderError:
+                    audio = ID3()
+                audio.delall("APIC")
+                audio.add(APIC(encoding=3, mime="image/jpeg", type=3,
+                               desc="Cover", data=jpeg_bytes))
+                audio.save(audio_path)
+            elif fmt_l == "ogg":
+                from mutagen.oggvorbis import OggVorbis
+                from mutagen.flac import Picture
+                import base64
+                pic = Picture()
+                pic.type, pic.mime, pic.desc = 3, "image/jpeg", "Cover"
+                pic.width = pic.height = 600
+                pic.depth = 24
+                pic.data = jpeg_bytes
+                audio = OggVorbis(audio_path)
+                audio["metadata_block_picture"] = [
+                    base64.b64encode(pic.write()).decode("ascii")]
+                audio.save()
+            elif fmt_l in ("m4a", "mp4"):
+                from mutagen.mp4 import MP4, MP4Cover
+                audio = MP4(audio_path)
+                audio["covr"] = [MP4Cover(jpeg_bytes,
+                                          imageformat=MP4Cover.FORMAT_JPEG)]
+                audio.save()
+            else:
+                log(f"   ⚠  Album art skipped: '.{fmt_l}' not supported.")
+                return False
+            return True
+        except ImportError:
+            log("   ⚠  Album art skipped: mutagen is not installed.")
+            return False
+        except PermissionError:
+            log("   ⚠  Album art embedding failed: the file is locked — it may "
+                "be open in another program or still syncing (OneDrive). Close "
+                "it / let the sync finish, then try again.")
+            return False
+        except Exception as exc:
+            log(f"   ⚠  Album art embedding failed: {exc}")
+            return False
 
     def _stem_confirm_resplit(self, input_path, output_base):
         """Modal re-split warning with a persistent 'don't show again' option.
@@ -24739,6 +24960,35 @@ demucs.separate.main()
                           .replace("\n  MIDI Editor —",
                                    "\n\n  MIDI Editor —"))
             entry(card, normalized, color=color)
+
+        wn_entry(wn_latest,
+              "v4.4.65-1 - Library 'Search for missing album art' + progress-bar scroll fix\n"
+              "  Changes/Additions:\n"
+              "  - Downloaded Songs library: a new RIGHT-CLICK menu item, 'Search\n"
+              "    for missing album art', looks up cover art on iTunes by the\n"
+              "    song's library name and embeds the first match straight into\n"
+              "    the file - no need to leave the YouTube tab, no preview\n"
+              "    dialog. Re-runnable any time to OVERWRITE the current art\n"
+              "    (e.g. after renaming the song to something more specific).\n"
+              "    The search drops anything in (parentheses) or [brackets]\n"
+              "    first, since that tail is usually noise like '(Official\n"
+              "    Video)' or '[Lyric Video]'. Supported file formats: FLAC,\n"
+              "    MP3, OGG, and M4A.\n"
+              "  Bug Fixes:\n"
+              "  - The YouTube tab's progress bar could be scrolled out of view\n"
+              "    with the mouse wheel. The app's global wheel handler now\n"
+              "    walks past the snare-node progress bar (it already did this\n"
+              "    for the neon-dot bar) so the wheel scrolls the page, not the\n"
+              "    bar graphic itself.\n"
+              "  - Searching album art on a song you had played/paused via the\n"
+              "    library's Play button could fail with 'Permission denied'.\n"
+              "    The preview player now releases the file BEFORE the art\n"
+              "    re-embed (and on natural end-of-song), so a previewed song\n"
+              "    is no longer locked against the write.\n"
+              "  - The art search now uses the song's RENAMED library name,\n"
+              "    not the original file name. So if you right-click Rename a\n"
+              "    song and then Search for missing album art, it searches by\n"
+              "    the new name.\n")
 
         wn_entry(wn_latest,
               "v4.4.64.1-1 - YouTube to FLAC library: coloured Play/Pause + badge tooltips\n"
