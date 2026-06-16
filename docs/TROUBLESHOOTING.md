@@ -27,10 +27,29 @@ Step 3 — set the **Kick** gap to about **50–65 ms** (leave the others at the
 The kicks come out de-bunched from the start — no cleanup needed.
 
 ### Fix it after the chart is already generated
-If you already converted and see the clustered kicks, fix them in the MIDI Editor:
-1. Zoom all the way out on the chart.
-2. Hold **Shift + Left-click + drag** to rubber-band-select all the kicks.
-3. Press the **Dedup** button in the toolbar above the chart and set its slider to **~50–65 ms**.
+If you already converted and see the clustered kicks, fix them in the MIDI Editor. Here's the
+problem — kicks doubled up where there should be one (bottom **Kick** lane):
+
+<img src="../screenshots/kick-after-before.png" width="900" alt="MIDI Editor - kick notes doubled and clustered before cleanup">
+
+**1. Zoom all the way out** on the chart so you can grab the whole song at once.
+
+<img src="../screenshots/kick-after-zoomed-out.png" width="900" alt="MIDI Editor zoomed all the way out, showing the entire chart">
+
+> **Long songs:** some tracks are too long to fit start-to-end even when fully zoomed out. If yours
+> won't, just dedup the part you can see, then scroll along and **repeat this method** until you've
+> deduped all the kicks.
+
+**2. Select the kicks** — hold **Shift + Left-click + drag** to rubber-band-select them.
+
+**3. Open Dedup** (the button in the toolbar above the chart), tick **Selected notes only**, set the
+**Gap** slider to **~50–65 ms**, and press **Apply**.
+
+<img src="../screenshots/kick-after-dedup-dialog.png" width="900" alt="The Dedup dialog with 'Selected notes only' ticked and the Gap slider at about 62 ms">
+
+The kicks come out de-bunched — single notes where there used to be clusters:
+
+<img src="../screenshots/kick-after-result.png" width="900" alt="MIDI Editor after dedup - kicks are now clean single notes">
 
 Either way removes the layered extra kicks while leaving your correct kick placements nearly
 untouched.
