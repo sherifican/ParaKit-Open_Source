@@ -5674,7 +5674,12 @@ class MidiToRlrrApp:
         self.root.after(200,  self._apply_theme)
         self.root.after(500,  self._apply_theme)
         self.root.after(1000, self._apply_theme)
-        self.root.after(3000, lambda: None)  # reserved startup slot
+        # v4.4.62-1 — reinstated automatic update check: a few seconds after
+        # startup, silently ask GitHub whether a newer version is out (reads the
+        # repo README's "Version in this release" line), so users who don't visit
+        # GitHub or click the button still hear about updates. Quiet on failure
+        # and when up-to-date; only prompts when a newer version is available.
+        self.root.after(3000, self._check_for_update)
 
         # Force header label colors after ttkbootstrap finishes touching them
         def _fix_header_labels():
@@ -24724,9 +24729,10 @@ demucs.separate.main()
               "    with a 'don't show again' option.\n"
               "  - The FLAC/WAV badge is now cyan instead of gray, so it reads as\n"
               "    'this is the format' rather than looking like it's missing.\n"
-              "  - Check for Updates now checks GitHub: if a newer version is out\n"
-              "    it can open the download page, or (running from source) download\n"
-              "    and replace just the one file for you.\n")
+              "  - ParaKit now checks GitHub for updates AUTOMATICALLY on startup\n"
+              "    (and via Check for Updates): if a newer version is out it can\n"
+              "    open the download page, or (running from source) download and\n"
+              "    replace just the one file for you.\n")
 
         wn_entry(wn_latest,
               "v4.4.61-1 - YouTube to FLAC: Send to Stem Splitter + Downloaded Songs library\n"

@@ -368,9 +368,10 @@ source and compiling a standalone `.exe`.
 - **Changed — the FLAC/WAV badge is now cyan** instead of gray, so it reads as the song's format
   rather than looking like something is missing.
 - **Changed — larger YouTube thumbnail preview** with a cyan border, so it fills the space better.
-- **Changed — Check for Updates now uses GitHub.** It reads this README's "Version in this release"
-  line; if a newer version is out it can open GitHub to download just the updated file, or (when
-  running from source) download and replace that one file for you. No whole-repo clone needed.
+- **Changed — automatic update check on GitHub.** ParaKit now checks for a newer version on startup
+  (and via Check for Updates), reading this README's "Version in this release" line. If a newer
+  version is out it can open GitHub to download just the updated file, or (when running from source)
+  download and replace that one file for you. No whole-repo clone needed.
 
 ### ParaKit v4.4.61-1 — YouTube → FLAC: Send-to-Stem + Downloaded Songs library — 2026-06-15
 - **New — "Send to Stem Splitter →" button.** After a download finishes, one click loads that
