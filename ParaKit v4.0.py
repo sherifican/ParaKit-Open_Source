@@ -5331,7 +5331,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.61-1"
+    VERSION = "4.4.62-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -6568,33 +6568,29 @@ class MidiToRlrrApp:
             pass
         threading.Thread(target=lambda: self._update_worker(silent=False), daemon=True).start()
 
-    # 2026-06-15 — Update-check repointed from LimeWire (link retired) to
-    # the official ParaKit download page. The app fetches that page and
-    # reads the version from its download-card version chip
-    # (<span class="ver">vX.Y.Z</span>) — the owner updates that chip on
-    # each new .exe release, so it is the version source of truth. The
-    # version is compared against `self.VERSION`; if newer, the user is
-    # asked, and clicking Yes opens the download page in their browser for
-    # manual download. No silent download, no .exe hot-swap, no Google Drive.
-    PARAKIT_RELEASE_URL = "https://parakit.builtonweb.com/parakit/"
+    # 2026-06-15 (v4.4.62-1) — Update-check repointed to GitHub (the website was
+    # down). The raw README on the open-source repo's main branch carries the
+    # line "Version in this release: X.Y.Z"; we read that and compare to
+    # self.VERSION. If newer, the user can open GitHub to download just the one
+    # file, and (running from source) let ParaKit download + replace that single
+    # file in place. We deliberately do NOT git clone — that pulls the whole repo
+    # for a one-file change. The compiled .exe download is maintained separately.
+    # IMPORTANT: the README "Version in this release:" line is the source of
+    # truth here — keep it in sync with the VERSION constant on every push.
+    PARAKIT_RELEASE_URL = "https://github.com/sherifican/ParaKit-Open_Source"
+    PARAKIT_RELEASE_FILE_URL = (
+        "https://github.com/sherifican/ParaKit-Open_Source/blob/main/ParaKit%20v4.0.py")
+    PARAKIT_README_RAW_URL = (
+        "https://raw.githubusercontent.com/sherifican/ParaKit-Open_Source/main/README.md")
+    PARAKIT_PY_RAW_URL = (
+        "https://raw.githubusercontent.com/sherifican/ParaKit-Open_Source/main/ParaKit%20v4.0.py")
 
     def _update_worker(self, silent=True):
-        """Background: fetch ParaKit's LimeWire release page and compare versions.
-
-        Owner publishes new releases by replacing the file at
-        `PARAKIT_RELEASE_URL` and updating the page title to include the
-        new version (e.g. "ParaKit v4.5.0"). This worker fetches that
-        page, parses the <title> for a version pattern, and compares it
-        to `self.VERSION`. If newer, the user is prompted; clicking Yes
-        opens the LimeWire page in the browser for manual download.
-        """
+        """Background: read the open-source repo's README "Version in this
+        release" line on GitHub and compare it to self.VERSION."""
         import urllib.request, re
 
         release_url = self.PARAKIT_RELEASE_URL
-        # Strip the URL fragment (#...) before fetching — the server
-        # doesn't receive fragments, but some HTTP libs treat them
-        # inconsistently.
-        fetch_url = release_url.split("#", 1)[0]
 
         def _ver(s):
             try:
@@ -6609,27 +6605,18 @@ class MidiToRlrrApp:
 
         try:
             req = urllib.request.Request(
-                fetch_url,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/120.0.0.0 Safari/537.36"),
-                    "Accept": "text/html,*/*;q=0.8",
-                })
+                self.PARAKIT_README_RAW_URL,
+                headers={"User-Agent": "ParaKit-update-check",
+                         "Accept": "text/plain,*/*;q=0.8"})
             with urllib.request.urlopen(req, timeout=8) as resp:
-                html = resp.read().decode("utf-8", errors="ignore")
+                text = resp.read().decode("utf-8", errors="ignore")
 
-            # Read the version from the download page's version chip
-            # (<span class="ver">v4.4.52</span>). Short chips like "v3" /
-            # "v2" don't match — only a full X.Y.Z(-N) version does, so the
-            # .exe chip is selected automatically.
+            # The README line: "> **Version in this release:** `X.Y.Z` • ..."
             version_match = re.search(
-                r'class="ver"[^>]*>\s*v?(\d+(?:\.\d+){2,3}(?:-\d+)?)',
-                html, re.IGNORECASE)
+                r'Version in this release:.*?(\d+\.\d+\.\d+(?:-\d+)?)', text)
             if not version_match:
                 raise ValueError(
-                    "No version chip found on the download page")
+                    "No 'Version in this release' line found in the GitHub README")
             latest_version = version_match.group(1)
 
             if _ver(latest_version) is None:
@@ -6658,27 +6645,143 @@ class MidiToRlrrApp:
                     text="Check failed", foreground="#e63946"))
                 self.root.after(0, lambda: messagebox.showwarning(
                     "Update Check Failed",
-                    f"Could not reach the ParaKit release page to check for "
-                    f"updates.\n\n{e}\n\n"
-                    f"Check your internet connection or visit the release "
-                    f"page manually:\n{release_url}"))
+                    f"Could not reach GitHub to check for updates.\n\n{e}\n\n"
+                    f"Check your internet connection or visit the repo "
+                    f"manually:\n{release_url}"))
 
-    def _prompt_update(self, new_ver, release_url):
-        """Show update dialog. Yes opens the download page in the browser."""
-        msg = (f"ParaKit v{new_ver} is available!\n"
-               f"You have v{self.VERSION}\n\n"
-               f"Open the download page in your browser?\n"
-               f"You'll need to download the new version manually from there.")
-        if not messagebox.askyesno("Update Available", msg):
-            return
+    def _prompt_update(self, new_ver, repo_url):
+        """Update dialog: open GitHub to download just the one file, and (when
+        running from source) a one-click single-file self-update."""
         import webbrowser
+        is_frozen = bool(getattr(sys, "frozen", False))
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Update Available")
+        dlg.configure(bg="#222222")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
         try:
-            webbrowser.open(release_url)
+            pw, ph = 480, 230
+            px = self.root.winfo_x() + (self.root.winfo_width() - pw) // 2
+            py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
+            dlg.geometry(f"{pw}x{ph}+{px}+{py}")
+        except Exception:
+            pass
+
+        frame = ttk.Frame(dlg, padding=18)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text=f"ParaKit v{new_ver} is available!",
+                  font=("Segoe UI", 12, "bold"),
+                  foreground="#b388ff").pack(anchor="w")
+        ttk.Label(frame, text=f"You have v{self.VERSION}.",
+                  style="Sub.TLabel").pack(anchor="w", pady=(2, 8))
+        if is_frozen:
+            body = ("Download the latest ParaKit from GitHub. (The compiled .exe "
+                    "download is maintained separately and may lag this source "
+                    "version.)")
+        else:
+            body = ("Grab just the updated 'ParaKit v4.0.py' from GitHub — you "
+                    "don't need the whole repo — or let ParaKit download and "
+                    "replace that one file for you now, then restart.")
+        ttk.Label(frame, text=body, style="TLabel",
+                  wraplength=440, justify=tk.LEFT).pack(anchor="w")
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(anchor="e", pady=(16, 0))
+
+        def _open_github():
+            target = repo_url if is_frozen else self.PARAKIT_RELEASE_FILE_URL
+            try:
+                webbrowser.open(target)
+            except Exception as e:
+                messagebox.showerror(
+                    "Open Browser Failed",
+                    f"Could not open your browser.\n\n{e}\n\nOpen manually:\n{target}")
+
+        ttk.Button(btn_row, text="Close", command=dlg.destroy).pack(
+            side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="Open GitHub", command=_open_github).pack(
+            side=tk.LEFT, padx=(0, 8))
+        if not is_frozen:
+            ttk.Button(btn_row, text="Download update now",
+                       style="Convert.TButton",
+                       command=lambda: self._self_update_single_file(new_ver, dlg)
+                       ).pack(side=tk.LEFT)
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+
+    def _self_update_single_file(self, new_ver, dlg=None):
+        """Download the raw 'ParaKit v4.0.py' from GitHub and replace the running
+        source file (source installs only) — validated + backed up first. This is
+        a single-file update on purpose; git clone would pull the entire repo for
+        a one-file change, which is exactly what users don't want."""
+        import urllib.request
+        target = None
+        _argv0 = (sys.argv[0] if getattr(sys, "argv", None) else None)
+        for cand in (_argv0, globals().get("__file__")):
+            try:
+                if cand and os.path.isfile(cand) and cand.lower().endswith(".py"):
+                    target = os.path.abspath(cand)
+                    break
+            except Exception:
+                pass
+        if not target:
+            messagebox.showwarning(
+                "Update",
+                "Couldn't locate the running ParaKit .py to update in place. "
+                "Use 'Open GitHub' to download the new file manually.")
+            return
+        try:
+            req = urllib.request.Request(
+                self.PARAKIT_PY_RAW_URL, headers={"User-Agent": "ParaKit-update"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+        except Exception as e:
+            messagebox.showerror("Download Failed",
+                                 f"Could not download the update:\n{e}")
+            return
+        # Validate BEFORE touching the live file: must decode, be a real ParaKit
+        # build, and carry the version we expect (so a README/.py mismatch on
+        # GitHub can't install a wrong file).
+        try:
+            text = data.decode("utf-8")
+        except Exception:
+            text = ""
+        if (len(data) < 200000 or "class MidiToRlrrApp" not in text
+                or f'VERSION = "{new_ver}"' not in text):
+            messagebox.showerror(
+                "Update Aborted",
+                "The downloaded file didn't look like a valid ParaKit build (or "
+                "its version didn't match), so nothing was changed. Use 'Open "
+                "GitHub' to download it manually.")
+            return
+        try:
+            shutil.copyfile(target, target + ".prev")   # rollback copy
+            tmp = target + ".dl.tmp"
+            with open(tmp, "wb") as f:
+                f.write(data)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+            os.replace(tmp, target)
         except Exception as e:
             messagebox.showerror(
-                "Open Browser Failed",
-                f"Could not open your browser automatically.\n\n{e}\n\n"
-                f"Open this link manually:\n{release_url}")
+                "Update Failed",
+                f"Could not replace the file:\n{e}\n\nYour current version is "
+                f"unchanged.")
+            return
+        if dlg is not None:
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+        messagebox.showinfo(
+            "Updated",
+            f"ParaKit was updated to v{new_ver}.\n\nClose and reopen ParaKit to "
+            f"run the new version.\n(Your previous file was saved as "
+            f"{os.path.basename(target)}.prev.)")
 
     def _current_monitor_work_area(self):
         """Return the nearest monitor work-area size in pixels."""
@@ -6998,6 +7101,37 @@ class MidiToRlrrApp:
                   bordercolor=[("active", "#d4b3ff"),
                                ("pressed", "#ffffff"),
                                ("!active", PURPLE)],
+                  relief=[("pressed", "sunken"),
+                          ("!pressed", "raised")])
+
+        # v4.4.62-1 — Cyan button (Fetch.TButton): for the MIDI Editor's
+        # "Auto Fetch Audio" action, deliberately NOT purple so it stands out
+        # from the rest of the button language. Matches the app's #00d4d4 cyan.
+        style.configure("Fetch.TButton",
+                        background="#0aa5a5",
+                        foreground="#ffffff",
+                        bordercolor="#00d4d4",
+                        lightcolor="#22e0e0",
+                        darkcolor="#053b3b",
+                        focuscolor="#00d4d4",
+                        focusthickness=1,
+                        font=("Segoe UI", base_font_size, "bold"),
+                        padding=button_pad,
+                        borderwidth=1,
+                        relief="raised")
+        style.map("Fetch.TButton",
+                  foreground=[("disabled", "#888888"),
+                              ("active", "#ffffff"),
+                              ("pressed", "#ffffff"),
+                              ("!active", "#ffffff")],
+                  background=[("disabled", "#2a2a30"),
+                              ("pressed", "#077e7e"),
+                              ("active", "#0fc4c4"),
+                              ("!active", "#0aa5a5")],
+                  bordercolor=[("disabled", "#444444"),
+                               ("active", "#aef5f5"),
+                               ("pressed", "#ffffff"),
+                               ("!active", "#00d4d4")],
                   relief=[("pressed", "sunken"),
                           ("!pressed", "raised")])
 
@@ -13125,6 +13259,23 @@ demucs.separate.main()
             command=self._me_schedule_redraw,
             label_width=14).pack(side=tk.LEFT)
 
+        # v4.4.62-1 — "Auto Fetch Audio" (cyan, owner QoL): sits ABOVE Play/Stop
+        # and spans their combined width. From the loaded MIDI's song name it
+        # finds the Drums stem + Full Mix from the configured Stem/YouTube output
+        # folders (and next to the MIDI) and fills ONLY the Drums + Full Mix
+        # fields — never Stem 3/4.
+        af_row = ttk.Frame(playback_col)
+        af_row.pack(fill=tk.X, pady=(0, 3))
+        self.me_auto_fetch_btn = ttk.Button(
+            af_row, text="Auto Fetch Audio", style="Fetch.TButton",
+            width=18, command=self._me_auto_fetch_audio)
+        self.me_auto_fetch_btn.pack(side=tk.LEFT)
+        self._add_tooltip(
+            self.me_auto_fetch_btn,
+            "Finds the Drums stem + Full Mix audio for the loaded MIDI's song\n"
+            "(from your Stem Splitter / YouTube output folders and next to the\n"
+            "MIDI) and fills the Drums and Full Mix fields. Never touches Stem 3/4.")
+
         # ── Playback controls ─────────────────────────────────────────────────
         pb_frame = ttk.Frame(playback_col)
         pb_frame.pack(fill=tk.X, pady=(0, 2))
@@ -18691,6 +18842,131 @@ demucs.separate.main()
             var.set(path)
             self._add_recent_file(config_key, path)
 
+    def _me_auto_fetch_audio(self):
+        """QoL (v4.4.62-1): from the loaded MIDI's song name, find + fill the
+        Drums stem and Full Mix audio from the configured Stem/YouTube output
+        folders (and next to the MIDI). Only ever touches the Drums + Full Mix
+        fields — never Stem 3/4."""
+        midi_path = (getattr(self, "_me_last_midi", None)
+                     or self.me_midi_var.get().strip())
+        if not midi_path:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Load a MIDI in the editor first — Auto Fetch uses its file "
+                "name to find the matching Drums and Full Mix audio.")
+            return
+
+        # Core song name: strip the A2M ' MIDI' decoration, then a '_drums' tail.
+        song = os.path.splitext(os.path.basename(midi_path))[0]
+        for suffix in (" drums MIDI", "_drums MIDI", " MIDI", "_MIDI"):
+            if song.endswith(suffix):
+                song = song[: -len(suffix)]
+                break
+        for suffix in ("_drums", " drums"):
+            if song.endswith(suffix):
+                song = song[: -len(suffix)]
+                break
+        song = song.strip()
+        if not song:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Couldn't read a song name from the MIDI file name.")
+            return
+
+        cfg = load_config()
+        midi_dir = os.path.dirname(midi_path)
+        parent_dir = os.path.dirname(midi_dir)
+
+        def _cfg_or_var(key, var_name):
+            v = (cfg.get(key) or "").strip()
+            if not v:
+                vv = getattr(self, var_name, None)
+                try:
+                    v = vv.get().strip() if vv is not None else ""
+                except Exception:
+                    v = ""
+            return v
+        stem_base = _cfg_or_var("output_folder_stem", "stem_output_var")
+        iso_base  = _cfg_or_var("output_folder_iso", "stem_iso_output_var")
+        yt_base   = (cfg.get("output_folder_yt") or "").strip()
+
+        EXTS = (".flac", ".ogg", ".wav", ".mp3")
+
+        def _first_file(cands):
+            for c in cands:
+                try:
+                    if c and os.path.isfile(c):
+                        return c
+                except Exception:
+                    pass
+            return None
+
+        # Drums stem — Stem-Splitter outputs (standard + ISO) and next to the MIDI.
+        drums_cands = []
+        for base in (stem_base, iso_base):
+            if not base:
+                continue
+            for folder in ("DRUMS ONLY", "LOSSLESS SPLITS (DRUMS)", "DRUMS"):
+                for ext in EXTS:
+                    drums_cands.append(os.path.join(base, folder, f"{song}_drums{ext}"))
+        for d in (midi_dir, parent_dir):
+            for ext in EXTS:
+                drums_cands.append(os.path.join(d, f"{song}_drums{ext}"))
+        drums = _first_file(drums_cands)
+
+        # Full mix — the complete original song (NOT the backing). YouTube output
+        # folder + next to the MIDI; never the drums stem itself.
+        try:
+            drums_norm = os.path.normcase(os.path.abspath(drums)) if drums else None
+        except Exception:
+            drums_norm = None
+        mix_cands = []
+        if yt_base:
+            for ext in EXTS:
+                mix_cands.append(os.path.join(yt_base, f"{song}{ext}"))
+        for d in (midi_dir, parent_dir):
+            for ext in EXTS:
+                mix_cands.append(os.path.join(d, f"{song}{ext}"))
+        mix = None
+        for c in mix_cands:
+            try:
+                if c and os.path.isfile(c):
+                    if drums_norm and os.path.normcase(os.path.abspath(c)) == drums_norm:
+                        continue
+                    mix = c
+                    break
+            except Exception:
+                pass
+
+        # Populate ONLY the Drums (me_audio_var) + Full Mix (me_audio_mix_var).
+        found = []
+        if drums:
+            self.me_audio_var.set(drums)
+            self._add_recent_file("recent_me_drums", drums)
+            found.append("Drums:     " + os.path.basename(drums))
+        if mix:
+            self.me_audio_mix_var.set(mix)
+            self._add_recent_file("recent_me_mix", mix)
+            found.append("Full Mix:  " + os.path.basename(mix))
+
+        if found:
+            note = ""
+            if not drums:
+                note = "\n\n(No Drums stem found — Browse for it if you have one.)"
+            elif not mix:
+                note = "\n\n(No Full Mix found — Browse for it if you have one.)"
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                f"Auto-filled audio for '{song}':\n\n" + "\n".join(found) + note)
+        else:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                f"Couldn't find Drums or Full Mix audio for '{song}'.\n\n"
+                "Auto Fetch checks your Stem Splitter output folder "
+                "(DRUMS ONLY / LOSSLESS SPLITS (DRUMS) / DRUMS), your YouTube "
+                "output folder, and the folder next to the MIDI. If the files "
+                "are elsewhere, use the Browse buttons.")
+
     def _me_loop_set_in(self):
         """Set loop in point to current playback position."""
         self._me_loop_in = self._me_play_offset
@@ -21064,9 +21340,16 @@ demucs.separate.main()
         # ── Asset preview (band col 0) — gridded by _yt_relayout_band ─────────
         thumb_outer = ttk.Frame(top_band)
 
-        # Fixed 240×135 image box — holds its size even when empty
-        thumb_img_box = tk.Frame(thumb_outer, width=240, height=135,
-                                  bg="#0d0d1a", relief="groove", bd=1)
+        # v4.4.62-1 — larger 16:9 preview box (was 240×135) with a CYAN border
+        # (was a gray groove) so it fills col 0 and reads closer in size to the
+        # Format/Runtime/Cookies cards beside it. At 180px tall it's the tallest
+        # band element, so it drives the band height and those cards stretch to
+        # match it.
+        thumb_img_box = tk.Frame(thumb_outer, width=320, height=180,
+                                  bg="#0d0d1a", relief="flat", bd=0,
+                                  highlightthickness=2,
+                                  highlightbackground="#00d4d4",
+                                  highlightcolor="#00d4d4")
         thumb_img_box.pack(side=tk.LEFT, padx=(0, 12))
         thumb_img_box.pack_propagate(False)
         self.yt_thumb_lbl = tk.Label(thumb_img_box, bg="#0d0d1a", text="",
@@ -21415,7 +21698,7 @@ demucs.separate.main()
                 fmt_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 6))
                 runtime_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 6))
                 cookie_frame.grid(row=0, column=3, sticky="nsew")
-                top_band.columnconfigure(0, minsize=440)
+                top_band.columnconfigure(0, minsize=520)
                 top_band.columnconfigure(1, weight=2)
                 top_band.columnconfigure(2, weight=3)
                 top_band.columnconfigure(3, weight=3)
@@ -21504,6 +21787,12 @@ demucs.separate.main()
         lib_col = ttk.Frame(bottom)
         lib_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 0))
         self._yt_library_build(lib_col)
+
+        # v4.4.62-1 — stop the library preview whenever the user leaves this tab,
+        # so it can't bleed into other tabs by mistake or glitch (add="+" so it
+        # doesn't clobber the existing tab-change handlers).
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           self._yt_on_tab_changed_stop_preview, add="+")
 
     # =====================================================================
     # v4.4.61-1 — YouTube → FLAC: Send-to-Stem + Downloaded-Songs Library
@@ -21669,6 +21958,246 @@ demucs.separate.main()
             messagebox.showinfo("Nothing to send", "Download a song first.")
             return
         self._send_audio_to_stem(path)
+
+    # ── Full-song preview player (v4.4.62-1) ─────────────────────────────────
+    # Plays the WHOLE song (no cap) through the shared pygame.mixer.music stream
+    # the rest of the app already uses. We only ever touch that stream while OUR
+    # preview is active, and we stop on leaving the YouTube tab, so it can't get
+    # in the way of other tabs' audio (by user mistake or a glitch).
+    def _yt_preview_ensure_mixer(self):
+        import pygame
+        if not pygame.mixer.get_init():
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+
+    def _yt_preview_toggle(self, path):
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning(
+                "File not found",
+                "That download is no longer on disk:\n" + str(path))
+            return
+        try:
+            import pygame
+        except Exception:
+            messagebox.showinfo(
+                "Preview unavailable",
+                "Audio preview needs pygame, which isn't available in this build.")
+            return
+        try:
+            self._yt_preview_ensure_mixer()
+        except Exception as e:
+            messagebox.showerror("Preview failed", f"Could not start audio:\n{e}")
+            return
+        cur = getattr(self, "_yt_preview_path", None)
+        state = getattr(self, "_yt_preview_state", None)
+        if cur == path and state == "playing":
+            try:
+                pygame.mixer.music.pause()
+            except Exception:
+                pass
+            self._yt_preview_state = "paused"
+        elif cur == path and state == "paused":
+            try:
+                pygame.mixer.music.unpause()
+            except Exception:
+                pass
+            self._yt_preview_state = "playing"
+            self._yt_preview_schedule_poll()
+        else:
+            try:
+                pygame.mixer.music.stop()
+                pygame.mixer.music.load(path)
+                pygame.mixer.music.play()   # whole song, no length cap
+            except Exception as e:
+                self._yt_preview_path = None
+                self._yt_preview_state = None
+                self._yt_preview_update_chips()
+                messagebox.showerror("Preview failed", f"Could not play this file:\n{e}")
+                return
+            self._yt_preview_path = path
+            self._yt_preview_state = "playing"
+            self._yt_preview_schedule_poll()
+        self._yt_preview_update_chips()
+
+    def _yt_preview_stop(self):
+        """Stop the preview — but only if OUR preview is what's playing, so we
+        never yank the shared mixer out from under another tab."""
+        if (getattr(self, "_yt_preview_state", None) is None
+                and getattr(self, "_yt_preview_path", None) is None):
+            return
+        try:
+            import pygame
+            if pygame.mixer.get_init():
+                pygame.mixer.music.stop()
+                try:
+                    # Release the file handle (pygame 2.0+) so a delete-from-disk
+                    # of the just-previewed song isn't blocked by an open handle
+                    # on Windows.
+                    pygame.mixer.music.unload()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self._yt_preview_path = None
+        self._yt_preview_state = None
+        self._yt_preview_update_chips()
+
+    def _yt_preview_schedule_poll(self):
+        """Schedule the end-of-song poll, cancelling any prior one so rapid
+        play/pause/unpause can't spawn overlapping (multiplying) poll loops."""
+        prev = getattr(self, "_yt_preview_poll_after", None)
+        if prev:
+            try:
+                self.root.after_cancel(prev)
+            except Exception:
+                pass
+        self._yt_preview_poll_after = self.root.after(600, self._yt_preview_poll)
+
+    def _yt_preview_poll(self):
+        """While playing, detect natural end-of-song and reset the chip."""
+        self._yt_preview_poll_after = None
+        if getattr(self, "_yt_preview_state", None) != "playing":
+            return
+        try:
+            import pygame
+            if pygame.mixer.get_init() and not pygame.mixer.music.get_busy():
+                self._yt_preview_path = None
+                self._yt_preview_state = None
+                self._yt_preview_update_chips()
+                return
+        except Exception:
+            pass
+        self._yt_preview_schedule_poll()
+
+    def _yt_preview_update_chips(self):
+        cur = getattr(self, "_yt_preview_path", None)
+        state = getattr(self, "_yt_preview_state", None)
+        for r in getattr(self, "_yt_lib_rows", []):
+            chip = getattr(r, "_yt_play_chip", None)
+            if chip is None:
+                continue
+            try:
+                playing = (getattr(r, "_yt_path", None) == cur and state == "playing")
+                chip.configure(text="⏸  Pause" if playing else "▶  Play")
+            except Exception:
+                pass
+
+    def _yt_on_tab_changed_stop_preview(self, _e=None):
+        """Stop the preview whenever the user leaves the YouTube tab."""
+        try:
+            if self.notebook.index("current") != self._tab_indexes.get("youtube"):
+                self._yt_preview_stop()
+        except Exception:
+            pass
+
+    # ── Delete a library entry (v4.4.62-1) ───────────────────────────────────
+    def _yt_delete_entry(self, path):
+        """Row Delete chip. Honours a remembered choice once the user ticked
+        'don't show again'; otherwise asks remove-from-list vs delete-from-disk."""
+        cfg = load_config()
+        if cfg.get("yt_library_delete_warn_dismissed"):
+            self._yt_do_delete(path, cfg.get("yt_library_delete_action", "list"))
+            return
+        self._yt_delete_confirm(path)
+
+    def _yt_delete_confirm(self, path):
+        """Modal 'Are you sure?' with the list-vs-disk choice + don't-show-again."""
+        try:
+            song = os.path.splitext(os.path.basename(path))[0]
+        except Exception:
+            song = os.path.basename(path)
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Are you sure?")
+        dlg.configure(bg="#222222")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        pw, ph = 520, 250
+        try:
+            px = self.root.winfo_x() + (self.root.winfo_width() - pw) // 2
+            py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
+            dlg.geometry(f"{pw}x{ph}+{px}+{py}")
+        except Exception:
+            dlg.geometry(f"{pw}x{ph}")
+
+        frame = ttk.Frame(dlg, padding=18)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Are you sure?",
+                  font=("Segoe UI", 12, "bold"),
+                  foreground="#e05650").pack(anchor="w", pady=(0, 8))
+        ttk.Label(frame, text=f"Delete '{song}' from your library?",
+                  style="TLabel", wraplength=480, justify=tk.LEFT).pack(anchor="w")
+        ttk.Label(frame,
+                  text="- Remove from list keeps the audio file on your disk.\n"
+                       "- Delete from disk permanently deletes the file (no Recycle Bin).",
+                  style="Sub.TLabel", foreground="#9a9ab0",
+                  wraplength=480, justify=tk.LEFT).pack(anchor="w", pady=(8, 0))
+
+        dismiss_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(frame, text="Don't show me this again (remember my choice)",
+                        variable=dismiss_var).pack(anchor="w", pady=(12, 0))
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(anchor="e", pady=(16, 0))
+
+        def _finish(action):
+            if dismiss_var.get():
+                save_config({"yt_library_delete_warn_dismissed": True,
+                             "yt_library_delete_action": action})
+            dlg.destroy()
+            self._yt_do_delete(path, action)
+
+        ttk.Button(btn_row, text="Cancel", command=dlg.destroy).pack(
+            side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="Remove from list",
+                   command=lambda: _finish("list")).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="Delete from disk",
+                   command=lambda: _finish("disk")).pack(side=tk.LEFT)
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+
+    def _yt_do_delete(self, path, action):
+        """Remove the library entry; if action=='disk' also PERMANENTLY delete
+        the audio file (no Recycle Bin, per owner). Stops the preview first if
+        this is the song playing."""
+        try:
+            norm = os.path.normcase(os.path.abspath(path))
+        except Exception:
+            norm = path
+        if getattr(self, "_yt_preview_path", None) == path:
+            self._yt_preview_stop()
+        # Drop the registry entry (locked) + clean up its cached art PNG.
+        with YT_LIBRARY_LOCK:
+            entries = self._yt_library_load()
+            kept, removed = [], []
+            for e in entries:
+                try:
+                    is_match = os.path.normcase(
+                        os.path.abspath(e.get("path", ""))) == norm
+                except Exception:
+                    is_match = False
+                (removed if is_match else kept).append(e)
+            for e in removed:
+                ac = e.get("art_cache")
+                if ac and os.path.isfile(ac):
+                    try:
+                        os.remove(ac)
+                    except Exception:
+                        pass
+            if removed:
+                self._yt_library_save(kept)
+        try:
+            self._yt_lib_art_refs.pop(path, None)
+        except Exception:
+            pass
+        if action == "disk":
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)   # permanent — owner chose no Recycle Bin
+            except Exception as e:
+                messagebox.showerror(
+                    "Delete failed",
+                    "Removed it from the library, but the file itself could not "
+                    f"be deleted:\n{e}")
+        self._yt_library_refresh()
 
     # ── Registry (standalone, atomic — clone of save_config discipline) ──────
     def _yt_library_load(self):
@@ -22021,6 +22550,9 @@ demucs.separate.main()
         self._yt_lib_selected_path = None
         self._yt_lib_show_all = False
         self._yt_lib_refresh_after = None
+        # Per-row full-song preview state (single shared pygame.mixer.music stream)
+        self._yt_preview_path = getattr(self, "_yt_preview_path", None)
+        self._yt_preview_state = getattr(self, "_yt_preview_state", None)
 
         ttk.Label(parent, text="YOUR DOWNLOADS",
                   font=("Segoe UI", 8, "bold"), foreground="#9a9ab0").pack(anchor="w")
@@ -22219,9 +22751,13 @@ demucs.separate.main()
         kept intentionally dimmer than the neutral #9a9ab0 per the plan's
         dim-absent intent (the old #7e7e96 failed on odd/hover/select too).
         Border #4a4a6b is perceptible vs the old near-invisible #3a3a55 (~1.6:1).
+
+        v4.4.62-1: the neutral FORMAT badge (FLAC/WAV) is CYAN, not gray — gray
+        made it read like a dim "missing" status (like the absent STEMS/MIDI
+        badges) when it's actually always-present format info.
         """
         if neutral:
-            border, fg = "#4a4a6b", "#9a9ab0"
+            border, fg = "#00d4d4", "#00d4d4"   # cyan = present format info
         elif present:
             border, fg = "#46d18a", "#46d18a"
         else:
@@ -22251,10 +22787,15 @@ demucs.separate.main()
 
         row = tk.Frame(parent, bg=rest_bg)
         row.pack(fill=tk.X)
-        # text column expands; action chips size to content (no reserved gutter —
-        # the old col-5/6 minsize left a permanent ~172px dead zone the title
-        # could not reclaim; UI-audit MAJOR).
+        # v4.4.62-1 (owner): only the text column (col 2) expands, so the whole
+        # right cluster (Delete · | · badges · duration · Send · Open · Play) is
+        # right-aligned at a CONSISTENT position → the Delete chips line up in a
+        # column across rows. Open Stems (col 8) + Play (col 9) get a reserved
+        # minsize so a non-split row (no Open Stems) or the wider "Pause" glyph
+        # can't shift the cluster and break that alignment.
         row.columnconfigure(2, weight=1)
+        row.columnconfigure(8, minsize=96)
+        row.columnconfigure(9, minsize=80)
         row._yt_path = path
         row._yt_split = split
         row._yt_color_targets = []
@@ -22300,8 +22841,9 @@ demucs.separate.main()
             art_sub.pack(fill=tk.X, anchor="w")
             row._yt_color_targets.append(art_sub)
 
+        # Right-side cluster (cols 5+): badges, duration, then the action chips.
         badges = tk.Frame(row, bg=rest_bg)
-        badges.grid(row=0, column=3, padx=(6, 6))
+        badges.grid(row=0, column=5, padx=(6, 6))
         row._yt_color_targets.append(badges)
         self._yt_make_badge(badges, (entry.get("fmt") or "flac").upper(),
                             present=True, neutral=True, row=row)
@@ -22310,7 +22852,7 @@ demucs.separate.main()
 
         dur_lbl = tk.Label(row, text=self._yt_fmt_duration(entry.get("duration_sec")),
                            bg=rest_bg, fg="#9a9ab0", font=("Segoe UI", 9))
-        dur_lbl.grid(row=0, column=4, padx=(0, 8))
+        dur_lbl.grid(row=0, column=6, padx=(0, 8))
         row._yt_color_targets.append(dur_lbl)
 
         # v4.4.61-1 (UI-audit fix) — PERSISTENT bordered action chips, not
@@ -22319,18 +22861,39 @@ demucs.separate.main()
         # hazard. padx=8/pady=4 + a 1px border give a ~28px tappable chip; the
         # chip bg tracks the row band (in _yt_color_targets) so the band stays
         # continuous. "Open Stems" only when a split exists.
-        def _mk_chip(text, fg, cmd, col):
+        def _mk_chip(text, fg, cmd, col, border="#4a4a6b"):
             chip = tk.Label(row, text=text, bg=rest_bg, fg=fg,
                             font=("Segoe UI", 9, "bold"), cursor="hand2",
                             padx=8, pady=4, bd=0, highlightthickness=1,
-                            highlightbackground="#4a4a6b", highlightcolor="#4a4a6b")
+                            highlightbackground=border, highlightcolor=border)
             chip.bind("<Button-1>", lambda _e, p=path: cmd(p))
             chip.grid(row=0, column=col, padx=(0, 4), sticky="e")
             row._yt_color_targets.append(chip)
             return chip
-        _mk_chip("Send →", ACCENT, self._send_audio_to_stem, 5)
+
+        # v4.4.62-1 — Delete chip (red), at col 3 right next to the badges, with a
+        # "|" divider (col 4) between them — all right-aligned so they line up.
+        _mk_chip("Delete", "#e05650", self._yt_delete_entry, 3, border="#e05650")
+        _divider = tk.Label(row, text="|", bg=rest_bg, fg="#5a5a75",
+                            font=("Segoe UI", 12))
+        _divider.grid(row=0, column=4, padx=(6, 2), sticky="e")
+        row._yt_color_targets.append(_divider)
+
+        send_chip = _mk_chip("Send →", ACCENT, self._send_audio_to_stem, 7)
+        self._add_tooltip(send_chip, "Sends this song to the Stem Splitter")
         if split:
-            _mk_chip("Open Stems", "#46d18a", self._open_stems_folder, 6)
+            open_chip = _mk_chip("Open Stems", "#46d18a", self._open_stems_folder, 8)
+            # Tooltip — attach BEFORE _bind_recursive (which uses add="+") so the
+            # tooltip's <Enter>/<Leave> and the row-hover bindings coexist.
+            self._add_tooltip(open_chip, "Opens your folder containing your drum stems")
+        # Full-song play/pause preview, to the RIGHT of Open Stems (col 9). Glyph
+        # reflects the live preview state so it stays correct across library
+        # refreshes; stored on the row so _yt_preview_update_chips can flip it.
+        _playing = (path == getattr(self, "_yt_preview_path", None)
+                    and getattr(self, "_yt_preview_state", None) == "playing")
+        row._yt_play_chip = _mk_chip(
+            "⏸  Pause" if _playing else "▶  Play",
+            "#58a6ff", self._yt_preview_toggle, 9)
 
         sep = tk.Frame(parent, bg="#222238", height=1)
         sep.pack(fill=tk.X)
@@ -22383,16 +22946,93 @@ demucs.separate.main()
         def _on_click(_e):
             self._yt_lib_select_path(path)
 
+        def _on_right_click(e):
+            # Select the row, then pop a Windows-style context menu.
+            self._yt_lib_select_path(path)
+            self._yt_lib_context_menu(e, path)
+            return "break"
+
         def _bind_recursive(w):
             w.bind("<Enter>", _on_enter, add="+")
             w.bind("<Leave>", _on_leave, add="+")
             w.bind("<Button-1>", _on_click, add="+")
+            w.bind("<Button-3>", _on_right_click, add="+")
             for c in w.winfo_children():
                 _bind_recursive(c)
         _bind_recursive(row)
 
         self._yt_lib_rows.append(row)
         _set_state("selected" if _is_selected() else "rest")
+
+    # ── Library row right-click menu (v4.4.62-1) ─────────────────────────────
+    def _yt_lib_context_menu(self, event, path):
+        """Windows-style right-click menu for a library row."""
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Rename",
+                         command=lambda: self._yt_lib_rename(path))
+        menu.add_command(label="Open file location",
+                         command=lambda: self._yt_lib_open_location(path))
+        menu.add_separator()
+        menu.add_command(label="Send to Stem Splitter",
+                         command=lambda: self._send_audio_to_stem(path))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _yt_lib_rename(self, path):
+        """Rename the song's LIBRARY LABEL (the registry title) — deliberately NOT
+        the file on disk, because renaming the file would break the name-based
+        links to its stems (<song>_drums.*) and MIDI (<song> MIDI.mid)."""
+        from tkinter import simpledialog
+        try:
+            norm = os.path.normcase(os.path.abspath(path))
+        except Exception:
+            norm = path
+        cur = ""
+        for e in self._yt_library_load():
+            try:
+                if os.path.normcase(os.path.abspath(e.get("path", ""))) == norm:
+                    cur = e.get("title", "") or ""
+                    break
+            except Exception:
+                pass
+        new = simpledialog.askstring(
+            "Rename", "New name for this song in the library:",
+            initialvalue=cur, parent=self.root)
+        if new is None:
+            return
+        new = new.strip()
+        if not new:
+            return
+        with YT_LIBRARY_LOCK:
+            entries = self._yt_library_load()
+            for e in entries:
+                try:
+                    if os.path.normcase(os.path.abspath(e.get("path", ""))) == norm:
+                        e["title"] = new
+                except Exception:
+                    pass
+            self._yt_library_save(entries)
+        self._yt_library_refresh()
+
+    def _yt_lib_open_location(self, path):
+        """Open the song's folder, selecting the file where the OS supports it."""
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning(
+                "File not found",
+                "That download is no longer on disk:\n" + str(path))
+            return
+        import subprocess, platform
+        try:
+            if platform.system() == "Windows":
+                subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", "-R", path])
+            else:
+                subprocess.Popen(["xdg-open", os.path.dirname(path)])
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open the file location:\n{e}")
 
     def _stem_confirm_resplit(self, input_path, output_base):
         """Modal re-split warning with a persistent 'don't show again' option.
@@ -22563,7 +23203,7 @@ demucs.separate.main()
                 if target_h < ih:
                     pad = (ih - target_h) // 2
                     img = img.crop((0, pad, iw, pad + target_h))
-                img   = img.resize((240, 135), Image.LANCZOS)
+                img   = img.resize((320, 180), Image.LANCZOS)   # v4.4.62-1: match the larger preview box
                 photo = ImageTk.PhotoImage(img)
 
                 display_title = title or f"Video ID: {video_id}"
@@ -24065,6 +24705,28 @@ demucs.separate.main()
                           .replace("\n  MIDI Editor —",
                                    "\n\n  MIDI Editor —"))
             entry(card, normalized, color=color)
+
+        wn_entry(wn_latest,
+              "v4.4.62-1 - Library tools (preview / right-click / delete) + Auto Fetch Audio + GitHub updates\n"
+              "  Changes/Additions:\n"
+              "  - MIDI Editor: a new cyan 'Auto Fetch Audio' button (above\n"
+              "    Play/Stop) finds the Drums stem and Full Mix for the loaded\n"
+              "    MIDI's song - from your Stem Splitter and YouTube output folders\n"
+              "    and next to the MIDI - and fills the Drums and Full Mix fields\n"
+              "    for you. It never touches Stem 3 or Stem 4.\n"
+              "  - Downloaded Songs library: each song now has a Play/Pause button\n"
+              "    that plays the WHOLE song (no time limit) so you can listen\n"
+              "    before splitting or converting; it stops when you leave the tab.\n"
+              "  - Right-click any song in the library for a menu: Rename (the\n"
+              "    library label), Open file location, or Send to Stem Splitter.\n"
+              "  - Each song has a red Delete button that asks whether to remove it\n"
+              "    from the list only or delete the file from disk (permanent),\n"
+              "    with a 'don't show again' option.\n"
+              "  - The FLAC/WAV badge is now cyan instead of gray, so it reads as\n"
+              "    'this is the format' rather than looking like it's missing.\n"
+              "  - Check for Updates now checks GitHub: if a newer version is out\n"
+              "    it can open the download page, or (running from source) download\n"
+              "    and replace just the one file for you.\n")
 
         wn_entry(wn_latest,
               "v4.4.61-1 - YouTube to FLAC: Send to Stem Splitter + Downloaded Songs library\n"
@@ -27567,7 +28229,9 @@ demucs.separate.main()
               "    the list persists between sessions.\n"
               "  - The Stem Splitter now warns before re-splitting a song you've\n"
               "    already split, so you don't overwrite stems by accident (with\n"
-              "    a 'don't show this again' option).")
+              "    a 'don't show this again' option).\n"
+              "  - (v4.4.62-1) Each song has a Play/Pause button that previews the\n"
+              "    whole track (no time limit); it stops when you leave this tab.")
         warn(s,
              "Only download content you have the legal right to use.\n"
              "Downloading copyrighted audio without permission may violate YouTube's\n"

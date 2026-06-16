@@ -46,7 +46,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.4.61-1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.4.62-1`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -351,6 +351,26 @@ source and compiling a standalone `.exe`.
 ---
 
 ## Changelog
+
+### ParaKit v4.4.62-1 — Library tools, MIDI-Editor Auto Fetch Audio & GitHub updates — 2026-06-16
+- **New — MIDI Editor "Auto Fetch Audio".** A cyan button above Play/Stop finds the Drums stem and
+  Full Mix for the loaded MIDI's song — from your Stem Splitter and YouTube output folders (and next
+  to the MIDI) — and fills the Drums and Full Mix fields for you. It never touches Stem 3 or Stem 4.
+- **New — full-song preview in the Downloaded Songs library.** Each song has a Play/Pause button that
+  plays the whole track (no time limit) so you can listen before splitting or converting; it stops
+  automatically when you leave the YouTube → FLAC tab.
+- **New — right-click menu on library songs.** Rename (the library label), Open file location, or
+  Send to Stem Splitter.
+- **New — Delete button per song.** Asks whether to remove it from the list only or permanently
+  delete the file from disk, with a "don't show this again" option.
+- **New — tooltips** on the library Send button ("Sends this song to the Stem Splitter") and Open
+  Stems ("Opens your folder containing your drum stems").
+- **Changed — the FLAC/WAV badge is now cyan** instead of gray, so it reads as the song's format
+  rather than looking like something is missing.
+- **Changed — larger YouTube thumbnail preview** with a cyan border, so it fills the space better.
+- **Changed — Check for Updates now uses GitHub.** It reads this README's "Version in this release"
+  line; if a newer version is out it can open GitHub to download just the updated file, or (when
+  running from source) download and replace that one file for you. No whole-repo clone needed.
 
 ### ParaKit v4.4.61-1 — YouTube → FLAC: Send-to-Stem + Downloaded Songs library — 2026-06-15
 - **New — "Send to Stem Splitter →" button.** After a download finishes, one click loads that
