@@ -16,6 +16,14 @@ There are two ways: stop it **before** the chart generates (recommended), or cle
 4. Make sure your **Detection Engine** (Spectral / ML / Hybrid) and **Genre** are set to the best
    match for the song, then press **Convert**.
 
+Steps 1–2 — open **Advanced / Debug → Note Deduplication Gap** and tick **Enable per-instrument dedup gaps**:
+
+<img src="../screenshots/kick-dedup-enable.png" width="760" alt="Audio to MIDI - Advanced / Debug - Note Deduplication Gap, with the 'Enable per-instrument dedup gaps' checkbox highlighted">
+
+Step 3 — set the **Kick** gap to about **50–65 ms** (leave the others at their defaults):
+
+<img src="../screenshots/kick-dedup-kick-slider.png" width="380" alt="Per-instrument dedup gap sliders with the Kick gap set to about 60 ms">
+
 The kicks come out de-bunched from the start — no cleanup needed.
 
 ### Fix it after the chart is already generated
