@@ -48,7 +48,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.4.64-1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.4.64.1-1`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -356,6 +356,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.4.64.1-1**<br>2026-06-16 | <ul><li>**Coloured Play/Pause buttons** in the Downloaded Songs library — a filled **purple** Play (matching the app's purple buttons) and **pink/magenta** Pause (matching the logo), for better visibility.</li><li>**Badge tooltips** — hovering the FLAC/WAV, STEMS, or MIDI badge now tells you whether that file exists (✔) or wasn't found (✖).</li></ul> |
 | **v4.4.64-1**<br>2026-06-16 | <ul><li>**YouTube → FLAC layout** — the Downloaded Songs library and the activity log swapped sides: the **library is now on the left**, the log on the right, so the library sits more directly in your line of sight.</li></ul> |
 | **v4.4.63-1**<br>2026-06-16 | <ul><li>**Bigger album-art preview** in the Asset Manager — the Auto-Fetch-Metadata cover preview is now a 240px square (was 120) so the fetched art is easy to see. Display-only; the art applied to the Song Creator is unchanged.</li><li>**Auto Fetch Audio button restyled** (MIDI Editor) — now a purple button (matching Play/Stop) with a cyan border.</li></ul> |
 | **v4.4.62-1**<br>2026-06-16 | <ul><li>**Auto Fetch Audio (MIDI Editor):** a button above Play/Stop finds the Drums stem + Full Mix for the loaded MIDI's song (from your Stem Splitter / YouTube output folders and next to the MIDI) and fills those fields.</li><li>**Full-song preview** in the Downloaded Songs library: a Play/Pause button lets you listen to the whole track (no time limit), stops automatically when you leave the tab.</li><li>**Right-click menu** on library songs — Rename, Open file location, Send to Stem Splitter.</li><li>**Delete button** per song — remove from the list only, or permanently delete the file, with a "don't show again" option.</li><li>**Tooltips** on the Send and Open Stems buttons.</li><li>**Cyan FLAC/WAV badge** (was gray, which read like "missing").</li><li>**Larger thumbnail preview** with a cyan border.</li><li>**Automatic update check** on startup that reads this README's version line and tells you when a newer version is out; the Check for Updates button stays as an on-demand fallback.</li></ul> |

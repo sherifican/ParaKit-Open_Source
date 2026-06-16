@@ -88,6 +88,12 @@ YT_ART_CACHE_DIR    = os.path.join(os.path.expanduser("~"), ".parakit_yt_art_cac
 import threading as _threading
 YT_LIBRARY_LOCK     = _threading.Lock()
 
+# v4.4.65 — library Play/Pause chip colours (owner): filled chip, white text.
+# Purple "▶ Play" matches the app's purple buttons (#7c3aed); pink "⏸ Pause"
+# matches the magenta in the ParaKit logo wordmark (sampled #bd02c1).
+YT_PLAY_CHIP_BG  = "#7c3aed"   # ▶ Play  — app purple
+YT_PAUSE_CHIP_BG = "#bd02c1"   # ⏸ Pause — logo magenta/pink
+
 
 def _read_config_file(path):
     """Return a parsed dict from `path`, or None if missing / unreadable / not a dict.
@@ -5331,7 +5337,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.64-1"
+    VERSION = "4.4.64.1-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -22067,7 +22073,9 @@ demucs.separate.main()
                 continue
             try:
                 playing = (getattr(r, "_yt_path", None) == cur and state == "playing")
-                chip.configure(text="⏸  Pause" if playing else "▶  Play")
+                _bg = YT_PAUSE_CHIP_BG if playing else YT_PLAY_CHIP_BG
+                chip.configure(text="⏸  Pause" if playing else "▶  Play",
+                               bg=_bg, highlightbackground=_bg, highlightcolor=_bg)
             except Exception:
                 pass
 
@@ -22757,6 +22765,20 @@ demucs.separate.main()
                      highlightthickness=1, highlightbackground=border,
                      highlightcolor=border)
         b.pack(side=tk.LEFT, padx=2)
+        # v4.4.64.1-1 — hover tooltip per badge, reflecting its present/absent
+        # state (present = ✔; grayed-out/absent = "<name> file not found ✖").
+        # Attached here (before _yt_lib_row's _bind_recursive, which uses add="+")
+        # so the tooltip's <Enter>/<Leave> coexist with the row-hover bindings.
+        if neutral:
+            _tip = "Audio file exists ✔" if present else f"{text} file not found ✖"
+        elif text == "STEMS":
+            _tip = "Split drum stems exist ✔" if present else "STEMS file not found ✖"
+        elif text == "MIDI":
+            _tip = "MIDI file exists ✔" if present else "MIDI file not found ✖"
+        else:
+            _tip = None
+        if _tip:
+            self._add_tooltip(b, _tip)
         if row is not None:
             row._yt_color_targets.append(b)
         return b
@@ -22851,14 +22873,19 @@ demucs.separate.main()
         # hazard. padx=8/pady=4 + a 1px border give a ~28px tappable chip; the
         # chip bg tracks the row band (in _yt_color_targets) so the band stays
         # continuous. "Open Stems" only when a split exists.
-        def _mk_chip(text, fg, cmd, col, border="#4a4a6b"):
-            chip = tk.Label(row, text=text, bg=rest_bg, fg=fg,
+        def _mk_chip(text, fg, cmd, col, border="#4a4a6b", bg=None, track=True):
+            # bg=None → chip rides the row band (added to _yt_color_targets so the
+            # band stays continuous on hover). A filled chip (e.g. the purple/pink
+            # Play/Pause button) passes its own bg + track=False so the row-hover
+            # recolor never repaints over its fill.
+            chip = tk.Label(row, text=text, bg=(rest_bg if bg is None else bg), fg=fg,
                             font=("Segoe UI", 9, "bold"), cursor="hand2",
                             padx=8, pady=4, bd=0, highlightthickness=1,
                             highlightbackground=border, highlightcolor=border)
             chip.bind("<Button-1>", lambda _e, p=path: cmd(p))
             chip.grid(row=0, column=col, padx=(0, 4), sticky="e")
-            row._yt_color_targets.append(chip)
+            if track:
+                row._yt_color_targets.append(chip)
             return chip
 
         # v4.4.62-1 — Delete chip (red), at col 3 right next to the badges, with a
@@ -22879,11 +22906,16 @@ demucs.separate.main()
         # Full-song play/pause preview, to the RIGHT of Open Stems (col 9). Glyph
         # reflects the live preview state so it stays correct across library
         # refreshes; stored on the row so _yt_preview_update_chips can flip it.
+        # Filled brand-colour chip (owner): PURPLE "▶ Play" matches the app's
+        # purple buttons, PINK/magenta "⏸ Pause" matches the logo. White text,
+        # bg set directly (track=False) so the row-hover recolor leaves it alone.
         _playing = (path == getattr(self, "_yt_preview_path", None)
                     and getattr(self, "_yt_preview_state", None) == "playing")
+        _play_bg = YT_PAUSE_CHIP_BG if _playing else YT_PLAY_CHIP_BG
         row._yt_play_chip = _mk_chip(
             "⏸  Pause" if _playing else "▶  Play",
-            "#58a6ff", self._yt_preview_toggle, 9)
+            "#ffffff", self._yt_preview_toggle, 9,
+            border=_play_bg, bg=_play_bg, track=False)
 
         sep = tk.Frame(parent, bg="#222238", height=1)
         sep.pack(fill=tk.X)
@@ -24707,6 +24739,17 @@ demucs.separate.main()
                           .replace("\n  MIDI Editor —",
                                    "\n\n  MIDI Editor —"))
             entry(card, normalized, color=color)
+
+        wn_entry(wn_latest,
+              "v4.4.64.1-1 - YouTube to FLAC library: coloured Play/Pause + badge tooltips\n"
+              "  Changes/Additions:\n"
+              "  - The per-song Play/Pause button in the Downloaded Songs library is\n"
+              "    now a filled button - PURPLE for Play (matching the app's purple\n"
+              "    buttons) and PINK/magenta for Pause (matching the ParaKit logo) -\n"
+              "    for better visibility.\n"
+              "  - Hover tooltips on the FLAC/WAV, STEMS, and MIDI badges: they read\n"
+              "    'Audio file exists', 'Split drum stems exist', or 'MIDI file\n"
+              "    exists' when present, or '<name> file not found' when grayed out.\n")
 
         wn_entry(wn_latest,
               "v4.4.64-1 - YouTube to FLAC: Downloaded Songs library and activity log swapped sides\n"
