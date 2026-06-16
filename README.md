@@ -2,6 +2,8 @@
 
 **An all-in-one drum-charting tool for [Paradiddle](https://www.paradiddleapp.com/) (`.rlrr`), with Clone Hero (`.chart`) support.**
 
+`Check the bottom of the page for the Change/fix log`
+
 `Note: the compiled .exe version is a little bit behind the .py version at the moment (4.4.52), I've seen a LOT more engagement
 with the .py version so that's what I'm more actively supporting, I will periodically update the .exe version when enough changes
 pile up or there are significant fixes. I will also compile the v5 rebiuld when it's finished for those who want it.`
