@@ -14,11 +14,11 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 > Until then just be aware that until I remove this disclaimer, the link below for the homepage may be down. Sorry folks.
 > If you really wanted the .exe version, I'm sorry, but I reccomend the .py version anyways, its newer.
 
-`.exe DOWNLOAD: [LimeWire Bundle Link](https://limewire.com/d/UV9Zm#DHqxKgEtmn)
+`.exe DOWNLOAD: [LimeWire Bundle Link](https://limewire.com/d/UV9Zm#DHqxKgEtmn)`
 
-`Jarredou Model / Requirements Link: [LimWire Jarredou/Req Bundle](https://limewire.com/d/HrcqC#lS73gPUpJa)
+`Jarredou Model / Requirements Link: [LimWire Jarredou/Req Bundle](https://limewire.com/d/HrcqC#lS73gPUpJa)`
 
-` [ParaKit Official Homepage](https://parakit.builtonweb.com/)
+` [ParaKit Official Homepage](https://parakit.builtonweb.com/)`
 
 `README FOR .EXE VERSION:
 ` https://github.com/sherifican/ParaKit---Releases
