@@ -42,8 +42,11 @@ problem — kicks doubled up where there should be one (bottom **Kick** lane):
 
 **2. Select the kicks** — hold **Shift + Left-click + drag** to rubber-band-select them.
 
-**3. Open Dedup** (the button in the toolbar above the chart), tick **Selected notes only**, set the
-**Gap** slider to **~50–65 ms**, and press **Apply**.
+**3. Open Dedup** — it's on the toolbar above the chart (between **Paste** and **Repeat**):
+
+<img src="../screenshots/kick-after-dedup-button.png" width="900" alt="MIDI Editor toolbar with the Dedup button circled, between the Paste and Repeat buttons">
+
+Then tick **Selected notes only**, set the **Gap** slider to **~50–65 ms**, and press **Apply**.
 
 <img src="../screenshots/kick-after-dedup-dialog.png" width="900" alt="The Dedup dialog with 'Selected notes only' ticked and the Gap slider at about 62 ms">
 
