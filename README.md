@@ -20,7 +20,7 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 >**Jarredou Model / Requirements Link:** [LimWire Jarredou/Req Bundle](https://limewire.com/d/HrcqC#lS73gPUpJa)
 
->ParaKit Official Homepage ***(CURRENTLY BROKEN)***
+>ParaKit Official Homepage ***(WEBSITE CURRENTLY BROKEN)***
 
 >**README FOR .EXE VERSION:** (https://github.com/sherifican/ParaKit---Releases)
 
