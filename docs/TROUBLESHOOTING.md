@@ -1,5 +1,34 @@
 # Troubleshooting
 
+## Kicks grouped together after Audio to MIDI
+
+The Audio → MIDI detector sometimes places several **kick** (bass-drum) notes almost on top of
+each other — a little cluster where there should be one kick. It's harmless and quick to fix.
+There are two ways: stop it **before** the chart generates (recommended), or clean it up **after**.
+
+### Fix it before converting (recommended)
+1. On the **Audio → MIDI** tab, open **Advanced / Debug → Note Deduplication Gap**.
+2. Tick **"Enable per-instrument dedup gaps"** — this overrides the single global gap with one
+   slider per drum.
+3. Set the **Kick** slider to about **50–65 ms**. That's the sweet spot for the vast majority of
+   songs across most genres. (Leave the other instruments at their defaults unless you have a
+   reason to change them.)
+4. Make sure your **Detection Engine** (Spectral / ML / Hybrid) and **Genre** are set to the best
+   match for the song, then press **Convert**.
+
+The kicks come out de-bunched from the start — no cleanup needed.
+
+### Fix it after the chart is already generated
+If you already converted and see the clustered kicks, fix them in the MIDI Editor:
+1. Zoom all the way out on the chart.
+2. Hold **Shift + Left-click + drag** to rubber-band-select all the kicks.
+3. Press the **Dedup** button in the toolbar above the chart and set its slider to **~50–65 ms**.
+
+Either way removes the layered extra kicks while leaving your correct kick placements nearly
+untouched.
+
+---
+
 ## "Python was not found" / wrong Python version
 ParaKit needs **Python 3.12** specifically. Check what you have:
 ```

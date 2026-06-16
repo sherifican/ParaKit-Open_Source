@@ -13271,9 +13271,18 @@ demucs.separate.main()
         # fields — never Stem 3/4.
         af_row = ttk.Frame(playback_col)
         af_row.pack(fill=tk.X, pady=(0, 3))
-        self.me_auto_fetch_btn = ttk.Button(
-            af_row, text="Auto Fetch Audio", style="Fetch.TButton",
-            width=18, command=self._me_auto_fetch_audio)
+        # v4.4.62-1 — a plain tk.Button (NOT ttk) so the cyan actually renders:
+        # the ttkbootstrap theme forces every ttk.Button to the purple button
+        # language, so a custom `Fetch.TButton` background was ignored (it showed
+        # purple). tk.Button honors bg/fg directly → genuine cyan, which also
+        # makes it stand out from the purple buttons as intended.
+        self.me_auto_fetch_btn = tk.Button(
+            af_row, text="Auto Fetch Audio",
+            command=self._me_auto_fetch_audio,
+            bg="#0aa5a5", fg="#ffffff",
+            activebackground="#0fc4c4", activeforeground="#ffffff",
+            font=("Segoe UI", 9, "bold"), relief="raised", bd=1,
+            cursor="hand2", width=18, padx=6, pady=3, highlightthickness=0)
         self.me_auto_fetch_btn.pack(side=tk.LEFT)
         self._add_tooltip(
             self.me_auto_fetch_btn,
@@ -24730,9 +24739,10 @@ demucs.separate.main()
               "  - The FLAC/WAV badge is now cyan instead of gray, so it reads as\n"
               "    'this is the format' rather than looking like it's missing.\n"
               "  - ParaKit now checks GitHub for updates AUTOMATICALLY on startup\n"
-              "    (and via Check for Updates): if a newer version is out it can\n"
-              "    open the download page, or (running from source) download and\n"
-              "    replace just the one file for you.\n")
+              "    and tells you if a newer version is available. The Check for\n"
+              "    Updates button stays as a fallback / on-demand check. If newer,\n"
+              "    it can open the download page or (running from source) download\n"
+              "    and replace just the one file for you.\n")
 
         wn_entry(wn_latest,
               "v4.4.61-1 - YouTube to FLAC: Send to Stem Splitter + Downloaded Songs library\n"
