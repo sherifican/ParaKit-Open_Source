@@ -22,6 +22,7 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 >Putting this up at the top so its found easier.
 >
 >KNOWN QUIRK WITH THE AUDIO TO MIDI CHART GENERATION:
+>
 >sometimes the chart generator will group kicks together and they will be almost on top of each other,
 >annoying yes, BUT very easily fixed!
 
