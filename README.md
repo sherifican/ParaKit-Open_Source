@@ -354,113 +354,17 @@ source and compiling a standalone `.exe`.
 
 ## Changelog
 
-### ParaKit v4.4.62-1 — Library tools, MIDI-Editor Auto Fetch Audio & GitHub updates — 2026-06-16
-- **New — MIDI Editor "Auto Fetch Audio".** A cyan button above Play/Stop finds the Drums stem and
-  Full Mix for the loaded MIDI's song — from your Stem Splitter and YouTube output folders (and next
-  to the MIDI) — and fills the Drums and Full Mix fields for you. It never touches Stem 3 or Stem 4.
-- **New — full-song preview in the Downloaded Songs library.** Each song has a Play/Pause button that
-  plays the whole track (no time limit) so you can listen before splitting or converting; it stops
-  automatically when you leave the YouTube → FLAC tab.
-- **New — right-click menu on library songs.** Rename (the library label), Open file location, or
-  Send to Stem Splitter.
-- **New — Delete button per song.** Asks whether to remove it from the list only or permanently
-  delete the file from disk, with a "don't show this again" option.
-- **New — tooltips** on the library Send button ("Sends this song to the Stem Splitter") and Open
-  Stems ("Opens your folder containing your drum stems").
-- **Changed — the FLAC/WAV badge is now cyan** instead of gray, so it reads as the song's format
-  rather than looking like something is missing.
-- **Changed — larger YouTube thumbnail preview** with a cyan border, so it fills the space better.
-- **New — automatic update check.** ParaKit now checks GitHub for a newer version **on startup** and
-  lets you know if one is available (it reads this README's "Version in this release" line). The
-  **Check for Updates** button stays as a fallback / for an on-demand check whenever you feel like
-  it, without opening GitHub. If a newer version is out you can open GitHub to download just the
-  updated file, or (when running from source) have ParaKit download and replace that one file for
-  you — no whole-repo clone needed.
-
-### ParaKit v4.4.61-1 — YouTube → FLAC: Send-to-Stem + Downloaded Songs library — 2026-06-15
-- **New — "Send to Stem Splitter →" button.** After a download finishes, one click loads that
-  file into the Stem Splitter and switches to it — no manual browsing.
-- **New — Downloaded Songs library** beside the activity log. Every download is listed with its
-  cover art, title, format, duration, and badges showing whether it has been split into **STEMS**
-  and converted to **MIDI** yet. Click a song to Send it to the Stem Splitter, or Open its stems
-  folder once it has been split. Search + sort; the list persists between sessions and includes
-  downloads you already had.
-- **Layout reorg.** Format, JS Runtime, and Cookies now sit in one band beside the thumbnail
-  preview, freeing vertical space so the activity log and the library can expand.
-- **New — re-split warning.** The Stem Splitter now warns before re-splitting a song you have
-  already split (with a "don't show this again" option), so you don't overwrite stems by accident.
-- **New — Audio → MIDI overwrite reminder.** A note now warns that converting a song whose MIDI
-  already exists silently overwrites the old MIDI file.
-
-### Preview Track v2 (Web Edition) — 2026-06-14
-- **Fixed — ⇪ Export now writes a real `.midi` file.** Export was saving the internal
-  `parakit-chart-v1` JSON as `parakit-chart.json` instead of a MIDI file. It now exports a
-  standard MIDI file (format-0 SMF via the shared MIDI writer) as `parakit-chart.midi`, so
-  exported charts open in any DAW / notation tool and round-trip with the MIDI editor. Import is
-  unchanged — it still accepts `.json`, `.mid` / `.midi`, and `.rlrr`.
-
-### Practice Mode v3 (Web Edition) — 2026-06-12
-- **Mute synth** toggle added to the in-play Live-settings dock (key **M**) — silences the
-  synthesized drum hits while playing a loaded song, so you hear the real audio. Off by default.
-- Kit Studio: the per-lane **Voice** control is renamed **Sound** for clarity.
-- **Mute drums on miss** (Paradiddle-style) — for songs with a separate drum stem, the real
-  drums now play as an audible guide (so loaded songs are heard in full, all stems layered) and
-  **drop out when you miss**, returning on your next hit. Prominent toggle — on the Setup card
-  and the in-play Live-settings dock (key **7**); on by default. Songs with a single combined
-  audio file are unaffected (it never mutes the backing).
-- **Fixed — "Kick as line":** removed a pink kick line that stayed stuck across the hit line the
-  whole time the mode was on; the kick bars still fall and land on the shared hit line.
-- **Fixed — drums volume slider:** the drums slider was inert while "you-drum" mode was on (the
-  default), so raising it to 90% changed nothing. It now adjusts the drum-stem level live, so
-  loaded drum stems are audible and controllable during play.
-- **Song info on the pre-play panel.** Clicking a song now shows, for the selected difficulty,
-  its **note count** plus an **audio-stem breakdown** — e.g. *"1 backing + 3 stems (3 drums)"* —
-  classifying each stem (drums, cymbals, bass, guitar, vocals, keys, other). It also flags that
-  stems route to the drums bus, so at a glance you can tell which songs ship **separate drum
-  stems** that "You drum" / "Mute drums on miss" will silence, versus songs whose drums are baked
-  into the backing mix (and so always play).
-- **Fixed — Setup card toggles were unclickable.** The switch knob (a decorative overlay) sat on
-  top of the hidden checkbox and swallowed every click, so Auto-kick / Square notes / Kick-as-line
-  / Beat-grid / Mute-drums-on-miss never responded. The knob is now click-transparent, so clicks
-  reach the checkbox and the toggles work (verified in-browser).
-- Library: the song list is **taller** so an expanded song's details no longer get cut off, and
-  the folder-picker fallback button (next to **Open songs folder…**) is relabeled **"Pick 1 song
-  via folder"** for clarity.
-- **Fixed — drum-stem audibility vs. mute-on-miss.** With **"Mute drums on miss" off**, the drum
-  stems now stay **audible at all times** — they were wrongly silenced by "You drum." Drum
-  audibility is now governed **only** by mute-on-miss: off = always audible; on = audible but
-  ducked during a miss. "You drum" now only controls whether *your own* hits make synth sounds.
-- **Compact lanes** — new toggle on the **Setup** card (and the in-play Live-settings dock, key
-  **8**) that pulls the lanes closer to centre for a less stretched, less full-width highway
-  (~65% of the normal width). Off by default.
-
-### Preview Track v2 (Web Edition) — 2026-06-12
-- **Hide notes past the hit line.** New toggle in Preview Settings (off by default) — hides
-  notes once they cross the hit line / playhead so only upcoming notes remain on screen, for
-  cleaner timing analysis. Leave it off for the default behavior (notes linger briefly past it).
-
-### v4.4.60-12
-- **MIDI Editor — alternate hi-hat MIDI notes now import correctly.** Hi-hat hits recorded with
-  alternate MIDI notes (**21 / 22 / 23 / 26**, used by some electronic kits) now import into the
-  **Hi-Hat lane** in the MIDI Editor — and export correctly to Clone Hero — instead of being
-  silently dropped. Standard hi-hat notes (42 / 44 / 46) already worked.
-
-### v4.4.59-12
-- **MIDI Editor — Velocity Lane colored by drum.** Each bar in the Velocity Lane is now drawn
-  in its drum's lane color (Hi-Hat cyan, Snare red, Kick pink, toms blue/green/purple, Crash
-  orange, Ride yellow) to match the piano roll, instead of one uniform color — so it's obvious
-  at a glance which drum each velocity belongs to. Selected bars stay white.
-
-### v4.4.58-12
-- **RTX 50-series (Blackwell) GPU acceleration for the Stem Splitter.** ParaKit now detects
-  whether your installed PyTorch was built for your GPU's architecture (sm_120) and uses CUDA
-  when it is, instead of always falling back to CPU. RTX 50-series cards need a **CUDA 12.8+
-  (`cu128`) PyTorch build**; if yours isn't built for your GPU, the split log reports which
-  architectures your PyTorch supports, so you know what to install. (This also fixes RTX
-  40-series cards that were previously running on CPU by mistake.)
-
-### v4.4.57.99-10
-- Initial public source release (GPLv3).
+| Version | Summary |
+|---|---|
+| **v4.4.62-1**<br>2026-06-16 | **Auto Fetch Audio (MIDI Editor):** a cyan button above Play/Stop finds the Drums stem + Full Mix for the loaded MIDI's song (from your Stem Splitter / YouTube output folders and next to the MIDI) and fills those fields — never Stem 3/4.<br>**Full-song preview** in the Downloaded Songs library: a Play/Pause button plays the whole track (no time limit) and stops when you leave the tab.<br>**Right-click menu** on library songs — Rename, Open file location, Send to Stem Splitter.<br>**Delete button** per song — remove from the list only, or permanently delete the file, with a "don't show again" option.<br>**Tooltips** on the Send and Open Stems buttons.<br>**Cyan FLAC/WAV badge** (was gray, which read like "missing").<br>**Larger thumbnail preview** with a cyan border.<br>**Automatic update check** on startup that reads this README's version line and tells you when a newer version is out; the Check for Updates button stays as an on-demand fallback. |
+| **v4.4.61-1**<br>2026-06-15 | **"Send to Stem Splitter" button** on the YouTube → FLAC tab sends the just-downloaded file straight into the Stem Splitter.<br>**Downloaded Songs library** beside the activity log — every download listed with cover art, title, format, duration, and STEMS/MIDI badges; click to Send or Open its stems; search + sort; persists between sessions.<br>**Layout reorg** — Format / JS Runtime / Cookies in one band beside the thumbnail so the log and library can expand.<br>**Re-split warning** before re-splitting an already-split song (with "don't show again").<br>**Audio → MIDI overwrite reminder** that converting a song whose MIDI already exists overwrites it. |
+| **Preview Track v2** (Web)<br>2026-06-14 | **Export now writes a real `.midi` file** (format-0 SMF) instead of the internal JSON, so exported charts open in any DAW / notation tool and round-trip with the MIDI editor. Import still accepts `.json`, `.mid` / `.midi`, and `.rlrr`. |
+| **Practice Mode v3** (Web)<br>2026-06-12 | **Mute synth** toggle (key M) silences the synth hits so you hear the real audio.<br>**Mute drums on miss** (Paradiddle-style) — real drums play as a guide and drop out when you miss (Setup card + key 7; on by default).<br>**Compact lanes** toggle (key 8) pulls the lanes to ~65% width.<br>**Song info on the pre-play panel** — note count + audio-stem breakdown per difficulty.<br>Kit Studio: per-lane **Voice** renamed **Sound**.<br>Taller song list so expanded details aren't cut off; folder-picker relabeled "Pick 1 song via folder".<br>**Fixes:** Setup-card toggles were unclickable (a decorative knob swallowed clicks); stuck pink "Kick as line"; inert drums-volume slider in you-drum mode; drum stems now stay audible unless mute-on-miss ducks them. |
+| **Preview Track v2** (Web)<br>2026-06-12 | **Hide notes past the hit line** — a new Preview Settings toggle (off by default) that hides notes once they cross the hit line, for cleaner timing analysis. |
+| **v4.4.60-12** | **MIDI Editor — alternate hi-hat notes import correctly.** Hi-hat hits on alternate MIDI notes (21/22/23/26, used by some electronic kits) now import into the Hi-Hat lane and export to Clone Hero instead of being dropped (standard 42/44/46 already worked). |
+| **v4.4.59-12** | **MIDI Editor — Velocity Lane colored by drum.** Each velocity bar is drawn in its drum's lane color (Hi-Hat cyan, Snare red, Kick pink, toms blue/green/purple, Crash orange, Ride yellow) to match the piano roll; selected bars stay white. |
+| **v4.4.58-12** | **RTX 50-series (Blackwell) GPU acceleration for the Stem Splitter.** ParaKit detects whether your PyTorch was built for your GPU (sm_120) and uses CUDA when it is, instead of always falling back to CPU. 50-series needs a CUDA 12.8+ (`cu128`) PyTorch build; the split log reports which architectures yours supports. (Also fixes RTX 40-series cards that were wrongly on CPU.) |
+| **v4.4.57.99-10** | Initial public source release (GPLv3). |
 
 ---
 
