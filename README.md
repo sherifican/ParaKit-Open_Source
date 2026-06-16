@@ -4,6 +4,8 @@
 
 `Check the bottom of the page for the Change/fix log`
 
+---
+
 >Note: the compiled .exe version is a little bit behind the .py version at the moment (4.4.52), I've seen a LOT more engagement
 with the .py version so that's what I'm more actively supporting, I will periodically update the .exe version when enough changes
 pile up or there are significant fixes. I will also compile the v5 rebiuld when it's finished for those who want it.
@@ -22,6 +24,8 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 >**README FOR .EXE VERSION:** (https://github.com/sherifican/ParaKit---Releases)
 
+---
+
 >**Putting this up at the top so its found easier.**
 >
 >**KNOWN QUIRK WITH THE AUDIO TO MIDI CHART GENERATION:**
@@ -39,6 +43,8 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 >leaving your correct kick note placements nearly untouched.
 >
 >**Prefer to stop it before the chart even generates?** [Click here](docs/TROUBLESHOOTING.md#kicks-grouped-together-after-audio-to-midi) for the alternate method — turn on per-instrument dedup gaps in the Audio → MIDI settings and the kicks come out clean on the first Convert.
+
+---
 
 Note: Both the Practice and Preview mode updates that are currently HTMLs will be folded into ParaKit propper in a future update,
 but for now the HTML/web versions function fine as a quick and easy substitute until then.
