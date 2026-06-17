@@ -25227,7 +25227,7 @@ demucs.separate.main()
               "    song and then Search for missing album art, it searches by\n"
               "    the new name.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.64.1-1 - YouTube to FLAC library: coloured Play/Pause + badge tooltips\n"
               "  Changes/Additions:\n"
               "  - The per-song Play/Pause button in the Downloaded Songs library is\n"
@@ -25238,7 +25238,7 @@ demucs.separate.main()
               "    'Audio file exists', 'Split drum stems exist', or 'MIDI file\n"
               "    exists' when present, or '<name> file not found' when grayed out.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.64-1 - YouTube to FLAC: Downloaded Songs library and activity log swapped sides\n"
               "  Changes/Additions:\n"
               "  - On the YouTube to FLAC tab, the Downloaded Songs library is now\n"
@@ -25246,7 +25246,7 @@ demucs.separate.main()
               "    other way round), so the library sits more directly in your\n"
               "    natural line of sight.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.63-1 - Asset Manager: bigger album-art preview + Auto Fetch button restyle\n"
               "  Changes/Additions:\n"
               "  - Asset Manager: the Auto-Fetch-Metadata album-art preview is now\n"
@@ -25256,7 +25256,7 @@ demucs.separate.main()
               "  - MIDI Editor: the 'Auto Fetch Audio' button is now purple (matching\n"
               "    Play/Stop) with a cyan border, instead of the previous cyan fill.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.62-1 - Library tools (preview / right-click / delete) + Auto Fetch Audio + GitHub updates\n"
               "  Changes/Additions:\n"
               "  - MIDI Editor: a new cyan 'Auto Fetch Audio' button (above\n"
@@ -25280,7 +25280,7 @@ demucs.separate.main()
               "    it can open the download page or (running from source) download\n"
               "    and replace just the one file for you.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.61-1 - YouTube to FLAC: Send to Stem Splitter + Downloaded Songs library\n"
               "  Changes/Additions:\n"
               "  - New \"Send to Stem Splitter\" button on the YouTube to FLAC\n"
@@ -25300,7 +25300,7 @@ demucs.separate.main()
               "  - Audio to MIDI now reminds you that converting a song whose\n"
               "    MIDI already exists overwrites the old MIDI file.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.60-12 - MIDI Editor: alternate hi-hat notes now import correctly\n"
               "  Changes/Additions:\n"
               "  - Hi-hat hits recorded with alternate MIDI notes (21/22/23/26,\n"
@@ -25309,7 +25309,7 @@ demucs.separate.main()
               "    instead of being silently dropped. Standard hi-hat notes\n"
               "    (42/44/46) already worked.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.59-12 - MIDI Editor: Velocity Lane colored by drum\n"
               "  Changes/Additions:\n"
               "  - In the MIDI Editor's Velocity Lane, each velocity bar is now\n"
@@ -25320,7 +25320,7 @@ demucs.separate.main()
               "    Makes it obvious at a glance which drum each velocity belongs\n"
               "    to.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.58-12 - RTX 50-series GPU support + Practice Mode v2 web app\n"
               "  Changes/Additions:\n"
               "  - Stem Splitter now supports GPU acceleration on NVIDIA\n"
@@ -25339,7 +25339,7 @@ demucs.separate.main()
               "    live scoring — essentially the final form of Practice Mode\n"
               "    v2. A matching update to this app's Practice tab will follow.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.57.99-10 - Snare-roll progress bar + green-to-cyan UI refresh\n"
               "  Changes/Additions:\n"
               "  - All conversion progress bars (Single Song, Stem Splitter,\n"
@@ -25378,7 +25378,7 @@ demucs.separate.main()
               "    styling to the dark-purple-outline / dark-gray-fill look\n"
               "    (an explicit keep from the parked alpha cycle).\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.57.6-6 - Preview/Practice: clearer .rlrr-vs-MIDI workflow\n"
               "  Changes/Additions:\n"
               "  - When you load a .rlrr file in the 'Source .rlrr:' field,\n"
