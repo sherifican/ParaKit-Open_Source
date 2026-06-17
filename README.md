@@ -48,6 +48,16 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 ---
 
+## Recent Changes
+
+*Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
+
+**v4.4.64-1**<br>2026-06-16
+
+<img src="screenshots/app-08-youtube-to-flac.png?v=20260616c" width="900" alt="YouTube → FLAC (redesigned layout)">
+
+---
+
 Note: Both the Practice and Preview mode updates that are currently HTMLs will be folded into ParaKit propper in a future update,
 but for now the HTML/web versions function fine as a quick and easy substitute until then.
 
@@ -162,7 +172,7 @@ in Firefox before I had fixed the MIDI config, see below for details, although C
 <img src="screenshots/app-07-sheet-music-to-midi.png" width="900" alt="Sheet Music to MIDI">
 
 ### 8 · YouTube → FLAC
-<img src="screenshots/app-08-youtube-to-flac.png?v=20260616b" width="900" alt="YouTube to FLAC">
+<img src="screenshots/app-08-youtube-to-flac.png?v=20260616c" width="900" alt="YouTube to FLAC">
 
 ### 9 · Asset Manager
 <img src="screenshots/app-09-asset-manager.png?v=20260616" width="900" alt="Asset Manager">
