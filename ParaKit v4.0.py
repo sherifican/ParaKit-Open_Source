@@ -5337,7 +5337,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.66-1"
+    VERSION = "4.4.67-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -6519,7 +6519,16 @@ class MidiToRlrrApp:
     # Tab 1 — Single Song Creator
     # =========================================================================
     def _on_close(self):
-        """Save window geometry before closing."""
+        """Save window geometry before closing. If the MIDI Editor has unsaved
+        edits, prompt the user first (Save & Quit / Exit Without Saving / Cancel)."""
+        if getattr(self, "me_edit_started", False) and getattr(self, "me_notes", None):
+            choice = self._me_prompt_unsaved_on_quit()
+            if choice == "cancel":
+                return                       # abort the close — keep the session open
+            if choice == "save":
+                if not self._me_save(show_message=False):
+                    return                   # user backed out of the save dialog → don't quit
+            # choice == "discard" → fall through and quit without saving
         save_config({"window_geometry": self.root.geometry()})
         try:
             self._midi_close()
@@ -17137,6 +17146,51 @@ demucs.separate.main()
 
         return self._me_write_midi(path, show_message=show_message)
 
+    def _me_prompt_unsaved_on_quit(self):
+        """Modal 3-way prompt shown when quitting with unsaved MIDI Editor edits.
+        Returns 'save', 'discard', or 'cancel'. Closing the dialog (X or Escape)
+        = 'cancel' — the safe default so an accidental close never loses work."""
+        popup = tk.Toplevel(self.root)
+        popup.title("Unsaved MIDI Changes")
+        popup.configure(bg="#222222")
+        popup.resizable(False, False)
+        popup.transient(self.root)
+        popup.grab_set()
+
+        result = ["cancel"]
+        def _choose(val):
+            result[0] = val
+            popup.destroy()
+        popup.protocol("WM_DELETE_WINDOW", lambda: _choose("cancel"))
+        popup.bind("<Escape>", lambda e: _choose("cancel"))
+
+        frame = ttk.Frame(popup, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="You still have unsaved changes on your open MIDI chart!",
+                  font=("Segoe UI", 11, "bold"), wraplength=440).pack(anchor="w", pady=(0, 6))
+        ttk.Label(frame, text="What would you like to do before quitting ParaKit?",
+                  style="Sub.TLabel", wraplength=440).pack(anchor="w", pady=(0, 16))
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(side=tk.BOTTOM, anchor="e")
+        ttk.Button(btn_row, text="Cancel / Don't Quit",
+                   command=lambda: _choose("cancel")).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="Exit Without Saving",
+                   command=lambda: _choose("discard")).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="Save MIDI & Quit ParaKit", style="Convert.TButton",
+                   command=lambda: _choose("save")).pack(side=tk.LEFT)
+
+        # Size to content (robust against DPI scaling + label length) then center.
+        popup.update_idletasks()
+        pw = max(480, popup.winfo_reqwidth())
+        ph = max(190, popup.winfo_reqheight())
+        px = self.root.winfo_x() + (self.root.winfo_width()  - pw) // 2
+        py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
+        popup.geometry(f"{pw}x{ph}+{px}+{py}")
+
+        popup.wait_window()
+        return result[0]
+
     def _me_send_to_creator(self):
         """Load the current MIDI path into the Single Song Creator."""
         path = self._me_last_midi or self.me_midi_var.get().strip()
@@ -25112,6 +25166,18 @@ demucs.separate.main()
                           .replace("\n  MIDI Editor —",
                                    "\n\n  MIDI Editor —"))
             entry(card, normalized, color=color)
+
+        wn_entry(wn_latest,
+              "v4.4.67-1 - Unsaved-changes warning when you close with a MIDI open\n"
+              "  Changes/Additions:\n"
+              "  - If you try to close ParaKit while the MIDI Editor still has\n"
+              "    unsaved edits, a prompt now appears - 'You still have unsaved\n"
+              "    changes on your open MIDI chart!' - with three choices: Save\n"
+              "    MIDI & Quit, Exit Without Saving, or Cancel / Don't Quit.\n"
+              "    Closing that prompt (the X or the Esc key) keeps the app open,\n"
+              "    so an accidental close never loses your work. Saving from the\n"
+              "    prompt opens the normal Save dialog; backing out of it cancels\n"
+              "    the quit too.\n")
 
         wn_entry(wn_latest,
               "v4.4.66-1 - Kicks de-bunch automatically + Auto Fetch Audio fixes\n"
