@@ -37,6 +37,9 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 >Step 2. Hold Shift + Left Click + drag to multi select all the kicks
 >
 >Step 3. Press the "Dedup x" button in the tool hot bar above your chart and set the ms slider to ~50 - 65ms
+>
+>However, be aware that on particularly fast double bass songs this fix largley does not apply, since it will treat a
+>large portion of your correct kicks as duplicates and remove them.  Working on a work-around to this issue.
 
 >Done! this gets rid of the layered extra kicks while leaving your correct kick note placements nearly untouched.
 >
