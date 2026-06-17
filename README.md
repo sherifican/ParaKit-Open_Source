@@ -54,6 +54,12 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 **v4.4.64-1**<br>2026-06-16
 
+Youtube ---> FLAC 
+
++ Song List / Library
++ Swapped with original log's slot
++ Reorganized settings into panels
+
 <img src="screenshots/app-08-youtube-to-flac.png?v=20260616c" width="900" alt="YouTube → FLAC (redesigned layout)">
 
 ---
