@@ -54,7 +54,7 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 **v4.4.64-1**<br>2026-06-16
 
-Youtube ---> FLAC 
+YouTube ---> FLAC 
 
 + Song List / Library
 + Swapped with original log's slot
