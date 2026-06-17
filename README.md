@@ -10,11 +10,7 @@
 with the .py version so that's what I'm more actively supporting, I will periodically update the .exe version when enough changes
 pile up or there are significant fixes. I will also compile the v5 rebiuld when it's finished for those who want it.
 
-> The old LimeWire links will *EXPIRE* if they are not downloaded at *least* once per 7 days so I made a website to host the .exe versions:
-> 
->NOTE: I've been wrestling with my stupid website with the html going on and offline over and over. I'm still working on a fix.
-> Until then just be aware that until I remove this disclaimer, the link below for the homepage may be down. Sorry folks.
-> If you really wanted the .exe version, I'm sorry, but I reccomend the .py version anyways, its newer.
+> The old LimeWire links will *EXPIRE* if they are not downloaded at *least* once per 7 days so I made a website to host the .exe versions, but it's having some issues server side. So I'll try to have a fix and the site up before the LW expires.
 
 >**.exe DOWNLOAD:** [LimeWire Bundle Link](https://limewire.com/d/UV9Zm#DHqxKgEtmn)
 
