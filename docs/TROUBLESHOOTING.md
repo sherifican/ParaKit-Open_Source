@@ -2,17 +2,26 @@
 
 ## Kicks grouped together after Audio to MIDI
 
-The Audio → MIDI detector sometimes places several **kick** (bass-drum) notes almost on top of
-each other — a little cluster where there should be one kick. It's harmless and quick to fix.
-There are two ways: stop it **before** the chart generates (recommended), or clean it up **after**.
+The Audio → MIDI detector can place several **kick** (bass-drum) notes almost on top of each other —
+a little cluster where there should be one kick. **As of v4.4.66-1, ParaKit de-duplicates kicks at
+55 ms by default, so this is handled automatically for the vast majority of songs.** You'll mainly
+run into it now if you've **lowered the kick dedup gap** — some fast-kick songs need a smaller gap to
+keep their correct kicks, but set it too small and the clustering creeps back in. Either way it's
+quick to handle: tune the gap **before** the chart generates, or clean it up **after**.
 
-### Fix it before converting (recommended)
+### Tune the kick gap before converting
+Kicks already de-duplicate at **55 ms by default**, so most songs need nothing here. Use this when a
+specific song needs a different gap:
 1. On the **Audio → MIDI** tab, open **Advanced / Debug → Note Deduplication Gap**.
 2. Tick **"Enable per-instrument dedup gaps"** — this overrides the single global gap with one
    slider per drum.
-3. Set the **Kick** slider to about **50–65 ms**. That's the sweet spot for the vast majority of
-   songs across most genres. (Leave the other instruments at their defaults unless you have a
-   reason to change them.)
+3. Set the **Kick** slider for the situation:
+   - **Correct kicks being deleted** (fast double-kicks, blast beats)? **Lower** it to about
+     **20–30 ms** or less.
+   - **Kicks still clustering** (for example after you'd already lowered it)? Raise it back toward
+     **50–65 ms**.
+
+   (Leave the other instruments at their defaults unless you have a reason to change them.)
 4. Make sure your **Detection Engine** (Spectral / ML / Hybrid) and **Genre** are set to the best
    match for the song, then press **Convert**.
 
@@ -20,7 +29,7 @@ Steps 1–2 — open **Advanced / Debug → Note Deduplication Gap** and tick **
 
 <img src="../screenshots/kick-dedup-enable.png" width="760" alt="Audio to MIDI - Advanced / Debug - Note Deduplication Gap, with the 'Enable per-instrument dedup gaps' checkbox highlighted">
 
-Step 3 — set the **Kick** gap to about **50–65 ms** (leave the others at their defaults):
+Step 3 — set the **Kick** gap for the song (shown here at ~60 ms; **lower** it to 20–30 ms if correct kicks are being deleted):
 
 <img src="../screenshots/kick-dedup-kick-slider.png" width="380" alt="Per-instrument dedup gap sliders with the Kick gap set to about 60 ms">
 

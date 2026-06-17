@@ -5337,7 +5337,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.65-1"
+    VERSION = "4.4.66-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -10061,9 +10061,13 @@ demucs.separate.main()
         # ── Initialize dedup stored values early so restore block can reference them ──
         # (full UI is built later in the Advanced/Debug section — this just creates the dicts)
         self._a2m_dedup_presets = {
-            "spectral": {"global": 30.0, "kick": 40.0, "snare": 30.0, "hihat": 20.0,
+            # Kick default raised 40 -> 55 ms (owner 2026-06-16): bass-drum onsets
+            # cluster more than other drums, so a wider kick gap de-bunches kicks
+            # out of the box. Mirrored in the per-instrument list + the default
+            # (per-instrument OFF) path in _a2m_start.
+            "spectral": {"global": 30.0, "kick": 55.0, "snare": 30.0, "hihat": 20.0,
                          "crash": 30.0,  "ride": 30.0,  "floor_tom": 30.0, "tom": 30.0},
-            "hybrid":   {"global": 30.0, "kick": 40.0, "snare": 20.0, "hihat": 12.0,
+            "hybrid":   {"global": 30.0, "kick": 55.0, "snare": 20.0, "hihat": 12.0,
                          "crash": 25.0,  "ride": 20.0,  "floor_tom": 20.0, "tom": 20.0},
         }
         self._a2m_dedup_stored = {
@@ -10135,6 +10139,15 @@ demucs.separate.main()
 
         ttk.Label(adv_frame, text="Note Deduplication Gap",
                   font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 4))
+
+        # Owner 2026-06-16: kick now defaults to a 55 ms dedup gap. Tell users how
+        # to back it off when the detector is overzealous on legitimate fast kicks.
+        ttk.Label(adv_frame,
+                  text=("Kicks dedup at 55 ms by default. If the detector is overzealous "
+                        "and deletes correct kick notes, enable per-instrument gaps below "
+                        "and lower the Kick gap to 20–30 ms (or lower)."),
+                  style="Sub.TLabel", foreground="#9a9ab0",
+                  wraplength=560, justify="left").pack(anchor="w", pady=(0, 6))
 
         # Dedup mode stored values — presets already initialized above (before restore block)
         # _a2m_dedup_presets and _a2m_dedup_stored are set early and may already contain
@@ -10275,7 +10288,7 @@ demucs.separate.main()
         self._a2m_global_dedup_lbl = global_dedup_lbl
 
         per_instruments = [
-            ("kick",      "Kick",       30.0),
+            ("kick",      "Kick",       55.0),
             ("snare",     "Snare",      30.0),
             ("hihat",     "Hi-Hat",     20.0),
             ("crash",     "Crash",      30.0),
@@ -11255,6 +11268,13 @@ demucs.separate.main()
         else:
             dedup_gaps = {k: global_gap for k in
                           ["kick","snare","hihat","crash","ride","floor_tom","tom"]}
+            # Kick keeps its own (wider) default even when per-instrument gaps are
+            # OFF (owner 2026-06-16): bass-drum onsets cluster more than other
+            # drums, so a 55 ms floor de-bunches kicks out of the box for everyone
+            # (independent of any saved per-instrument value). max() so raising the
+            # global gap above 55 still applies; to LOWER the kick gap, enable
+            # per-instrument gaps and drop the Kick slider (see the note in the UI).
+            dedup_gaps["kick"] = max(global_gap, 0.055)
         save_config({
             "a2m_dedup_spectral": dict(self._a2m_dedup_stored["spectral"]),
             "a2m_dedup_hybrid":   dict(self._a2m_dedup_stored["hybrid"]),
@@ -18851,8 +18871,16 @@ demucs.separate.main()
                 "name to find the matching Drums and Full Mix audio.")
             return
 
-        # Core song name: strip the A2M ' MIDI' decoration, then a '_drums' tail.
+        # Core song name. ORDER MATTERS (owner-reported 2026-06-16): ParaKit's
+        # "Save a copy" appends " (editor copy)" AFTER the "_drums MIDI" tag, so
+        # that decoration has to come off FIRST — otherwise the endswith() suffix
+        # strip below never sees the tag at the end and the whole
+        # "..._drums MIDI (editor copy)" tail is carried into the search (which is
+        # why "Bury The Light (Funky Remix)_drums MIDI (editor copy)" found nothing).
+        import re as _re
         song = os.path.splitext(os.path.basename(midi_path))[0]
+        song = _re.sub(r'\s*\((?:editor\s+copy|copy)(?:\s*\d+)?\)', ' ', song, flags=_re.I)
+        song = _re.sub(r'\s{2,}', ' ', song).strip()
         for suffix in (" drums MIDI", "_drums MIDI", " MIDI", "_MIDI"):
             if song.endswith(suffix):
                 song = song[: -len(suffix)]
@@ -18867,6 +18895,36 @@ demucs.separate.main()
                 "Auto Fetch Audio",
                 "Couldn't read a song name from the MIDI file name.")
             return
+
+        # Ordered name variants, most-specific first (owner 2026-06-16). Every
+        # candidate path below is built EXACTLY from one variant, so matching is
+        # tiered, not fuzzy:
+        #   1. the exact name  -> finds version-specific audio ("Song (Rock Version)")
+        #      so different versions/covers never collide;
+        #   2. minus ParaKit's own "(editor copy)" decoration -> an edited copy of
+        #      a versioned song still resolves to "Song (Rock Version)";
+        #   3. minus ALL (...)/[...] groups -> base song, last-resort fallback for
+        #      "(editor copy)", "(Official Video)", etc.
+        # A stripped fallback can only match a file literally named that base —
+        # it can never grab the wrong version. ("(editor copy)" is already gone by
+        # here — stripped above — but _strip_editor_copy stays as belt-and-braces.)
+        def _strip_editor_copy(nm):
+            nm = _re.sub(r'\s*\((?:editor\s+copy|copy)(?:\s*\d+)?\)', ' ', nm, flags=_re.I)
+            return _re.sub(r'\s{2,}', ' ', nm).strip()
+        def _strip_all_brackets(nm):
+            nm = _re.sub(r'\([^()]*\)', ' ', nm)
+            nm = _re.sub(r'\[[^\[\]]*\]', ' ', nm)
+            nm = _re.sub(r'\s{2,}', ' ', nm)
+            # Collapse separator runs left when a bracket sat between dashes,
+            # e.g. "Song - (xyz cover) - Live" -> "Song - Live" (not "Song - - Live").
+            # Only runs of 2+ separators collapse, so hyphenated words (Lo-Fi) are safe.
+            nm = _re.sub(r'(?:\s*[-–—·]\s*){2,}', ' - ', nm)
+            return _re.sub(r'\s{2,}', ' ', nm).strip(' -_·–—')
+        song_variants = []
+        for _v in (song, _strip_editor_copy(song), _strip_all_brackets(song)):
+            _v = (_v or "").strip()
+            if _v and _v not in song_variants:
+                song_variants.append(_v)
 
         cfg = load_config()
         midi_dir = os.path.dirname(midi_path)
@@ -18897,16 +18955,20 @@ demucs.separate.main()
             return None
 
         # Drums stem — Stem-Splitter outputs (standard + ISO) and next to the MIDI.
+        # All variant-1 (exact-name) candidates are checked before any variant-2/3
+        # (stripped) ones, so a version-specific file always wins over a base-name
+        # fallback.
         drums_cands = []
-        for base in (stem_base, iso_base):
-            if not base:
-                continue
-            for folder in ("DRUMS ONLY", "LOSSLESS SPLITS (DRUMS)", "DRUMS"):
+        for s in song_variants:
+            for base in (stem_base, iso_base):
+                if not base:
+                    continue
+                for folder in ("DRUMS ONLY", "LOSSLESS SPLITS (DRUMS)", "DRUMS"):
+                    for ext in EXTS:
+                        drums_cands.append(os.path.join(base, folder, f"{s}_drums{ext}"))
+            for d in (midi_dir, parent_dir):
                 for ext in EXTS:
-                    drums_cands.append(os.path.join(base, folder, f"{song}_drums{ext}"))
-        for d in (midi_dir, parent_dir):
-            for ext in EXTS:
-                drums_cands.append(os.path.join(d, f"{song}_drums{ext}"))
+                    drums_cands.append(os.path.join(d, f"{s}_drums{ext}"))
         drums = _first_file(drums_cands)
 
         # Full mix — the complete original song (NOT the backing). YouTube output
@@ -18916,12 +18978,13 @@ demucs.separate.main()
         except Exception:
             drums_norm = None
         mix_cands = []
-        if yt_base:
-            for ext in EXTS:
-                mix_cands.append(os.path.join(yt_base, f"{song}{ext}"))
-        for d in (midi_dir, parent_dir):
-            for ext in EXTS:
-                mix_cands.append(os.path.join(d, f"{song}{ext}"))
+        for s in song_variants:
+            if yt_base:
+                for ext in EXTS:
+                    mix_cands.append(os.path.join(yt_base, f"{s}{ext}"))
+            for d in (midi_dir, parent_dir):
+                for ext in EXTS:
+                    mix_cands.append(os.path.join(d, f"{s}{ext}"))
         mix = None
         for c in mix_cands:
             try:
@@ -18932,6 +18995,85 @@ demucs.separate.main()
                     break
             except Exception:
                 pass
+
+        # ── Fallback: bounded recursive scan of the project home (owner 2026-06-16).
+        # Runs ONLY when the exact-path lookups above missed a field — handles users
+        # who scatter stems/mixes into subfolders. Root = the deepest folder that
+        # holds the MIDI AND your configured output folders ("project home"), else
+        # the MIDI's own folder. Variant priority is preserved (a version-specific
+        # file still beats a base-name one), and it never grabs the drums stem as
+        # the mix. Hard-bounded by dir-count + depth so it can't walk the whole
+        # drive or hang the UI; only triggers on a miss.
+        used_recursive = False
+        if (not drums) or (not mix):
+            roots = []
+            known = [os.path.abspath(d) for d in (midi_dir, parent_dir, stem_base,
+                     iso_base, yt_base) if d and os.path.isdir(d)]
+            try:
+                if len(known) >= 2:
+                    home = os.path.commonpath(known)
+                    if (home and os.path.isdir(home)
+                            and os.path.splitdrive(home)[1].strip("\\/").count(os.sep) >= 1):
+                        roots.append(home)
+            except Exception:
+                pass
+            for d in (os.path.abspath(midi_dir), os.path.abspath(parent_dir)):
+                if os.path.isdir(d):
+                    roots.append(d)
+            # Keep only the broadest roots (drop any nested inside another).
+            uniq = []
+            for r in sorted(set(roots), key=len):
+                if not any(r == p or r.startswith(p + os.sep) for p in uniq):
+                    uniq.append(r)
+
+            drums_targets, mix_targets = {}, {}
+            for idx, s in enumerate(song_variants):
+                for ext in EXTS:
+                    drums_targets.setdefault((s + "_drums" + ext).lower(), idx)
+                    mix_targets.setdefault((s + ext).lower(), idx)
+            best_drums, best_mix = {}, {}
+            SKIP = {"$recycle.bin", "system volume information", "node_modules",
+                    ".git", "__pycache__"}
+            seen = 0
+            for root in uniq:
+                base_depth = root.rstrip("\\/").count(os.sep)
+                stop = False
+                for dp, dns, fns in os.walk(root):
+                    seen += 1
+                    if seen > 4000:           # hard dir-count cap
+                        stop = True
+                        break
+                    if dp.count(os.sep) - base_depth > 5:   # depth cap
+                        dns[:] = []
+                        continue
+                    dns[:] = [d for d in dns
+                              if not d.startswith(".") and d.lower() not in SKIP]
+                    for fn in fns:
+                        low = fn.lower()
+                        if (not drums) and low in drums_targets:
+                            best_drums.setdefault(drums_targets[low], os.path.join(dp, fn))
+                        if (not mix) and low in mix_targets:
+                            best_mix.setdefault(mix_targets[low], os.path.join(dp, fn))
+                if stop:
+                    break
+            if (not drums) and best_drums:
+                drums = best_drums[min(best_drums)]
+                used_recursive = True
+                try:
+                    drums_norm = os.path.normcase(os.path.abspath(drums))
+                except Exception:
+                    pass
+            if (not mix) and best_mix:
+                for idx in sorted(best_mix):
+                    cand = best_mix[idx]
+                    try:
+                        if drums_norm and os.path.normcase(os.path.abspath(cand)) == drums_norm:
+                            continue
+                    except Exception:
+                        pass
+                    mix = cand
+                    used_recursive = True
+                    break
 
         # Populate ONLY the Drums (me_audio_var) + Full Mix (me_audio_mix_var).
         found = []
@@ -18950,6 +19092,9 @@ demucs.separate.main()
                 note = "\n\n(No Drums stem found — Browse for it if you have one.)"
             elif not mix:
                 note = "\n\n(No Full Mix found — Browse for it if you have one.)"
+            if used_recursive:
+                note += ("\n\n(Found by scanning your project folder — some files "
+                         "were outside the usual output folders.)")
             messagebox.showinfo(
                 "Auto Fetch Audio",
                 f"Auto-filled audio for '{song}':\n\n" + "\n".join(found) + note)
@@ -18959,8 +19104,11 @@ demucs.separate.main()
                 f"Couldn't find Drums or Full Mix audio for '{song}'.\n\n"
                 "Auto Fetch checks your Stem Splitter output folder "
                 "(DRUMS ONLY / LOSSLESS SPLITS (DRUMS) / DRUMS), your YouTube "
-                "output folder, and the folder next to the MIDI. If the files "
-                "are elsewhere, use the Browse buttons.")
+                "output folder, the folder next to the MIDI, and (as a fallback) "
+                "your wider project folder. If the files are elsewhere, use the "
+                "Browse buttons.\n\n"
+                "Tip: Auto Fetch matches by file name — the Drums stem should be "
+                f"named '{song}_drums.<ext>' and the Full Mix '{song}.<ext>'.")
 
     def _me_loop_set_in(self):
         """Set loop in point to current playback position."""
@@ -23122,6 +23270,10 @@ demucs.separate.main()
         # iTunes. Fall back to the raw name if stripping leaves nothing.
         cleaned = _re.sub(r"\([^()]*\)", " ", raw_name)
         cleaned = _re.sub(r"\[[^\[\]]*\]", " ", cleaned)
+        cleaned = _re.sub(r"\s{2,}", " ", cleaned)
+        # Collapse separator runs left when a bracket sat between dashes
+        # ("Song - (Live) - 2024" -> "Song - 2024", not "Song - - 2024").
+        cleaned = _re.sub(r"(?:\s*[-–—·]\s*){2,}", " - ", cleaned)
         cleaned = _re.sub(r"\s{2,}", " ", cleaned).strip(" -_·–—")
         query = cleaned or raw_name.strip()
         if not query:
@@ -24960,6 +25112,25 @@ demucs.separate.main()
                           .replace("\n  MIDI Editor —",
                                    "\n\n  MIDI Editor —"))
             entry(card, normalized, color=color)
+
+        wn_entry(wn_latest,
+              "v4.4.66-1 - Kicks de-bunch automatically + Auto Fetch Audio fixes\n"
+              "  Changes/Additions:\n"
+              "  - Audio to MIDI now de-duplicates KICK notes at 55 ms by default,\n"
+              "    so doubled / clustered kicks come out clean on the first Convert\n"
+              "    with no tuning needed. If a fast-kick song loses correct kicks,\n"
+              "    lower the Kick gap (Advanced / Debug > Note Deduplication Gap >\n"
+              "    Enable per-instrument gaps) to 20-30 ms or lower.\n"
+              "  - MIDI Editor 'Auto Fetch Audio' now finds the audio for a MIDI\n"
+              "    you saved as an '(editor copy)', and when the song name has a\n"
+              "    version / cover in it - like '(Rock Version)' or '(R&B cover)' -\n"
+              "    it matches that exact version instead of grabbing the wrong one.\n"
+              "  - Auto Fetch Audio now also scans your wider project folder as a\n"
+              "    fallback, so stems and mixes you've scattered into sub-folders\n"
+              "    are still found when they aren't in the usual output folders.\n"
+              "  Bug Fixes:\n"
+              "  - 'Auto Fetch Audio' returned nothing for MIDIs whose name ended\n"
+              "    in '(editor copy)' (it searched with that tag still attached).\n")
 
         wn_entry(wn_latest,
               "v4.4.65-1 - Library 'Search for missing album art' + progress-bar scroll fix\n"

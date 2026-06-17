@@ -26,8 +26,11 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 >
 >**KNOWN QUIRK WITH THE AUDIO TO MIDI CHART GENERATION:**
 >
->Sometimes the chart generator will group kicks together and they will be almost on top of each other,
->annoying yes, BUT very easily fixed!
+>**As of v4.4.66-1, ParaKit de-duplicates kicks at 55 ms by default**, so kicks that used to group
+>together now come out clean on the first Convert for the vast majority of songs — nothing to do.
+>You'll mainly see grouped kicks now if you've **lowered the kick dedup gap** for a fast-kick song
+>(needed to keep its correct kicks — but set it too small and the grouping creeps back in). If that
+>happens, it's still quick to fix:
 
 >Step 1. Zoom out all the way on your chart in the midi editor tab
 >
@@ -35,10 +38,9 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 >
 >Step 3. Press the "Dedup x" button in the tool hot bar above your chart and set the ms slider to ~50 - 65ms
 
->Done! this will fix the vast majority of instances when this happens, getting rid of the layered extra kicks while
->leaving your correct kick note placements nearly untouched.
+>Done! this gets rid of the layered extra kicks while leaving your correct kick note placements nearly untouched.
 >
->**Prefer to stop it before the chart even generates?** [Click here](docs/TROUBLESHOOTING.md#kicks-grouped-together-after-audio-to-midi) for the alternate method — turn on per-instrument dedup gaps in the Audio → MIDI settings and the kicks come out clean on the first Convert.
+>**Want to tune it at convert time instead?** [Click here](docs/TROUBLESHOOTING.md#kicks-grouped-together-after-audio-to-midi) for the per-instrument dedup gap settings in the Audio → MIDI tab.
 
 ---
 
@@ -53,7 +55,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.4.65-1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.4.66-1`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -361,6 +363,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.4.66-1**<br>2026-06-16 | <ul><li>**Kicks de-bunch automatically** — Audio → MIDI now de-duplicates kick notes at **55 ms by default**, so doubled / clustered kicks come out clean on the first Convert with no tuning. (Fast-kick song losing correct kicks? Lower the per-instrument **Kick** gap to 20–30 ms.)</li><li>**Auto Fetch Audio** (MIDI Editor) now finds the audio for a MIDI saved as an "(editor copy)", matches the exact version/cover when the name has one (e.g. "(Rock Version)", "(R&B cover)") instead of grabbing the wrong one, and falls back to scanning your wider project folder for stems/mixes kept in sub-folders.</li></ul> |
 | **v4.4.65-1**<br>2026-06-16 | <ul><li>**Search for missing album art** — a new right-click menu item on each song in the Downloaded Songs library looks up cover art on iTunes by the song's library name and embeds the first match straight into the file. Re-run any time to overwrite the current art (e.g. after renaming the song). The search drops anything in `(parentheses)` or `[brackets]` first (usually "Official Video" / "Lyric Video" noise). Works on FLAC, MP3, OGG, and M4A.</li><li>**Fixed:** the YouTube tab's progress bar could be scrolled out of view with the mouse wheel.</li><li>**Fixed:** "Permission denied" when searching album art on a song you had just played via the library's Play button — the preview player now releases the file before the art re-embed.</li><li>**Fixed:** the art search now uses the song's renamed library name, not the original file name — so right-click → Rename, then Search now does what you'd expect.</li></ul> |
 | **v4.4.64.1-1**<br>2026-06-16 | <ul><li>**Coloured Play/Pause buttons** in the Downloaded Songs library — a filled **purple** Play (matching the app's purple buttons) and **pink/magenta** Pause (matching the logo), for better visibility.</li><li>**Badge tooltips** — hovering the FLAC/WAV, STEMS, or MIDI badge now tells you whether that file exists (✔) or wasn't found (✖).</li></ul> |
 | **v4.4.64-1**<br>2026-06-16 | <ul><li>**YouTube → FLAC layout** — the Downloaded Songs library and the activity log swapped sides: the **library is now on the left**, the log on the right, so the library sits more directly in your line of sight.</li></ul> |
