@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ParaKit — Detection Research Notes</title>
+<script>
+  /* set theme before paint to avoid flash */
+  (function(){try{var t=localStorage.getItem('pk-theme');if(!t){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','light');}})();
+</script>
+<style>
+  :root{
+    --bg:#f6f7f9;--card:#ffffff;--ink:#1a1f2e;--muted:#5b6472;--line:#e3e7ee;
+    --teal:#0e7490;--green:#1d8a4e;--red:#c2362f;--amber:#b5790f;--blue:#2563c9;
+    --greenbg:#e7f5ed;--redbg:#fbeae9;--amberbg:#fbf2dd;--bluebg:#e8f0fc;--tealbg:#e4f1f4;
+    --th:#f0f2f7;--trackbg:#eef1f6;--codebg:#eef1f6;--codeline:#e0e4ec;
+    --cite-fg:#1c4ea0;--cite-line:#c4d8f6;--test-fg:#15663a;--test-line:#bfe4cd;
+    --navactive-bg:#f6f7f9;--navactive-fg:#1a1f2e;}
+  html[data-theme="dark"]{
+    --bg:#0f141b;--card:#1a2230;--ink:#e7ebf2;--muted:#9aa7b8;--line:#2b3543;
+    --teal:#3bb4cf;--green:#46c47e;--red:#ef6b63;--amber:#e0a93b;--blue:#5b9bf0;
+    --greenbg:#12301e;--redbg:#371b18;--amberbg:#322610;--bluebg:#142339;--tealbg:#0f2c33;
+    --th:#222c3a;--trackbg:#222c3a;--codebg:#222c3a;--codeline:#33404f;
+    --cite-fg:#8fb6f5;--cite-line:#27497b;--test-fg:#79d39e;--test-line:#2c5e40;
+    --navactive-bg:#0e7490;--navactive-fg:#ffffff;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.55;font-size:15px;padding:0 0 60px;transition:background .2s,color .2s}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 22px}
+  header.top{background:linear-gradient(135deg,#0b3a47,#0e7490);color:#fff;padding:30px 0 24px;border-bottom:4px solid #082a34}
+  .kicker{font-size:12.5px;letter-spacing:.09em;text-transform:uppercase;opacity:.85;font-weight:600}
+  header.top h1{font-size:26px;margin:8px 0 8px;line-height:1.18}
+  header.top p{margin:0;font-size:13.5px;opacity:.92;max-width:760px}
+  nav.tabs{position:sticky;top:0;z-index:5;background:#0b3a47;border-bottom:1px solid #082a34}
+  nav.tabs .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding-top:6px;padding-bottom:6px}
+  nav.tabs button{appearance:none;background:transparent;border:0;color:#cfe6ec;font:inherit;font-size:13px;font-weight:600;padding:8px 14px;border-radius:8px 8px 0 0;cursor:pointer;white-space:nowrap}
+  nav.tabs button:hover{background:rgba(255,255,255,.08);color:#fff}
+  nav.tabs button.on{background:var(--navactive-bg);color:var(--navactive-fg)}
+  nav.tabs .themebtn{margin-left:auto;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#eaf4f7;border-radius:20px;padding:5px 13px;font-size:12px;font-weight:600;cursor:pointer;border-radius:20px}
+  nav.tabs .themebtn:hover{background:rgba(255,255,255,.22);color:#fff}
+  .pane{display:none}.pane.on{display:block}
+  h2{font-size:20px;margin:30px 0 6px;padding-bottom:7px;border-bottom:2px solid var(--line)}
+  h2 .n{color:var(--teal);font-weight:800;margin-right:8px}
+  h3{font-size:15.5px;margin:20px 0 4px}
+  .sub{color:var(--muted);font-size:13.5px;margin:0 0 16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0;box-shadow:0 1px 2px rgba(20,25,40,.04)}
+  .lead{font-size:15.5px;line-height:1.6}
+  .hubcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px;margin-top:18px}
+  .hc{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:0;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 1px 3px rgba(20,25,40,.06)}
+  .hc .band{height:7px}
+  .hc .body{padding:17px 19px 19px;display:flex;flex-direction:column;flex:1}
+  .hc .tag{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--teal)}
+  .hc h3{margin:6px 0 7px;font-size:17px;line-height:1.25}
+  .hc p{margin:0 0 14px;font-size:13px;color:var(--muted);flex:1}
+  .hc .stats{display:flex;gap:14px;margin-bottom:14px;font-size:11.5px;color:var(--muted)}
+  .hc .stats b{display:block;font-size:16px;color:var(--ink);font-weight:800}
+  .hc button.go{appearance:none;align-self:flex-start;background:var(--teal);color:#fff;border:0;font:inherit;font-weight:700;font-size:13px;padding:8px 16px;border-radius:8px;cursor:pointer}
+  .hc button.go:hover{filter:brightness(1.08)}
+  .prov{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 7px;border-radius:4px;white-space:nowrap}
+  .m-cite{background:var(--bluebg);color:var(--cite-fg);border:1px solid var(--cite-line)}
+  .m-test{background:var(--greenbg);color:var(--test-fg);border:1px solid var(--test-line)}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;font-size:12px;color:var(--muted);margin:6px 0 2px}
+  table{border-collapse:collapse;width:100%;font-size:12.5px;margin:6px 0}
+  th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:var(--th);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.02em}
+  td.c,th.c{text-align:center}
+  td.mono{font-family:ui-monospace,monospace;text-align:center;font-weight:700}
+  .pos{color:var(--green);font-weight:700}.neg{color:var(--red);font-weight:700}.flat{color:var(--muted);font-weight:700}
+  tr.hl td{background:var(--greenbg)}
+  .hb{margin:9px 0}
+  .hb .lab{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px;gap:10px}
+  .hb .lab .nm{font-weight:600}
+  .hb .track{height:22px;background:var(--trackbg);border-radius:5px;overflow:hidden}
+  .hb .fill{height:100%;border-radius:5px;display:flex;align-items:center;justify-content:flex-end;color:#fff;font-size:10.5px;font-weight:700;padding-right:6px;min-width:34px}
+  .kf{display:grid;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));gap:12px;margin-top:6px}
+  .kf .item{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px 14px;border-top:4px solid var(--teal)}
+  .kf .item.good{border-top-color:var(--green)}.kf .item.warn{border-top-color:var(--amber)}.kf .item.info{border-top-color:var(--blue)}.kf .item.bad{border-top-color:var(--red)}
+  .kf .h{font-weight:700;font-size:13.5px;margin-bottom:3px}
+  .kf .d{font-size:12.5px;color:var(--muted)}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:11px}
+  .stat{background:var(--card);border:1px solid var(--line);border-top:4px solid var(--teal);border-radius:10px;padding:13px 14px}
+  .stat .v{font-size:21px;font-weight:800;color:var(--teal);line-height:1.08}
+  .stat .l{font-size:11.8px;color:var(--muted);margin-top:3px}
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.twocol{grid-template-columns:1fr}}
+  .triple{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+  @media(max-width:760px){.triple{grid-template-columns:1fr}}
+  .qbox{border:1px solid var(--line);border-radius:10px;padding:13px 15px;background:var(--card)}
+  .qbox h4{margin:0 0 8px;font-size:13.5px}
+  .qbox.do{border-top:4px solid var(--green)}.qbox.dont{border-top:4px solid var(--red)}
+  .callout{background:var(--tealbg);border:1px solid var(--line);border-left:6px solid var(--teal);border-radius:10px;padding:14px 17px;margin:14px 0}
+  .callout.green{background:var(--greenbg);border-left-color:var(--green)}
+  .callout.amber{background:var(--amberbg);border-left-color:var(--amber)}
+  .callout.red{background:var(--redbg);border-left-color:var(--red)}
+  .callout .t{font-weight:700;font-size:14px;margin-bottom:4px}
+  .pitfall{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-left:4px solid var(--red);border-radius:8px;padding:10px 12px;background:var(--card);font-size:12.6px;margin:8px 0}
+  .pitfall .nm{font-weight:800;color:var(--red);white-space:nowrap}
+  ul.tight{margin:6px 0;padding-left:19px}ul.tight li{margin:5px 0;font-size:13px}
+  ol.src{margin:6px 0;padding-left:22px}ol.src li{margin:6px 0;font-size:12.6px;line-height:1.5}
+  .soonbox{border:2px dashed var(--line);border-radius:14px;padding:26px;text-align:center;color:var(--muted);background:var(--card);margin:18px 0}
+  .foot{font-size:12px;color:var(--muted);margin-top:34px;border-top:1px solid var(--line);padding-top:16px}
+  code{font-family:ui-monospace,monospace;font-size:12px;background:var(--codebg);border:1px solid var(--codeline);border-radius:4px;padding:1px 5px}
+  a{color:var(--teal)}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="kicker">ParaKit · Open-Source Drum Charting · Research Notes</div>
+    <h1>How ParaKit's Drum Detection Works — Research Notes</h1>
+    <p>Background notes on how ParaKit turns audio into drum charts, and the research behind its detection
+    cleanup. Each report pairs published drum-transcription literature with hands-on testing on real songs.
+    Shared for anyone curious how the app works, or wanting to build on it for their own project. Point-in-time, June 2026.</p>
+  </div>
+</header>
+
+<nav class="tabs">
+  <div class="wrap">
+    <button data-tab="hub" class="on">Overview</button>
+    <button data-tab="overhaul">Detection Cleanup &amp; Results</button>
+    <button data-tab="mir">What the Field Knows</button>
+    <button data-tab="litreview">Literature Review &amp; Findings</button>
+    <button id="themeToggle" class="themebtn" type="button">🌙 Dark</button>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <!-- ============ HUB / OVERVIEW ============ -->
+  <section id="hub" class="pane on">
+    <div class="card" style="margin-top:18px">
+      <p class="lead" style="margin:0">ParaKit converts a song into a playable drum chart. The hardest part isn't
+      finding <em>that</em> a drum was hit — it's identifying <em>which</em> drum, especially among the cymbals
+      (hi-hat vs. crash vs. ride), which sound very similar. These notes cover what the academic field has
+      published about that problem and what I measured myself while improving ParaKit. I've kept the
+      experiments that <strong>didn't</strong> work in here too — they're part of the honest picture.</p>
+    </div>
+
+    <div class="hubcards">
+      <div class="hc">
+        <div class="band" style="background:var(--teal)"></div>
+        <div class="body">
+          <div class="tag">Findings &amp; Results</div>
+          <h3>Detection Cleanup &amp; Results</h3>
+          <p>How ParaKit cleans up the raw detector's output — a cymbal re-classifier and a false-kick remover —
+          and the measured before/after on a held-out set of songs.</p>
+          <div class="stats"><span><b>2</b>cleanup tools</span><span><b>456</b>songs tested</span><span><b>held-out</b>validation</span></div>
+          <button class="go" data-goto="overhaul">Read full report →</button>
+        </div>
+      </div>
+      <div class="hc">
+        <div class="band" style="background:var(--blue)"></div>
+        <div class="body">
+          <div class="tag">Background Knowledge</div>
+          <h3>What the Field Knows</h3>
+          <p>A plain-language tour of the published drum-transcription research: how cleanup works, the standard
+          evaluation metrics and their traps, the public datasets, and why cymbals are the hard part.</p>
+          <div class="stats"><span><b>20+</b>papers</span><span><b>cited</b>throughout</span><span><b>MIR</b>field survey</span></div>
+          <button class="go" data-goto="mir">Read full report →</button>
+        </div>
+      </div>
+      <div class="hc">
+        <div class="band" style="background:var(--green)"></div>
+        <div class="body">
+          <div class="tag">Deep Dive</div>
+          <h3>Literature Review &amp; Findings</h3>
+          <p>A close read of 31 drum-transcription papers cross-checked against my own testing — what the
+          literature confirms, the per-class cymbal numbers, and what I tried that didn't pan out.</p>
+          <div class="stats"><span><b>31</b>papers read</span><span><b>cited + tested</b></span><span><b>2026</b>current</span></div>
+          <button class="go" data-goto="litreview">Read full report →</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="legend" style="margin-top:18px">
+      <span><span class="prov m-cite">CITED</span> drawn from published literature (referenced inline + listed per report)</span>
+      <span><span class="prov m-test">TESTED</span> measured in my own experiments on real songs</span>
+    </div>
+    <p class="sub" style="margin-top:14px">These notes are a point-in-time snapshot (June 2026) and are not maintained as the app evolves.
+    Numbers reflect my specific test setup and are not universal guarantees. External findings are attributed to their original authors.</p>
+  </section>
+
+  <!-- ============ DETECTION CLEANUP & RESULTS ============ -->
+  <section id="overhaul" class="pane">
+    <h2><span class="n">A</span>Detection Cleanup &amp; Results</h2>
+    <p class="sub">How ParaKit refines the raw detector output, and the measured impact.</p>
+
+    <div class="card">
+      <p class="lead" style="margin-top:0"><b>In brief.</b> ParaKit's detector marks where drum hits occur and makes a first guess at the
+      instrument. A second <em>cleanup</em> stage runs on that output — <b>without changing the detector itself</b> — to fix the most common
+      mistakes: re-classifying cymbal hits (hi-hat / crash / ride) and removing "phantom" kick-drum hits that don't correspond to a real onset.
+      On a set of songs the detector had never seen, the cleanup measurably improved cymbal accuracy — notably recovering ride-cymbal detection
+      from nothing — with no loss on the instruments that were already accurate.</p>
+    </div>
+
+    <div class="callout amber"><div class="t">Status — June 2026</div>The cleanup described here is <b>validated in testing</b> and is being integrated into ParaKit in an upcoming update; this report documents the research behind it.</div>
+
+    <div class="legend"><span><span class="prov m-test">TESTED</span> my own measurements</span>
+      <span style="color:var(--ink)">All scores are <b>directional</b> — the reference charts are human-quantized (~50&nbsp;ms timing).</span></div>
+
+    <h3>1 · The idea: clean up the output, don't re-tune the detector</h3>
+    <p class="sub">Raw detection has reached the practical ceiling of the underlying model — many attempts to squeeze more out of the detector itself
+    gave nothing. The reachable wins come from a <b>supervised cleanup pass</b> that reads the detector's output (plus the audio) and corrects it.</p>
+    <div class="twocol">
+      <div class="qbox dont"><h4>✗ Re-tuning the detector — exhausted</h4>
+        <ul class="tight">
+          <li>threshold / gap sweeps for cymbals and toms — no safe gain (model-capacity ceiling)</li>
+          <li>a single global sensitivity knob — net-negative</li>
+          <li>per-instrument detection on separated stems — clearly worse</li>
+          <li>swapping in an alternate model — input-format mismatch</li>
+        </ul>
+      </div>
+      <div class="qbox do"><h4>✓ Post-detection cleanup — the lever</h4>
+        <ul class="tight">
+          <li>operates on the detector's <b>output + audio</b> — the core detector is untouched</li>
+          <li>supervised, onset-centered (≈40 spectral features), validated <b>out-of-fold</b> (train and test on different songs)</li>
+          <li>carries a <b>confidence gate</b> that protects instruments that are already accurate</li>
+          <li>two shapes: <b>relabel</b> a misclassified hit (keep its timing) · <b>remove</b> a genuine phantom</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout green"><div class="t">The core detector is never modified</div>The cleanup stage only <em>reads</em> the detector's output and the audio.
+    Onset detection, the conversion routine, tempo/offset estimation, and chart building are unchanged — verified by independent review. This keeps the
+    proven behavior intact while improving the parts that were weak.</div>
+
+    <h3>2 · The two cleanup tools</h3>
+    <div class="kf">
+      <div class="item good"><div class="h">Cymbal re-classifier <span class="prov m-test">TESTED</span></div><div class="d">Re-labels cymbal-lane hits among hi-hat / crash / ride. The detector has no dedicated "ride" class (it tends to call every cymbal a crash), so <b>ride can be recovered purely by re-classification</b>. A confidence gate is <b>lenient about moving hits into ride</b> (nothing to lose) but <b>strict on hi-hat↔crash swaps</b> (protecting what's already right).</div></div>
+      <div class="item good"><div class="h">False-kick remover <span class="prov m-test">TESTED</span></div><div class="d">Removes detected kick hits that match <b>no real kick</b> anywhere in the reference. It's deliberately conservative — it barely touches recall, because a missed real hit is worse than an extra one. "Phantom" kicks turn out to be cleanly separable from real ones.</div></div>
+      <div class="item info"><div class="h">They stack <span class="prov m-test">TESTED</span></div><div class="d">The two tools act on different instruments, so their gains are additive — no interference.</div></div>
+    </div>
+
+    <h3>3 · The measured result (held-out songs)</h3>
+    <p class="sub">Trained on one set of songs, scored on a separate set the models never saw. Accuracy = onset F-measure (higher is better).</p>
+    <div class="card">
+      <table>
+        <thead><tr><th>Instrument</th><th class="c">detector alone</th><th class="c">+ cleanup</th><th class="c">change</th></tr></thead>
+        <tbody>
+          <tr><td><b>overall (macro avg)</b></td><td class="mono">0.381</td><td class="mono">0.437</td><td class="mono pos">+0.056</td></tr>
+          <tr><td>hi-hat</td><td class="mono">0.495</td><td class="mono">0.578</td><td class="mono pos">+0.083</td></tr>
+          <tr><td>crash</td><td class="mono">0.474</td><td class="mono">0.534</td><td class="mono pos">+0.061</td></tr>
+          <tr class="hl"><td><b>ride</b></td><td class="mono">0.000</td><td class="mono">0.247</td><td class="mono pos">+0.247</td></tr>
+        </tbody>
+      </table>
+      <div style="font-size:11.8px;color:var(--muted);margin-top:6px">Every cymbal class improved; nothing regressed. Ride went from undetectable to usable — the single biggest gain.</div>
+    </div>
+
+    <h3>4 · Why ride was stuck — it was a <em>data</em> problem, not a method problem</h3>
+    <p class="sub">For a long time ride accuracy looked capped no matter what I changed. Growing the test corpus from ~100 to ~450 songs broke that ceiling
+    with the <b>same features</b> — proof the limit was the amount of training data, not the approach.</p>
+    <div class="card">
+      <div class="hb"><div class="lab"><span class="nm">ride accuracy — small corpus (~100 songs)</span><span>0.225</span></div><div class="track"><div class="fill" style="width:22.5%;background:var(--amber)">0.225</div></div></div>
+      <div class="hb"><div class="lab"><span class="nm">ride accuracy — larger corpus (~450 songs)</span><span>0.447</span></div><div class="track"><div class="fill" style="width:44.7%;background:var(--green)">0.447</div></div></div>
+      <div style="font-size:11.8px;color:var(--muted);margin-top:6px">Roughly doubled, same method. (Hi-hat and crash improved too, +0.03 and +0.07.) For your own use: a <b>clean, pre-separated drum stem</b> gives the best
+      results — but the cleanup still helps on a full mix.</div>
+    </div>
+
+    <h3>5 · What I tried that I <em>rejected</em></h3>
+    <div class="callout amber"><div class="t">Extending the re-classifier to every instrument: it backfired <span class="prov m-test">TESTED</span></div>
+      It's tempting to generalize "re-label, don't delete" to all instruments. I built an all-instrument version and it <b>hurt</b> — every strong lane
+      (kick, snare, hi-hat, crash) lost more than the tiny gain on the weak ones (overall −0.048). The strong instruments have everything to lose and little
+      to gain from being second-guessed. <b>Lesson: keep the re-classifier specialized to the cymbals, where the instruments are genuinely confusable.</b></div>
+
+    <h3>6 · How I kept it honest</h3>
+    <ul class="tight">
+      <li><b>Train/test split by song</b> — models are always scored on songs they never trained on, so the gains aren't a memorization artifact. (An early version had a subtle train-on-test leak; I caught and fixed it, and the numbers above are post-fix.)</li>
+      <li><b>Independent re-checks</b> — results were re-derived and adversarially reviewed before being trusted; one over-credit was caught and corrected.</li>
+      <li><b>Directional, not absolute</b> — reference charts are human-made and timed to ~50 ms, so treat these scores as direction-of-improvement, not lab-grade precision.</li>
+      <li><b>Scoring sanity-checked</b> — I verified the accuracy metric doesn't hand out "free credit" for simply not predicting a rare instrument.</li>
+    </ul>
+
+    <div class="callout"><div class="t">Bottom line</div>The cleanup pass — a specialized cymbal re-classifier plus a conservative false-kick remover, both running on the detector's
+    output — is a real, measured improvement (overall +0.056; ride recovered from zero) with no regression on the instruments that were already accurate.</div>
+
+    <h3>Sources &amp; tools</h3>
+    <p class="sub">This report is primarily my own measurement, built on the following open tools and reference datasets, and informed by the literature in the "What the Field Knows" tab.</p>
+    <ol class="src">
+      <li><b>ADTOF</b> — the large real-music dataset behind the detector's training lineage. Zehren, Alunno &amp; Bientinesi, ISMIR 2021. <a href="https://arxiv.org/abs/2111.11737">arXiv:2111.11737</a></li>
+      <li><b>mir_eval</b> — standard onset-matching &amp; F-measure scoring (Raffel et al., ISMIR 2014). <a href="https://github.com/mir-evaluation/mir_eval">github.com/mir-evaluation/mir_eval</a></li>
+      <li><b>madmom</b> — onset peak-picking conventions. <a href="https://github.com/CPJKU/madmom">github.com/CPJKU/madmom</a></li>
+      <li><b>Demucs (htdemucs)</b> — drum-stem separation for full-mix inputs. <a href="https://github.com/facebookresearch/demucs">github.com/facebookresearch/demucs</a></li>
+      <li><b>scikit-learn</b> — the random-forest classifier behind both cleanup tools. <a href="https://scikit-learn.org">scikit-learn.org</a></li>
+      <li><b>librosa</b> — onset-centered spectral feature extraction. <a href="https://librosa.org">librosa.org</a></li>
+      <li><b>Reference / evaluation datasets:</b> E-GMD, MDB-Drums, ENST-Drums, IDMT-SMT-Drums (full details, sizes &amp; licenses in the "What the Field Knows" tab). ADTOF and ENST-Drums are non-commercial / research-only and were used only as internal evaluation references.</li>
+    </ol>
+  </section>
+
+  <!-- ============ WHAT THE FIELD KNOWS ============ -->
+  <section id="mir" class="pane">
+    <h2><span class="n">B</span>What the Field Knows</h2>
+    <p class="sub">A plain-language survey of published drum-transcription research — the background that motivates ParaKit's design.</p>
+
+    <div class="card">
+      <p class="lead" style="margin-top:0"><b>In brief.</b> Automatic drum transcription is well studied. The standard pipeline is
+      <b>detect onsets → classify the instrument → clean up the result</b>, and the cleanup lives in the last two stages (peak-picking and
+      post-filtering) — so it can be improved without retraining the detector. Two themes recur across the literature: telling cymbals apart is the
+      dominant source of error, and the headline accuracy score (F-measure) doesn't fully capture how good the result <em>sounds</em>.</p>
+    </div>
+    <div class="legend"><span><span class="prov m-cite">CITED</span> all findings here are from published literature, listed at the bottom</span></div>
+
+    <div class="callout amber"><div class="t">The field's hardest-won lesson: the accuracy score is a leaky goal</div>
+      In a published listening test, adding note <b>velocity</b> (how hard each drum is hit) roughly <b>doubled</b> human preference (919 vs. 456 wins)
+      while the classification accuracy score barely moved. The takeaway researchers repeat: optimize for the score, but don't trust it alone — carry
+      secondary signals (spurious-hit count, per-instrument error, timing distribution).</div>
+
+    <h3>1 · The cleanup stage — turning raw output into a clean chart</h3>
+    <table>
+      <thead><tr><th>Technique</th><th>What it does</th><th>When it helps / fails</th></tr></thead>
+      <tbody>
+        <tr><td><b>Adaptive peak-picking</b></td><td>marks a hit only where the signal is a local maximum, exceeds a local average + threshold, and is far enough from the last hit</td><td>universal final step; too-low threshold catches false hits on decay tails, too-high misses ghost notes</td></tr>
+        <tr><td><b>Static low threshold</b></td><td>a fixed low cutoff on neural-network outputs (which are "spiky")</td><td>the common default for modern detectors; one global cutoff leaves accuracy on the table</td></tr>
+        <tr><td><b>Minimum-gap de-duplication</b></td><td>suppress a second hit within a short window of the first, per instrument</td><td>removes double-counts; set too wide it merges legitimate fast double-strokes</td></tr>
+        <tr><td><b>Per-instrument peak-picking</b></td><td>independent threshold + gap per instrument</td><td>cymbals and kick/snare have different statistics, so this reliably beats one global setting</td></tr>
+        <tr><td><b>Beat / grid quantization</b></td><td>snap hits to the nearest beat-grid position</td><td>cleans jitter — but depends entirely on beat-tracker accuracy, and a hard snap can <em>hurt</em> (see caution below)</td></tr>
+        <tr><td><b>Musical-pattern model</b></td><td>a model of typical drum patterns nudges output toward plausible rhythms</td><td>measurably helps (one study: +10.8 points) but needs a drum-score corpus to train on</td></tr>
+        <tr><td><b>Segment-and-classify re-classifier</b></td><td>a small classifier re-labels a hit's instrument once an onset already exists</td><td>the highest-value cleanup lever for cymbals — and the approach ParaKit uses</td></tr>
+      </tbody>
+    </table>
+    <div class="callout"><div class="t">The caution the literature keeps repeating</div>Naively hard-snapping every hit to a grid frequently makes the result
+    <em>worse</em> (unnatural). The systems that win fold the musical/structural prior in <b>softly</b> — using the grid as evidence to keep/drop and gently
+    nudge timing, not as a hammer.</div>
+
+    <h3>2 · The public datasets — size, license &amp; role</h3>
+    <p class="sub">If you're building on this, dataset licensing matters: some are usable in a shipped app, some are research-only.</p>
+    <table>
+      <thead><tr><th>Dataset</th><th class="c">Size</th><th>Type</th><th class="c">License</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td><b>E-GMD</b></td><td class="c">444 h, 43 kits</td><td>real e-kit → MIDI (first with velocity)</td><td class="c"><span class="prov m-test">CC BY 4.0</span></td><td>best for tuning at scale</td></tr>
+        <tr><td><b>ADTOF</b></td><td class="c">359 h, ~2,915 tracks</td><td>real polyphonic, auto-corrected charts</td><td class="c"><span class="prov" style="background:var(--redbg);color:var(--red);border:1px solid var(--line)">non-commercial</span></td><td>best realism at scale (research only)</td></tr>
+        <tr><td><b>MDB-Drums</b></td><td class="c">~0.4 h, 23 tracks</td><td>real polyphonic incl. vocals</td><td class="c"><span class="prov m-test">open (CC)</span></td><td>small high-quality test set, rich cymbal labels</td></tr>
+        <tr><td><b>ENST-Drums</b></td><td class="c">~1.0 h, 3 drummers</td><td>recorded acoustic + minus-one</td><td class="c"><span class="prov" style="background:var(--redbg);color:var(--red);border:1px solid var(--line)">non-commercial</span></td><td>real cymbal variety + stems (research only)</td></tr>
+        <tr><td><b>IDMT-SMT-Drums</b></td><td class="c">~2.2 h, 104 loops</td><td>drum-only (kick/snare/hi-hat)</td><td class="c"><span class="prov m-test">open</span></td><td>clean baseline + isolated stems</td></tr>
+        <tr><td><b>Slakh2100</b></td><td class="c">~145 h</td><td>synthesized from MIDI</td><td class="c"><span class="prov m-test">CC BY 4.0</span></td><td>huge synthetic set (domain gap vs real)</td></tr>
+        <tr><td><b>STAR Drums</b></td><td class="c">124.5 h</td><td>synthetic drums + recorded instruments</td><td class="c"><span class="prov m-cite">journal</span></td><td>recent, explicit 3/5/8/18-class maps</td></tr>
+      </tbody>
+    </table>
+    <div class="callout amber"><div class="t">License watch</div>E-GMD, Slakh2100, MDB-Drums and IDMT-SMT-Drums are open/CC and usable in a shipped app.
+    <b>ADTOF and ENST-Drums are non-commercial / research-only</b> — fine for internal evaluation, not for redistribution or commercial training claims.</div>
+
+    <h3>3 · Why cymbals are the hard part</h3>
+    <p class="sub">Hi-hat, crash and ride share overlapping, noisy high-frequency spectra, often sound at the same instant as other hits, and ring out with long
+    decays that smear into later frames. Across the literature, the cymbal classes score far below kick and snare — it's the dominant error source.</p>
+    <div class="stats">
+      <div class="stat" style="border-top-color:var(--green)"><div class="v">0.80–0.95</div><div class="l">accuracy for kick / snare / hi-hat on clean drum-only audio (the easy cases)</div></div>
+      <div class="stat" style="border-top-color:var(--amber)"><div class="v">much lower</div><div class="l">crash, ride and toms sit well below the easy three</div></div>
+      <div class="stat" style="border-top-color:var(--red)"><div class="v">crash 0.08</div><div class="l">in one published full-system study, crash was the hardest cymbal of all (ride 0.45, hi-hat 0.55–0.74)</div></div>
+    </div>
+    <p class="sub" style="margin-top:10px">A practical note for anyone comparing systems: most papers publish per-cymbal accuracy only as bar charts, not numeric tables — so a clean
+    crash-vs-ride comparison is genuinely scarce in the literature (a reporting-convention gap, covered in detail in the Literature Review tab).</p>
+
+    <h3>4 · How results are measured — and where the metrics mislead</h3>
+    <p class="sub">The standard metric is onset <b>F-measure</b> (a hit counts as correct if it lands within a tolerance window of a reference hit). Common pitfalls:</p>
+    <div class="pitfall"><span class="nm">1 · Double-counting</span><div>use one-to-one matching, or extra hits inflate the score.</div></div>
+    <div class="pitfall"><span class="nm">2 · Tolerance hides timing</span><div>a wide window (±50 ms) lets sloppy timing pass — also report a tight one (±25 ms).</div></div>
+    <div class="pitfall"><span class="nm">3 · Out-precising the labels</span><div>if reference timing is ~50 ms noisy, a stricter window measures noise, not skill.</div></div>
+    <div class="pitfall"><span class="nm">4 · Class imbalance</span><div>hi-hats dominate; a plain average hides cymbal failure — always report per-instrument + macro average.</div></div>
+    <div class="pitfall"><span class="nm">5 · Score ≠ perceptual quality</span><div>the headline number can stay flat while the result audibly improves (e.g. dynamics).</div></div>
+    <div class="callout"><div class="t">The three difficulty tiers</div>Drum-only audio is the easy lab case; adding other percussion is harder; a <b>full musical mix</b>
+    (drums + melodic instruments) is the realistic, hardest case — and the one a song-to-chart app actually faces.</div>
+
+    <h3>5 · Practical do / don't</h3>
+    <div class="twocol">
+      <div class="qbox do"><h4>✓ Do</h4>
+        <ul class="tight">
+          <li>de-duplicate per instrument, with a gap drawn from real fastest double-strokes</li>
+          <li>use per-instrument thresholds, not one global setting</li>
+          <li>use the beat grid to <em>adjudicate</em> keep-vs-drop and softly nudge timing</li>
+          <li>keep note velocity / dynamics — a cheap, large perceptual win</li>
+          <li>evaluate at both ±25 ms and ±50 ms, per-instrument + macro, ideally across datasets</li>
+        </ul>
+      </div>
+      <div class="qbox dont"><h4>✗ Don't</h4>
+        <ul class="tight">
+          <li>hard-snap every hit to a grid as a naive last step</li>
+          <li>tune against the F-measure alone</li>
+          <li>merge below the real double-stroke speed</li>
+          <li>trust synthetic-tuned thresholds on real, mic'd drums</li>
+          <li>report a single averaged number and call it done</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Sources &amp; references</h3>
+    <p class="sub">Every finding above is drawn from the following published work and datasets, attributed to their original authors.</p>
+    <ol class="src">
+      <li>Wu, Dittmar, Southall, Vogl, Widmer, Hockman, Müller &amp; Lerch — <b>"A Review of Automatic Drum Transcription"</b>, IEEE/ACM TASLP, 2018. <a href="https://doi.org/10.1109/TASLP.2018.2830113">doi:10.1109/TASLP.2018.2830113</a></li>
+      <li>Vogl, Widmer &amp; Knees — <b>"Towards Multi-Instrument Drum Transcription"</b>, DAFx 2018. <a href="https://arxiv.org/abs/1806.06676">arXiv:1806.06676</a></li>
+      <li>Vogl, Dorfer &amp; Knees — <b>"Recurrent Neural Networks for Drum Transcription"</b>, ISMIR 2016.</li>
+      <li>Cartwright &amp; Bello — <b>"Increasing Drum Transcription Vocabulary Using Data Synthesis"</b>, DAFx 2018 (source of the per-cymbal accuracy figures).</li>
+      <li>Callender, Hawthorne &amp; Engel — <b>"Improving Perceptual Quality of Drum Transcription with the Expanded Groove MIDI Dataset (E-GMD)"</b>, 2020 (the velocity listening-test result). <a href="https://arxiv.org/abs/2004.00188">arXiv:2004.00188</a></li>
+      <li>Ishizuka, Nishikimi, Nakamura &amp; Yoshii — <b>"Tatum-Level Drum Transcription … with Language Model-Based Regularized Training"</b>, 2020 (the +10.8-point pattern-model result). <a href="https://arxiv.org/abs/2010.03749">arXiv:2010.03749</a></li>
+      <li>Ishizuka, Nishikimi &amp; Yoshii — <b>"Global Structure-Aware Drum Transcription Based on Self-Attention"</b>, 2021. <a href="https://arxiv.org/abs/2105.05791">arXiv:2105.05791</a></li>
+      <li>Zehren, Alunno &amp; Bientinesi — <b>"ADTOF: A Large Dataset of Non-Synthetic Music for Automatic Drum Transcription"</b>, ISMIR 2021. <a href="https://arxiv.org/abs/2111.11737">arXiv:2111.11737</a></li>
+      <li>Zehren et al. — <b>"Analyzing and Reducing the Synthetic-to-Real Transfer Gap … Automatic Drum Transcription"</b>, 2024. <a href="https://arxiv.org/abs/2407.19823">arXiv:2407.19823</a></li>
+      <li><b>"Noise-to-Notes: Diffusion-based Generation and Refinement for Automatic Drum Transcription"</b>, 2025. <a href="https://arxiv.org/abs/2509.21739">arXiv:2509.21739</a></li>
+      <li><b>MIREX 2018 — Drum Transcription</b> task definition (evaluation tolerances).</li>
+      <li><b>madmom</b> audio-processing library (peak-picking). <a href="https://github.com/CPJKU/madmom">github.com/CPJKU/madmom</a> · <b>mir_eval</b> (onset scoring). <a href="https://github.com/mir-evaluation/mir_eval">github.com/mir-evaluation/mir_eval</a></li>
+      <li><b>Datasets:</b> <a href="https://magenta.tensorflow.org/datasets/e-gmd">E-GMD</a> · <a href="https://github.com/CarlSouthall/MDBDrums">MDB-Drums</a> · <a href="https://perso.telecom-paristech.fr/grichard/ENST-drums/">ENST-Drums</a> · <a href="https://www.idmt.fraunhofer.de/en/publications/datasets/drums.html">IDMT-SMT-Drums</a> · <a href="http://www.slakh.com/">Slakh2100</a> · <a href="https://doi.org/10.5334/tismir.244">STAR Drums</a>.</li>
+    </ol>
+  </section>
+
+  <!-- ============ LITERATURE REVIEW & FINDINGS ============ -->
+  <section id="litreview" class="pane">
+    <h2><span class="n">C</span>Literature Review &amp; Findings</h2>
+    <p class="sub">A close read of 31 drum-transcription papers, cross-checked against my own testing on real songs.</p>
+
+    <div class="card">
+      <p class="lead" style="margin-top:0">I reviewed the full set of papers connected to a key multi-instrument drum-transcription study,
+      then checked each idea against ParaKit's own measurements. The short version: the published field <b>broadly supports</b> the approach ParaKit
+      already takes, it surfaced no ready-made new cleanup technique, and the one promising idea I tested most carefully <b>did not pan out</b> —
+      which is itself a useful result.</p>
+    </div>
+
+    <div class="legend">
+      <span><span class="prov m-cite">CITED</span> from published literature</span>
+      <span><span class="prov m-test">TESTED</span> my own measurement</span>
+    </div>
+
+    <h3>1 · What the literature confirms about ParaKit's approach</h3>
+    <p class="sub">Positions ParaKit arrived at through its own work, independently supported by published research:</p>
+    <table>
+      <thead><tr><th>Design choice in ParaKit</th><th>Supporting published evidence</th></tr></thead>
+      <tbody>
+        <tr><td><b>Ride cymbal is hard because of limited data, not a flawed method</b></td><td>Across datasets, toms and crash/ride score worst — repeatedly linked to how rarely those instruments appear in training data. One widely-used dataset even merges crash and ride into a single label, so a separate "ride" class barely exists to learn from. <span class="prov m-cite">CITED</span></td></tr>
+        <tr><td><b>Telling cymbals apart is the dominant error</b></td><td>Hi-hat / crash / ride share overlapping, noisy spectra and long decays; multiple studies report cymbal classes scoring far below kick and snare. <span class="prov m-cite">CITED</span></td></tr>
+        <tr><td><b>Prefer keeping a hit (recall) over dropping it; relabel rather than delete</b></td><td>Aggressively "cleaning" output to raise precision reliably costs more recall than it gains — overall accuracy drops. Modern neural detectors are naturally high-recall and precision-limited. <span class="prov m-cite">CITED</span></td></tr>
+        <tr><td><b>The cleanup stage is the right lever (vs. retraining the detector)</b></td><td>Beyond a point, more data doesn't beat model capacity. A documented system improved purely by removing false positives from an existing model's output — structurally the same idea as ParaKit's false-kick remover. <span class="prov m-cite">CITED</span></td></tr>
+        <tr><td><b>Musical "feel" matters more than the headline accuracy score</b></td><td>In a listening test, adding note-velocity (dynamics) roughly <b>doubled</b> human preference while the standard accuracy score barely moved — "classifier metrics don't fully align with perceptual quality." <span class="prov m-cite">CITED</span></td></tr>
+        <tr><td><b>Confidence-gated, per-instrument decisions beat one-size-fits-all</b></td><td>A per-instrument confirmation gate lifted precision substantially, and combining a classifier with such a gate beat either alone. <span class="prov m-cite">CITED</span></td></tr>
+      </tbody>
+    </table>
+
+    <h3>2 · How hard is each cymbal? The actual numbers</h3>
+    <p class="sub">Per-instrument accuracy is rarely published as a clean table — but where it is, the gradient is stark.</p>
+    <div class="card">
+      <p style="font-size:12.5px;color:var(--muted);margin:0 0 8px">Per-instrument accuracy (F-measure) from a full transcription system, published study. Higher is better. <span class="prov m-cite">CITED</span></p>
+      <div class="hb"><div class="lab"><span class="nm">closed hi-hat</span><span>0.74</span></div><div class="track"><div class="fill" style="width:74%;background:var(--green)">0.74</div></div></div>
+      <div class="hb"><div class="lab"><span class="nm">open hi-hat</span><span>0.55</span></div><div class="track"><div class="fill" style="width:55%;background:var(--teal)">0.55</div></div></div>
+      <div class="hb"><div class="lab"><span class="nm">ride</span><span>0.45</span></div><div class="track"><div class="fill" style="width:45%;background:var(--amber)">0.45</div></div></div>
+      <div class="hb"><div class="lab"><span class="nm">crash</span><span>0.08</span></div><div class="track"><div class="fill" style="width:8%;background:var(--red)">0.08</div></div></div>
+      <div style="font-size:11.8px;color:var(--muted);margin-top:8px"><b>Crash is the hardest cymbal everywhere.</b> Most studies report these only as bar charts, not numeric tables — so a clean
+      crash-vs-ride comparison is genuinely scarce in the literature, a reporting-convention gap rather than missing knowledge.</div>
+    </div>
+
+    <h3>3 · What I tested that did <em>not</em> work</h3>
+    <p class="sub">The literature suggested cymbals separate on their decay/sustain shape — so I built and measured the features that capture it.</p>
+    <div class="callout amber"><div class="t">Adding decay-shape features: no measurable improvement <span class="prov m-test">TESTED</span></div>
+      I extended the cymbal classifier with temporal/decay-envelope features (attack-to-decay ratio, decay slope, sustain length, multi-window
+      spectra) and re-measured on 456 songs using a strict song-separated test (train on some songs, score on songs never seen). Every variant landed
+      <b>within normal run-to-run noise</b> — no real gain. Combining the new features was <em>worse</em> than the best single one. <b>I kept none of them.</b>
+      The takeaway matches an earlier finding: ParaKit's ride-cymbal weakness was a <em>data</em> problem (fixed by testing on more songs), not a
+      missing-feature problem — the existing features already capture the available decay signal.</div>
+    <p style="font-size:12.6px;color:var(--muted)">I'm documenting this dead-end on purpose: a negative result, measured carefully, saves the next person from re-running it.</p>
+
+    <h3>4 · Methodology worth borrowing</h3>
+    <div class="kf">
+      <div class="item warn"><div class="h">Test on unseen songs, not unseen hits</div><div class="d">Timbre features can look great when test hits come from songs the model trained on, then collapse on genuinely new recordings. Always split by song. <span class="prov m-cite">CITED</span></div></div>
+      <div class="item info"><div class="h">More data helps — even imperfect data</div><div class="d">A large auto-aligned dataset improved accuracy as lower-quality tiers were added in; even the noisiest tier still helped. <span class="prov m-cite">CITED</span></div></div>
+      <div class="item good"><div class="h">Score the metric honestly</div><div class="d">A naïve averaging scheme can hand "free credit" for not predicting a rare instrument. I checked my own scoring is free of this. <span class="prov m-test">TESTED</span></div></div>
+      <div class="item"><div class="h">Match timing tolerance to the data</div><div class="d">If your reference timing is noisy, a too-strict matching window measures noise, not skill. Common practice: a ~50 ms tolerance. <span class="prov m-cite">CITED</span></div></div>
+    </div>
+
+    <h3>5 · Honest limits of this review</h3>
+    <ul class="tight">
+      <li>Most per-instrument cymbal accuracy in the field is published as charts, not numbers — so cross-study comparison is approximate.</li>
+      <li>Some sources were paywalled; where a number couldn't be verified at the source, it's flagged rather than asserted.</li>
+      <li>My own numbers reflect ParaKit's specific test setup and corpus; treat them as directional, not universal.</li>
+      <li>Several promising directions (musical-pattern priors that disambiguate cymbals by rhythmic context; using note dynamics/velocity) remain
+      <b>open and untested</b> here — flagged as future work, not results.</li>
+    </ul>
+
+    <div class="callout green"><div class="t">Bottom line</div>The published field and my own testing point the same way: the win is in the
+    <b>cleanup stage</b> (re-classifying cymbals, removing phantom hits), the cymbal problem is fundamentally about <b>data</b>, and "feel"
+    (dynamics, musical plausibility) is an under-used quality lever worth pursuing next.</div>
+
+    <h3>Sources &amp; references</h3>
+    <p class="sub">Key works among the 31 reviewed (full reference details in the "What the Field Knows" tab):</p>
+    <ol class="src">
+      <li>Vogl, Widmer &amp; Knees — "Towards Multi-Instrument Drum Transcription", DAFx 2018. <a href="https://arxiv.org/abs/1806.06676">arXiv:1806.06676</a></li>
+      <li>Wu et al. — "A Review of Automatic Drum Transcription", IEEE/ACM TASLP 2018. <a href="https://doi.org/10.1109/TASLP.2018.2830113">doi:10.1109/TASLP.2018.2830113</a></li>
+      <li>Cartwright &amp; Bello — "Increasing Drum Transcription Vocabulary Using Data Synthesis", DAFx 2018 (per-cymbal accuracy figures).</li>
+      <li>Callender, Hawthorne &amp; Engel — "Improving Perceptual Quality … (E-GMD)", 2020. <a href="https://arxiv.org/abs/2004.00188">arXiv:2004.00188</a></li>
+      <li>Zehren, Alunno &amp; Bientinesi — "ADTOF", ISMIR 2021. <a href="https://arxiv.org/abs/2111.11737">arXiv:2111.11737</a></li>
+      <li>Wei, Wu &amp; Su — "Improving Automatic Drum Transcription Using Large-Scale Audio-to-MIDI Aligned Data", ICASSP 2021.</li>
+      <li>Weber, Uhle, Müller &amp; Lerch — "STAR Drums: A Dataset for Automatic Drum Transcription", TISMIR 2025. <a href="https://doi.org/10.5334/tismir.244">doi:10.5334/tismir.244</a></li>
+      <li>Wang, Salamon, Cartwright, Bryan &amp; Bello — "Few-Shot Drum Transcription in Polyphonic Music", 2020. <a href="https://arxiv.org/abs/2008.02791">arXiv:2008.02791</a></li>
+      <li>Plus the peak-picking, NMF, data-augmentation and pattern-prior works referenced in the "What the Field Knows" tab.</li>
+    </ol>
+  </section>
+
+  <div class="foot">
+    Research notes from ParaKit's detection development, June 2026 — a point-in-time snapshot, not maintained as the app changes.
+    Findings labelled <span class="prov m-cite">CITED</span> are drawn from published drum-transcription / music-information-retrieval literature and
+    attributed to their original authors; findings labelled <span class="prov m-test">TESTED</span> are my own measurements on real songs.
+    Numbers reflect my specific evaluation setup and are not universal guarantees.
+  </div>
+
+</div>
+
+<script>
+  (function(){
+    var tabs = document.querySelectorAll('nav.tabs button[data-tab]');
+    var panes = document.querySelectorAll('.pane');
+    function show(id){
+      tabs.forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-tab')===id); });
+      panes.forEach(function(p){ p.classList.toggle('on', p.id===id); });
+      if(window.scrollTo) window.scrollTo({top:0});
+    }
+    tabs.forEach(function(b){ b.addEventListener('click', function(){ show(b.getAttribute('data-tab')); }); });
+    document.querySelectorAll('[data-goto]').forEach(function(btn){
+      btn.addEventListener('click', function(){ show(btn.getAttribute('data-goto')); });
+    });
+    // dark / light toggle
+    var tog = document.getElementById('themeToggle');
+    function label(){ var d = document.documentElement.getAttribute('data-theme')==='dark'; tog.textContent = d ? '☀ Light' : '🌙 Dark'; }
+    label();
+    tog.addEventListener('click', function(){
+      var d = document.documentElement.getAttribute('data-theme')==='dark';
+      var next = d ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      try{ localStorage.setItem('pk-theme', next); }catch(e){}
+      label();
+    });
+  })();
+</script>
+</body>
+</html>

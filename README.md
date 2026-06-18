@@ -117,6 +117,7 @@ in Firefox before I had fixed the MIDI config, see below for details, although C
 | **`Practice Window v3 - Web Edition/`** | **Practice Mode v3 — Web Edition** — combined rebuild: v2's falling-note play + a built-in **Kit Studio** + song-library loading; the in-progress successor, offered **alongside v2** (see the section below) |
 | **`Practice Window v2 - Web Edition/`** | **Practice Mode v2 — Web Edition** — self-contained browser rebuild of the falling-note practice game; offered **alongside v3** so you can compare (see the section below) |
 | **`Preview Track v2 - Web Edition/`** | **Preview Track v2 — Web Edition** — falling-note review + live Edit Mode for catching & fixing chart issues (see the section below) |
+| **`Detection Research Notes - Web Edition/`** | **Detection Research Notes — Web Edition** — offline research hub (one HTML): how detection works + the published literature and hands-on testing behind it (see the section below) |
 | **`practice_v2/`** | **Practice Window v2 (Python)** — standalone falling-note practice mini-game (**alpha**, [readme](practice_v2/README.md)) |
 | **`docs/`** | Building from source, troubleshooting, roadmap |
 | **`LICENSE`** | GNU GPL v3 |
@@ -142,6 +143,19 @@ in Firefox before I had fixed the MIDI config, see below for details, although C
 - **Preview & Practice** — falling notes synced to the audio, keyboard or USB MIDI kit
 - **Song Tester** — verify sync before export
 - **Export** — Paradiddle (`.rlrr`) and Clone Hero (`.chart`)
+
+---
+
+## 📊 How Detection Works — Research Notes
+
+Curious how ParaKit turns audio into a drum chart, or want to build on the detection work yourself?
+This is a self-contained, **offline research hub** (one HTML file, dark/light mode, three reports in tabs)
+documenting the detection-cleanup research behind the app — published drum-transcription literature paired
+with hands-on testing on real songs, **with sources listed**, and the experiments that *didn't* work kept in.
+
+<img src="screenshots/research-hub.png" width="900" alt="ParaKit Detection Research Notes — offline research hub">
+
+**▶ Open it:** download **[`Detection Research Notes - Web Edition/parakit-detection-research.html`](Detection%20Research%20Notes%20-%20Web%20Edition/parakit-detection-research.html)** and open it in any browser — no internet needed. It's included when you clone the repo.
 
 ---
 
