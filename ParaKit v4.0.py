@@ -5337,7 +5337,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.68-1"
+    VERSION = "4.4.69-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -22090,26 +22090,120 @@ demucs.separate.main()
         return False
 
     def _ogg_paired(self, audio_path):
-        """True if an .ogg counterpart of this song exists on disk (v4.4.68-1).
+        """True if an .ogg for this song exists where the Stem Splitter sends them.
 
-        Path-based, computed live like _stem_is_split/_midi_paired: looks for an
-        <song>.ogg sibling in the song's own folder (the OGG export of the same
-        download). Deliberately song-name-scoped so it never false-positives on a
-        neighboring song's .ogg; distinct from the STEMS badge's
-        <song>_drums.ogg. A moved/renamed .ogg defeats it (same documented
-        limitation as the split/MIDI probes).
+        The Stem Splitter writes its .ogg stems (``<song>_drums.ogg`` /
+        ``<song>_backing.ogg`` / per-part ``<song>_<part>.ogg``) into per-stem
+        SUBFOLDERS of the stem-output base(s) (DRUMS ONLY / BACKINGS / DRUMS /
+        BASS / VOCALS / …) — while the lossless detector copy goes out as .flac to
+        a SEPARATE ``LOSSLESS SPLITS (DRUMS)`` folder. So the .ogg is NOT next to
+        the song's FLAC download. Two name-scoped passes (match ``<song>.ogg`` or
+        ``<song>_*.ogg`` only, so a neighbouring song's .ogg never
+        false-positives):
+
+          1. PRIMARY — the configured stem-output base(s) (same `stem_output_var`
+             / `stem_iso_output_var` the Stem tab + `_stem_is_split` use), their
+             immediate subfolders, and the bases themselves.
+          2. FALLBACK — a bounded recursive scan of the project folder (≤4000
+             dirs / ≤5 levels, skips hidden/system), memoised for the lifetime of
+             one library refresh so the rows share ONE walk (see
+             `_yt_ogg_project_oggs`).
         """
         try:
-            folder = os.path.dirname(audio_path)
             song = os.path.splitext(os.path.basename(audio_path))[0]
         except Exception:
             return False
-        if not folder or not song:
+        if not song:
             return False
+        song_l = song.lower()
+
+        def _is_song_ogg(fn_lower):
+            return fn_lower.endswith(".ogg") and (
+                fn_lower == song_l + ".ogg" or fn_lower.startswith(song_l + "_"))
+
+        # 1) PRIMARY — the Stem Splitter's .ogg output base(s) (vars, like
+        #    _stem_is_split). Scan each base's immediate subfolders (where the
+        #    per-stem .ogg live) plus any .ogg sitting directly in the base.
+        bases = []
+        for var_name in ("stem_output_var", "stem_iso_output_var"):
+            vv = getattr(self, var_name, None)
+            try:
+                b = vv.get().strip() if vv is not None else ""
+            except Exception:
+                b = ""
+            if b and os.path.isdir(b) and b not in bases:
+                bases.append(b)
+        for base in bases:
+            try:
+                for entry in os.listdir(base):
+                    full = os.path.join(base, entry)
+                    if os.path.isdir(full):
+                        for fn in os.listdir(full):
+                            if _is_song_ogg(fn.lower()):
+                                return True
+                    elif _is_song_ogg(entry.lower()):
+                        return True
+            except Exception:
+                pass
+
+        # 2) FALLBACK — bounded, memoised recursive project scan (miss-only).
         try:
-            return os.path.isfile(os.path.join(folder, f"{song}.ogg"))
+            for fn in self._yt_ogg_project_oggs(audio_path, bases):
+                if _is_song_ogg(fn):
+                    return True
         except Exception:
-            return False
+            pass
+        return False
+
+    def _yt_ogg_project_oggs(self, audio_path, bases):
+        """Lazily build + cache the lowercase set of every .ogg basename under the
+        project folder, for the OGG-badge fallback (`_ogg_paired`). Roots = the
+        common ancestor of the song's download folder + the stem-output base(s),
+        plus those folders themselves. Bounded (≤4000 dirs / ≤5 levels, skips
+        hidden/system, mirrors the Auto-Fetch recursive fallback) and memoised on
+        `self` for the lifetime of one library refresh (cleared at the top of
+        `_yt_library_do_refresh`) so the rows share ONE walk."""
+        cached = getattr(self, "_yt_ogg_scan_set", None)
+        if cached is not None:
+            return cached
+        known = [os.path.abspath(d) for d in
+                 ([os.path.dirname(audio_path)] + list(bases)) if d and os.path.isdir(d)]
+        roots = []
+        try:
+            if len(known) >= 2:
+                home = os.path.commonpath(known)
+                if (home and os.path.isdir(home)
+                        and os.path.splitdrive(home)[1].strip("\\/").count(os.sep) >= 1):
+                    roots.append(home)
+        except Exception:
+            pass
+        roots.extend(known)
+        uniq = []
+        for r in sorted(set(roots), key=len):
+            if not any(r == p or r.startswith(p + os.sep) for p in uniq):
+                uniq.append(r)
+        SKIP = {"$recycle.bin", "system volume information", "node_modules",
+                ".git", "__pycache__"}
+        found, seen, stop = set(), 0, False
+        for root in uniq:
+            base_depth = root.rstrip("\\/").count(os.sep)
+            for dp, dns, fns in os.walk(root):
+                seen += 1
+                if seen > 4000:                        # hard dir-count cap
+                    stop = True
+                    break
+                if dp.count(os.sep) - base_depth > 5:  # depth cap
+                    dns[:] = []
+                    continue
+                dns[:] = [d for d in dns
+                          if not d.startswith(".") and d.lower() not in SKIP]
+                for fn in fns:
+                    if fn.lower().endswith(".ogg"):
+                        found.add(fn.lower())
+            if stop:
+                break
+        self._yt_ogg_scan_set = found
+        return found
 
     def _open_stems_folder(self, audio_path):
         """Open whichever split folder actually holds this song's drums."""
@@ -22891,6 +22985,7 @@ demucs.separate.main()
 
     def _yt_library_do_refresh(self):
         self._yt_lib_refresh_after = None
+        self._yt_ogg_scan_set = None   # invalidate the OGG-badge project scan (rebuilt lazily, once)
         if not hasattr(self, "_yt_lib_inner"):
             return
         try:
@@ -25198,6 +25293,15 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.4.69-1 - .ogg checker icon now finds your Stem Splitter .ogg files\n"
+              "  Bug Fixes:\n"
+              "  - The new purple OGG badge wasn't appearing because it looked for\n"
+              "    the .ogg right next to the song's FLAC. The Stem Splitter saves\n"
+              "    .ogg files to a different folder than the .flac, so the badge now\n"
+              "    checks your Stem Splitter output folder (and scans your project\n"
+              "    folder as a fallback). It shows on songs that have .ogg stems.\n")
+
+        wn_entry(wn_latest,
               "v4.4.68-1 - .ogg file checker icon in the Downloaded Songs library\n"
               "  Changes/Additions:\n"
               "  - Each song row in the YouTube to FLAC library now shows a purple\n"
@@ -25218,7 +25322,7 @@ demucs.separate.main()
               "    prompt opens the normal Save dialog; backing out of it cancels\n"
               "    the quit too.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.66-1 - Kicks de-bunch automatically + Auto Fetch Audio fixes\n"
               "  Changes/Additions:\n"
               "  - Audio to MIDI now de-duplicates KICK notes at 55 ms by default,\n"
@@ -25237,7 +25341,7 @@ demucs.separate.main()
               "  - 'Auto Fetch Audio' returned nothing for MIDIs whose name ended\n"
               "    in '(editor copy)' (it searched with that tag still attached).\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.65-1 - Library 'Search for missing album art' + progress-bar scroll fix\n"
               "  Changes/Additions:\n"
               "  - Downloaded Songs library: a new RIGHT-CLICK menu item, 'Search\n"
