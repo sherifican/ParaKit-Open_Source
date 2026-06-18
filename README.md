@@ -75,7 +75,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.4.67-1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.4.68-1`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -383,6 +383,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.4.68-1**<br>2026-06-17 | <ul><li>**.ogg file checker icon** — each song in the Downloaded Songs library now shows a **purple "OGG" badge** next to the FLAC/WAV format badge when an `.ogg` copy of that song exists on disk (hover it for ".ogg files exist"). The badge only appears when the `.ogg` is actually there, so it's an at-a-glance check for which downloads also have an `.ogg`.</li></ul> |
 | **v4.4.67-1**<br>2026-06-17 | <ul><li>**Unsaved-changes warning on quit** — if you close ParaKit while the MIDI Editor still has unsaved edits, a prompt now appears with three choices: **Save MIDI & Quit**, **Exit Without Saving**, or **Cancel / Don't Quit**. Closing the prompt (the X or the Esc key) keeps the app open, so an accidental close never loses your work; choosing Save opens the normal Save dialog (backing out of it cancels the quit too).</li></ul> |
 | **v4.4.66-1**<br>2026-06-16 | <ul><li>**Kicks de-bunch automatically** — Audio → MIDI now de-duplicates kick notes at **55 ms by default**, so doubled / clustered kicks come out clean on the first Convert with no tuning. (Fast-kick song losing correct kicks? Lower the per-instrument **Kick** gap to 20–30 ms.)</li><li>**Auto Fetch Audio** (MIDI Editor) now finds the audio for a MIDI saved as an "(editor copy)", matches the exact version/cover when the name has one (e.g. "(Rock Version)", "(R&B cover)") instead of grabbing the wrong one, and falls back to scanning your wider project folder for stems/mixes kept in sub-folders.</li></ul> |
 | **v4.4.65-1**<br>2026-06-16 | <ul><li>**Search for missing album art** — a new right-click menu item on each song in the Downloaded Songs library looks up cover art on iTunes by the song's library name and embeds the first match straight into the file. Re-run any time to overwrite the current art (e.g. after renaming the song). The search drops anything in `(parentheses)` or `[brackets]` first (usually "Official Video" / "Lyric Video" noise). Works on FLAC, MP3, OGG, and M4A.</li><li>**Fixed:** the YouTube tab's progress bar could be scrolled out of view with the mouse wheel.</li><li>**Fixed:** "Permission denied" when searching album art on a song you had just played via the library's Play button — the preview player now releases the file before the art re-embed.</li><li>**Fixed:** the art search now uses the song's renamed library name, not the original file name — so right-click → Rename, then Search now does what you'd expect.</li></ul> |

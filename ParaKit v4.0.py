@@ -5337,7 +5337,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.67-1"
+    VERSION = "4.4.68-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -22089,6 +22089,28 @@ demucs.separate.main()
                 pass
         return False
 
+    def _ogg_paired(self, audio_path):
+        """True if an .ogg counterpart of this song exists on disk (v4.4.68-1).
+
+        Path-based, computed live like _stem_is_split/_midi_paired: looks for an
+        <song>.ogg sibling in the song's own folder (the OGG export of the same
+        download). Deliberately song-name-scoped so it never false-positives on a
+        neighboring song's .ogg; distinct from the STEMS badge's
+        <song>_drums.ogg. A moved/renamed .ogg defeats it (same documented
+        limitation as the split/MIDI probes).
+        """
+        try:
+            folder = os.path.dirname(audio_path)
+            song = os.path.splitext(os.path.basename(audio_path))[0]
+        except Exception:
+            return False
+        if not folder or not song:
+            return False
+        try:
+            return os.path.isfile(os.path.join(folder, f"{song}.ogg"))
+        except Exception:
+            return False
+
     def _open_stems_folder(self, audio_path):
         """Open whichever split folder actually holds this song's drums."""
         try:
@@ -22968,6 +22990,8 @@ demucs.separate.main()
         """
         if neutral:
             border, fg = "#00d4d4", "#00d4d4"   # cyan = present format info
+        elif text == "OGG":
+            border, fg = "#b388ff", "#b388ff"   # purple = .ogg files present (checker)
         elif present:
             border, fg = "#46d18a", "#46d18a"
         else:
@@ -22983,6 +23007,8 @@ demucs.separate.main()
         # so the tooltip's <Enter>/<Leave> coexist with the row-hover bindings.
         if neutral:
             _tip = "Audio file exists ✔" if present else f"{text} file not found ✖"
+        elif text == "OGG":
+            _tip = ".ogg files exist"
         elif text == "STEMS":
             _tip = "Split drum stems exist ✔" if present else "STEMS file not found ✖"
         elif text == "MIDI":
@@ -23071,6 +23097,10 @@ demucs.separate.main()
         row._yt_color_targets.append(badges)
         self._yt_make_badge(badges, (entry.get("fmt") or "flac").upper(),
                             present=True, neutral=True, row=row)
+        # v4.4.68-1 — purple ".ogg files exist" checker, right next to the format
+        # badge; only rendered when an .ogg counterpart of the song is on disk.
+        if self._ogg_paired(path):
+            self._yt_make_badge(badges, "OGG", present=True, row=row)
         self._yt_make_badge(badges, "STEMS", present=split, row=row)
         self._yt_make_badge(badges, "MIDI", present=midi, row=row)
 
@@ -25166,6 +25196,15 @@ demucs.separate.main()
                           .replace("\n  MIDI Editor —",
                                    "\n\n  MIDI Editor —"))
             entry(card, normalized, color=color)
+
+        wn_entry(wn_latest,
+              "v4.4.68-1 - .ogg file checker icon in the Downloaded Songs library\n"
+              "  Changes/Additions:\n"
+              "  - Each song row in the YouTube to FLAC library now shows a purple\n"
+              "    'OGG' badge next to the FLAC/WAV format badge when an .ogg copy\n"
+              "    of that song exists on disk. Hover it to see '.ogg files exist'.\n"
+              "    The badge only appears when the .ogg is actually there, so it's\n"
+              "    an at-a-glance check for which downloads also have an .ogg.\n")
 
         wn_entry(wn_latest,
               "v4.4.67-1 - Unsaved-changes warning when you close with a MIDI open\n"
