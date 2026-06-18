@@ -1,3 +1,4 @@
+<!-- <meta name="google-site-verification" content="ayGQ15WOya7j5mUNv7q5FxCO-dTjUZhzKcChjQ7wnGY" /> -->
 # ParaKit (v4.x source release)
 
 **An all-in-one drum-charting tool for [Paradiddle](https://www.paradiddleapp.com/) (`.rlrr`), with Clone Hero (`.chart`) support.**
