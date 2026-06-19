@@ -3,7 +3,7 @@
 *ParaKit — Detection Research Notes · June 2026 (point-in-time snapshot, not maintained as the app evolves)*
 *Findings marked **[CITED]** come from published literature; **[TESTED]** are my own measurements on real songs. Numbers are directional and reflect my specific test setup — not universal guarantees.*
 
-> **Status — June 2026:** the cleanup described here is **validated in testing** and is being integrated into ParaKit in an upcoming update; this report documents the research behind it.
+> **Status — June 2026:** the cleanup described here is **now live in ParaKit as of v4.5-1** — it runs automatically on Audio → MIDI conversions (toggleable under Advanced). This report documents the research behind it.
 
 How ParaKit refines the raw detector output, and the measured impact.
 

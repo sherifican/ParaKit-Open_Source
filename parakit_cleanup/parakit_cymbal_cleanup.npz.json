@@ -1,0 +1,21 @@
+{
+  "classes": [
+    "hihat",
+    "crash",
+    "ride"
+  ],
+  "exported_utc": "2026-06-18T12:12:05.454177Z",
+  "format": "numpy_rf_v1",
+  "n_features": 40,
+  "n_trees": 400,
+  "note": "dependency-free; numpy-only inference; bit-exact to sklearn (max prob diff 0.0, 0 decision flips on full cached corpus)",
+  "npz_file": "parakit_cymbal_cleanup.npz",
+  "numpy_version": "2.4.4",
+  "phantom_label": null,
+  "recommended_gate": {
+    "gate_swap": 0.7,
+    "gate_to_ride": 0.3
+  },
+  "sklearn_version": "1.8.0",
+  "source_joblib": "cymbal_engine_prod.joblib"
+}

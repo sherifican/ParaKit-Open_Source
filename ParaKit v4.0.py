@@ -5337,7 +5337,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.4.69-1"
+    VERSION = "4.5-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -10123,6 +10123,49 @@ demucs.separate.main()
             "intentionally uses dense crash + hi-hat stacks."
         )
 
+        # v4.5-1 — detection CLEANUP PASS (trained cymbal re-classifier + kick
+        # phantom-remover). Runs on the detector's OUTPUT MIDI + the song audio
+        # (via the dependency-light parakit_cleanup sidecar) — it does NOT change
+        # how detection works. Master + per-pass toggles, default ON; master OFF =
+        # byte-identical to pre-4.5 output.
+        self.a2m_cleanup_pass_var = tk.BooleanVar(
+            value=load_config().get("a2m_cleanup_pass", True))
+        cleanup_pass_cb = ttk.Checkbutton(
+            adv_frame,
+            text="Apply detection cleanup pass  (recommended)",
+            variable=self.a2m_cleanup_pass_var)
+        cleanup_pass_cb.pack(anchor="w", pady=(6, 0))
+        self._add_tooltip(
+            cleanup_pass_cb,
+            "After detection, ParaKit cleans the chart with two trained passes,\n"
+            "using the song's audio: it re-classifies cymbal hits into the right\n"
+            "lane (hi-hat / crash / ride) and removes phantom (false) kick hits.\n\n"
+            "These operate on the detector's OUTPUT only — they never change how\n"
+            "detection itself runs. Turn OFF for the raw detector output\n"
+            "(identical to older versions). Needs the source audio file present.")
+        self.a2m_cleanup_cymbal_var = tk.BooleanVar(
+            value=load_config().get("a2m_cleanup_cymbal", True))
+        cleanup_cym_cb = ttk.Checkbutton(
+            adv_frame,
+            text="      •  Re-classify cymbals (hi-hat / crash / ride)",
+            variable=self.a2m_cleanup_cymbal_var)
+        cleanup_cym_cb.pack(anchor="w")
+        self._add_tooltip(
+            cleanup_cym_cb,
+            "Moves cymbal hits into the correct lane (hi-hat / crash / ride) when\n"
+            "the detector lumped them together. Part of the cleanup pass above.")
+        self.a2m_cleanup_kick_var = tk.BooleanVar(
+            value=load_config().get("a2m_cleanup_kick", True))
+        cleanup_kick_cb = ttk.Checkbutton(
+            adv_frame,
+            text="      •  Remove phantom (false) kicks",
+            variable=self.a2m_cleanup_kick_var)
+        cleanup_kick_cb.pack(anchor="w")
+        self._add_tooltip(
+            cleanup_kick_cb,
+            "Removes kick hits the detector added that aren't really there, using\n"
+            "a recall-safe threshold. Part of the cleanup pass above.")
+
         self.a2m_remove_flams_var = tk.BooleanVar(
             value=load_config().get("a2m_remove_flams", True))
         remove_flams_cb = ttk.Checkbutton(
@@ -10353,6 +10396,12 @@ demucs.separate.main()
             self.a2m_post_classify_cymbals_var.set(_a2m_cfg["a2m_post_classify"])
         if "a2m_remove_flams" in _a2m_cfg:
             self.a2m_remove_flams_var.set(_a2m_cfg["a2m_remove_flams"])
+        if "a2m_cleanup_pass" in _a2m_cfg:
+            self.a2m_cleanup_pass_var.set(_a2m_cfg["a2m_cleanup_pass"])
+        if "a2m_cleanup_cymbal" in _a2m_cfg:
+            self.a2m_cleanup_cymbal_var.set(_a2m_cfg["a2m_cleanup_cymbal"])
+        if "a2m_cleanup_kick" in _a2m_cfg:
+            self.a2m_cleanup_kick_var.set(_a2m_cfg["a2m_cleanup_kick"])
         if ("a2m_enhanced_detection_mode" in _a2m_cfg
                 or "a2m_use_alt_detector" in _a2m_cfg):
             _restored_alt_mode = _a2m_cfg.get("a2m_enhanced_detection_mode")
@@ -10374,6 +10423,12 @@ demucs.separate.main()
             {"a2m_post_classify": self.a2m_post_classify_cymbals_var.get()}))
         self.a2m_remove_flams_var.trace_add("write", lambda *_: save_config(
             {"a2m_remove_flams": self.a2m_remove_flams_var.get()}))
+        self.a2m_cleanup_pass_var.trace_add("write", lambda *_: save_config(
+            {"a2m_cleanup_pass": self.a2m_cleanup_pass_var.get()}))
+        self.a2m_cleanup_cymbal_var.trace_add("write", lambda *_: save_config(
+            {"a2m_cleanup_cymbal": self.a2m_cleanup_cymbal_var.get()}))
+        self.a2m_cleanup_kick_var.trace_add("write", lambda *_: save_config(
+            {"a2m_cleanup_kick": self.a2m_cleanup_kick_var.get()}))
         self.a2m_cymbal_resolver_var = tk.BooleanVar(
             value=load_config().get("a2m_cymbal_resolver", False))
         cymbal_resolver_cb = ttk.Checkbutton(
@@ -18632,6 +18687,9 @@ demucs.separate.main()
             "post_classify": getattr(self, "a2m_post_classify_cymbals_var", tk.BooleanVar(value=True)).get(),
             "remove_flams": getattr(self, "a2m_remove_flams_var", tk.BooleanVar(value=True)).get(),
             "cymbal_resolver": getattr(self, "a2m_cymbal_resolver_var", tk.BooleanVar(value=False)).get(),
+            "cleanup_pass": getattr(self, "a2m_cleanup_pass_var", tk.BooleanVar(value=True)).get(),
+            "cleanup_cymbal": getattr(self, "a2m_cleanup_cymbal_var", tk.BooleanVar(value=True)).get(),
+            "cleanup_kick": getattr(self, "a2m_cleanup_kick_var", tk.BooleanVar(value=True)).get(),
             "enhanced_detection_mode": getattr(
                 self, "a2m_enhanced_detection_mode_var",
                 tk.StringVar(value="off")).get(),
@@ -18650,6 +18708,9 @@ demucs.separate.main()
             ("a2m_post_classify_cymbals_var", "post_classify"),
             ("a2m_remove_flams_var", "remove_flams"),
             ("a2m_cymbal_resolver_var", "cymbal_resolver"),
+            ("a2m_cleanup_pass_var", "cleanup_pass"),
+            ("a2m_cleanup_cymbal_var", "cleanup_cymbal"),
+            ("a2m_cleanup_kick_var", "cleanup_kick"),
             ("a2m_enhanced_detection_mode_var", "enhanced_detection_mode"),
         ]:
             if key in settings and hasattr(self, attr):
@@ -19439,6 +19500,30 @@ demucs.separate.main()
                 self._me_sound_channel = None
 
             elif self._me_speed == 1.0:
+                # Match the mixer to the file's OWN sample rate before loading.
+                # SDL_mixer will play a 48 kHz file through a 44.1 kHz mixer by
+                # resampling, but pygame.mixer.music.get_pos() — the clock the
+                # playhead, falling-note flashes, and auto-scroll are all driven
+                # by (_me_tick) — then loses sync with the audible position over
+                # time: the playhead slowly slides off the audio as the song
+                # plays (visible from ~minutes in on a long track). The layered
+                # and slowed paths already match the mixer rate to the audio
+                # (resample-to-mixer / reinit); this is the one path that didn't.
+                # Reinit to the file's native rate so get_pos stays accurate.
+                try:
+                    import soundfile as _sf
+                    _file_sr = int(_sf.info(audio_path).samplerate)
+                except Exception:
+                    _file_sr = None
+                if _file_sr:
+                    _cur = pygame.mixer.get_init()
+                    if not _cur:
+                        pygame.mixer.init(frequency=_file_sr, size=-16,
+                                          channels=2, buffer=512)
+                    elif _cur[0] != _file_sr:
+                        pygame.mixer.quit()
+                        pygame.mixer.init(frequency=_file_sr, size=-16,
+                                          channels=2, buffer=512)
                 pygame.mixer.music.load(audio_path)
                 try:
                     idx = int(self.me_audio_track_var.get())
@@ -19765,8 +19850,64 @@ demucs.separate.main()
                 pass
             self.root.after(0, self._me_play)
 
+    def _a2m_apply_cleanup_pass(self, midi_path):
+        """v4.5-1 — apply the trained detection CLEANUP PASS (cymbal re-classifier
+        + kick phantom-remover) to the freshly-written Audio->MIDI .mid IN PLACE,
+        before it loads into the editor. Operates ONLY on the detector's OUTPUT
+        MIDI + the source audio (via the dependency-light ``parakit_cleanup``
+        sidecar) -- it does NOT change detection. Gated by the adv_frame toggles;
+        master OFF, both sub-passes off, or no source audio => no-op (output is
+        byte-identical to pre-4.5). Any failure is caught + logged so a cleanup
+        error never blocks loading the chart."""
+        try:
+            if not (getattr(self, "a2m_cleanup_pass_var", None)
+                    and self.a2m_cleanup_pass_var.get()):
+                return
+            do_cymbal = bool(getattr(self, "a2m_cleanup_cymbal_var", None)
+                             and self.a2m_cleanup_cymbal_var.get())
+            do_kick = bool(getattr(self, "a2m_cleanup_kick_var", None)
+                           and self.a2m_cleanup_kick_var.get())
+            if not (do_cymbal or do_kick):
+                return
+            # Ride-detection toggle is authoritative over the cleanup: when ride
+            # detection is OFF the user wants no rides, so the cymbal re-classifier
+            # must not promote onsets into the ride lane (it folds them to crash).
+            allow_ride = bool(getattr(self, "a2m_ride_var", None)
+                              and self.a2m_ride_var.get())
+            audio_path = getattr(self, "_a2m_source_file", None)
+            if not audio_path or not os.path.isfile(audio_path):
+                try:
+                    self._a2m_log("Cleanup pass:      skipped (source audio not found)")
+                except Exception:
+                    pass
+                return
+            from parakit_cleanup import clean_a2m_midi
+            summary = clean_a2m_midi(midi_path, audio_path,
+                                     do_cymbal=do_cymbal, do_kick=do_kick,
+                                     allow_ride=allow_ride)
+            try:
+                self._a2m_log(
+                    "Cleanup pass:      "
+                    + (("cymbals re-classified"
+                        + ("" if allow_ride else " (ride off -> folded to crash)"))
+                       if do_cymbal else "cymbals off")
+                    + ", "
+                    + (f"{summary.get('n_kicks_removed', 0)} phantom kick(s) removed"
+                       if do_kick else "kick remover off"))
+            except Exception:
+                pass
+        except Exception as _e:
+            try:
+                self._a2m_log(f"Cleanup pass:      skipped ({type(_e).__name__})")
+            except Exception:
+                pass
+
     def _me_open_from_a2m(self, midi_path):
         """Called by Audio→MIDI tab after conversion to auto-load into editor."""
+        # v4.5-1 — detection cleanup pass on the just-written MIDI BEFORE it loads
+        # (operates on the detector OUTPUT + audio; NO protected-fn / detection
+        # change). Gated by the adv_frame toggles; master OFF = passthrough.
+        self._a2m_apply_cleanup_pass(midi_path)
         self.me_midi_var.set(midi_path)
         self._me_load(midi_path)
         # Attach ML confidence data to notes if available
@@ -25293,6 +25434,34 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.5-1 - Smarter Audio to MIDI: automatic detection cleanup pass\n"
+              "  Changes/Additions:\n"
+              "  - Audio to MIDI now runs an automatic cleanup pass on the\n"
+              "    converted chart, just before it opens in the editor. It moves\n"
+              "    cymbal hits into the correct lane (hi-hat / crash / ride) when\n"
+              "    the detector lumped them together, and removes 'phantom' kick\n"
+              "    hits that don't match a real onset. On songs the detector had\n"
+              "    never seen this measurably improved cymbal accuracy - including\n"
+              "    recovering ride-cymbal hits that were being missed entirely -\n"
+              "    with no loss on the parts that were already right.\n"
+              "  - Three new switches live under Audio to MIDI, in the Advanced\n"
+              "    section, all ON by default: 'Apply detection cleanup pass' plus\n"
+              "    per-pass toggles for cymbal re-classification and phantom-kick\n"
+              "    removal. Turn the master switch OFF to get the exact raw output\n"
+              "    of older versions.\n"
+              "  - The cleanup reads the detector's output plus your source audio -\n"
+              "    it does not change detection itself, so it only affects new\n"
+              "    conversions (your existing charts are untouched). Needs the\n"
+              "    source audio file present.\n"
+              "  - With 'Ride cymbal detection' OFF, the cleanup pass no longer\n"
+              "    adds ride hits either - Ride OFF now means no rides anywhere.\n"
+              "  Bug Fixes:\n"
+              "  - The MIDI Editor playback preview could slowly drift out of sync\n"
+              "    with the audio on long songs - the playhead and falling notes\n"
+              "    would slide off the beat partway through. Playback now stays\n"
+              "    locked to the audio for the whole track.\n")
+
+        wn_entry(wn_latest,
               "v4.4.69-1 - .ogg checker icon now finds your Stem Splitter .ogg files\n"
               "  Bug Fixes:\n"
               "  - The new purple OGG badge wasn't appearing because it looked for\n"
@@ -25310,7 +25479,7 @@ demucs.separate.main()
               "    The badge only appears when the .ogg is actually there, so it's\n"
               "    an at-a-glance check for which downloads also have an .ogg.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.67-1 - Unsaved-changes warning when you close with a MIDI open\n"
               "  Changes/Additions:\n"
               "  - If you try to close ParaKit while the MIDI Editor still has\n"
