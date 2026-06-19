@@ -75,7 +75,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.5-1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.0-1`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -397,7 +397,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
-| **v4.5-1**<br>2026-06-18 | <ul><li>**New: automatic detection cleanup pass for Audio → MIDI.** A trained pass now cleans the converted chart before it opens — moving cymbal hits into the right lane (hi-hat / crash / ride) when the detector lumped them together, and removing "phantom" kicks that don't match a real onset. On unseen songs it measurably improved cymbal accuracy (including recovering ride hits that were being missed) with no loss elsewhere. Three toggles under **Audio → MIDI ▸ Advanced** (all on by default); turn the master off for the exact raw output of older versions. With "Ride cymbal detection" off, the cleanup adds no rides either.</li><li>**Fixed: the MIDI Editor playback preview could slowly drift out of sync with the audio on long songs** — the playhead and falling notes now stay locked to the audio for the whole track.</li></ul> |
+| **v4.5.0-1**<br>2026-06-18 | <ul><li>**New: automatic detection cleanup pass for Audio → MIDI.** A trained pass now cleans the converted chart before it opens — moving cymbal hits into the right lane (hi-hat / crash / ride) when the detector lumped them together, and removing "phantom" kicks that don't match a real onset. On unseen songs it measurably improved cymbal accuracy (including recovering ride hits that were being missed) with no loss elsewhere. Three toggles under **Audio → MIDI ▸ Advanced** (all on by default); turn the master off for the exact raw output of older versions. With "Ride cymbal detection" off, the cleanup adds no rides either.</li><li>**Fixed: the MIDI Editor playback preview could slowly drift out of sync with the audio on long songs** — the playhead and falling notes now stay locked to the audio for the whole track.</li></ul> |
 | **v4.4.69-1**<br>2026-06-17 | <ul><li>**Fixed: the .ogg checker badge now actually shows up.** It was looking for the `.ogg` next to the song's FLAC, but the Stem Splitter saves `.ogg` files to a different folder than the `.flac` — so the badge now checks your Stem Splitter output folder (and scans your project folder as a fallback). It appears on songs that have `.ogg` stems.</li></ul> |
 | **v4.4.68-1**<br>2026-06-17 | <ul><li>**.ogg file checker icon** — each song in the Downloaded Songs library now shows a **purple "OGG" badge** next to the FLAC/WAV format badge when an `.ogg` copy of that song exists on disk (hover it for ".ogg files exist"). The badge only appears when the `.ogg` is actually there, so it's an at-a-glance check for which downloads also have an `.ogg`.</li></ul> |
 | **v4.4.67-1**<br>2026-06-17 | <ul><li>**Unsaved-changes warning on quit** — if you close ParaKit while the MIDI Editor still has unsaved edits, a prompt now appears with three choices: **Save MIDI & Quit**, **Exit Without Saving**, or **Cancel / Don't Quit**. Closing the prompt (the X or the Esc key) keeps the app open, so an accidental close never loses your work; choosing Save opens the normal Save dialog (backing out of it cancels the quit too).</li></ul> |

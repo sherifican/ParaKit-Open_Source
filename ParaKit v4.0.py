@@ -5337,7 +5337,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5-1"
+    VERSION = "4.5.0-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -6617,7 +6617,9 @@ class MidiToRlrrApp:
 
         def _ver(s):
             try:
-                m = re.match(r"^v?(\d+(?:\.\d+){2,3})(?:-(\d+))?$", str(s).strip())
+                # Accept a 2-to-4-number core (defensive: handles the standard
+                # 3-segment "4.5.0-1" AND any future two-segment "X.Y-N" release).
+                m = re.match(r"^v?(\d+(?:\.\d+){1,3})(?:-(\d+))?$", str(s).strip())
                 if not m:
                     return None
                 core = tuple(int(x) for x in m.group(1).split("."))
@@ -6634,9 +6636,12 @@ class MidiToRlrrApp:
             with urllib.request.urlopen(req, timeout=8) as resp:
                 text = resp.read().decode("utf-8", errors="ignore")
 
-            # The README line: "> **Version in this release:** `X.Y.Z` • ..."
+            # The README line: "> **Version in this release:** `X.Y[.Z[.W]]-N` • ..."
+            # Accept a 2-to-4-number core (e.g. "4.5.0-1" as well as "4.4.69-1").
+            # .*? is non-greedy + `.` doesn't cross newlines, so it grabs the
+            # version right after the label (before "Python 3.x" further down).
             version_match = re.search(
-                r'Version in this release:.*?(\d+\.\d+\.\d+(?:-\d+)?)', text)
+                r'Version in this release:.*?(\d+\.\d+(?:\.\d+){0,2}(?:-\d+)?)', text)
             if not version_match:
                 raise ValueError(
                     "No 'Version in this release' line found in the GitHub README")
@@ -10123,7 +10128,7 @@ demucs.separate.main()
             "intentionally uses dense crash + hi-hat stacks."
         )
 
-        # v4.5-1 — detection CLEANUP PASS (trained cymbal re-classifier + kick
+        # v4.5.0-1 — detection CLEANUP PASS (trained cymbal re-classifier + kick
         # phantom-remover). Runs on the detector's OUTPUT MIDI + the song audio
         # (via the dependency-light parakit_cleanup sidecar) — it does NOT change
         # how detection works. Master + per-pass toggles, default ON; master OFF =
@@ -19851,7 +19856,7 @@ demucs.separate.main()
             self.root.after(0, self._me_play)
 
     def _a2m_apply_cleanup_pass(self, midi_path):
-        """v4.5-1 — apply the trained detection CLEANUP PASS (cymbal re-classifier
+        """v4.5.0-1 — apply the trained detection CLEANUP PASS (cymbal re-classifier
         + kick phantom-remover) to the freshly-written Audio->MIDI .mid IN PLACE,
         before it loads into the editor. Operates ONLY on the detector's OUTPUT
         MIDI + the source audio (via the dependency-light ``parakit_cleanup``
@@ -19904,7 +19909,7 @@ demucs.separate.main()
 
     def _me_open_from_a2m(self, midi_path):
         """Called by Audio→MIDI tab after conversion to auto-load into editor."""
-        # v4.5-1 — detection cleanup pass on the just-written MIDI BEFORE it loads
+        # v4.5.0-1 — detection cleanup pass on the just-written MIDI BEFORE it loads
         # (operates on the detector OUTPUT + audio; NO protected-fn / detection
         # change). Gated by the adv_frame toggles; master OFF = passthrough.
         self._a2m_apply_cleanup_pass(midi_path)
@@ -25434,7 +25439,7 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
-              "v4.5-1 - Smarter Audio to MIDI: automatic detection cleanup pass\n"
+              "v4.5.0-1 - Smarter Audio to MIDI: automatic detection cleanup pass\n"
               "  Changes/Additions:\n"
               "  - Audio to MIDI now runs an automatic cleanup pass on the\n"
               "    converted chart, just before it opens in the editor. It moves\n"
