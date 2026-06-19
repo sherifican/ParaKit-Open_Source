@@ -16,7 +16,7 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 >**Jarredou Model / Requirements Link:** [LimeWire Jarredou/Req Bundle](https://limewire.com/d/HrcqC#lS73gPUpJa)
 
->ParaKit Official Homepage ***(WEBSITE CURRENTLY BROKEN)***
+>ParaKit Official Homepage ***(Site temporarily down)***
 
 >**README FOR .EXE VERSION:** (https://github.com/sherifican/ParaKit---Releases)
 
