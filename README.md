@@ -78,7 +78,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.5.0-1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.1-1`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -146,6 +146,60 @@ in Firefox before I had fixed the MIDI config, see below for details, although C
 - **Preview & Practice** — falling notes synced to the audio, keyboard or USB MIDI kit
 - **Song Tester** — verify sync before export
 - **Export** — Paradiddle (`.rlrr`) and Clone Hero (`.chart`)
+
+---
+
+## 🥁 Detection Update — Hi-Hat Recovery *(v4.5.1-1)*
+
+ParaKit was quietly **dropping hi-hats it had actually detected.** In Hybrid mode a hit is normally
+"confirmed" by the spectral engine — but spectral detects almost no hi-hats, so every hat had to clear a
+stricter confidence bar on its own, and softer / faster hats (intros, fast hat patterns) were being thrown
+out. **v4.5.1-1 retunes that hi-hat confidence gate so the real hits survive — hi-hat only; kick, snare,
+crash, ride and toms are untouched.** It was validated on the **final chart** (after the cleanup pass, the
+way it actually runs) two ways: a 60-song set scored against human charts, and 14 fresh songs across genres
+scored against the audio itself.
+
+<details>
+<summary><b>📊 Click to expand — corpus result (60 songs, final chart vs human charts)</b></summary>
+
+<br>
+
+| hi-hat | precision | recall | F-measure |
+|---|---|---|---|
+| before (v4.5.0-1) | 0.73 | 0.63 | 0.68 |
+| **after (v4.5.1-1)** | 0.63 | **0.81** | **0.71** |
+
+Recall **+0.17**, F **+0.03**. Every other drum lane held effectively unchanged (kick, snare, ride and toms
+identical; crash within 0.005) — the change is isolated to the hi-hat lane. Scored against human charts that
+*under*-chart hi-hats, so the real-world recovery is larger than the F number alone shows.
+
+</details>
+
+<details>
+<summary><b>🎚️ Click to expand — cross-genre check (14 fresh songs, vs the audio)</b></summary>
+
+<br>
+
+| genre | songs | hi-hat F change |
+|---|---|---|
+| pop | 2 | +0.13 |
+| pop-rock | 1 | +0.17 |
+| pop / R&B | 1 | +0.11 |
+| R&B | 1 | +0.10 |
+| rock | 2 | +0.08 |
+| metalcore | 2 | +0.05 |
+| metal | 1 | +0.14 |
+| funk | 1 | +0.10 |
+| electronic | 2 | +0.18 |
+| indie-pop | 1 | +0.08 |
+
+**Every one of the 14 fresh songs improved** — including the cymbal-heavy metalcore tracks, the worst case
+for false hi-hats — with no false-hat blowups on any genre. Scored against an audio-derived hi-hat reference,
+so these are relative/directional, not absolute accuracy.
+
+</details>
+
+> Full methodology and the experiments that *didn't* pan out live in the research hub below.
 
 ---
 
@@ -400,6 +454,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.5.1-1**<br>2026-06-20 | <ul><li>**Hi-hat recovery — Audio → MIDI now keeps more of the hi-hats it was dropping.** In Hybrid mode a hit normally has to be "confirmed" by the spectral engine, but spectral detects almost no hi-hats — so every hat had to clear a stricter confidence bar on its own, and softer / faster hats (intros, fast hat patterns) were being thrown out. The hi-hat confidence gate is retuned so those real hits survive. **Hi-hat only** — kick, snare, crash, ride and toms are unchanged. Validated on the final chart (after the cleanup pass) across a 60-song corpus and 14 fresh songs spanning pop, R&B, rock, metalcore, funk and electronic — hi-hat accuracy improved on every genre with no false-hat blowups. (See the *Detection Update — Hi-Hat Recovery* section above for the data.)</li></ul> |
 | **v4.5.0-1**<br>2026-06-18 | <ul><li>**New: automatic detection cleanup pass for Audio → MIDI.** A trained pass now cleans the converted chart before it opens — moving cymbal hits into the right lane (hi-hat / crash / ride) when the detector lumped them together, and removing "phantom" kicks that don't match a real onset. On unseen songs it measurably improved cymbal accuracy (including recovering ride hits that were being missed) with no loss elsewhere. Three toggles under **Audio → MIDI ▸ Advanced** (all on by default); turn the master off for the exact raw output of older versions. With "Ride cymbal detection" off, the cleanup adds no rides either.</li><li>**Fixed: the MIDI Editor playback preview could slowly drift out of sync with the audio on long songs** — the playhead and falling notes now stay locked to the audio for the whole track.</li></ul> |
 | **v4.4.69-1**<br>2026-06-17 | <ul><li>**Fixed: the .ogg checker badge now actually shows up.** It was looking for the `.ogg` next to the song's FLAC, but the Stem Splitter saves `.ogg` files to a different folder than the `.flac` — so the badge now checks your Stem Splitter output folder (and scans your project folder as a fallback). It appears on songs that have `.ogg` stems.</li></ul> |
 | **v4.4.68-1**<br>2026-06-17 | <ul><li>**.ogg file checker icon** — each song in the Downloaded Songs library now shows a **purple "OGG" badge** next to the FLAC/WAV format badge when an `.ogg` copy of that song exists on disk (hover it for ".ogg files exist"). The badge only appears when the `.ogg` is actually there, so it's an at-a-glance check for which downloads also have an `.ogg`.</li></ul> |

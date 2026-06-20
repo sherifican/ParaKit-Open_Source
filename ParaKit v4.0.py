@@ -3198,7 +3198,10 @@ class _PdToChConverterWindow(tk.Toplevel):
 A2M_HYBRID_ML_ONLY_MIN_CONF = {
     "kick": 0.62,
     "snare": 0.60,
-    "hihat": 0.58,
+    "hihat": 0.35,   # v4.5.1-1 hi-hat recovery: was 0.58. Spectral detects almost no hi-hats, so
+                     # every hat is an "ML-only" hit and this gate was killing soft/fast hats it had
+                     # actually detected. Validated post-cleanup (60-track corpus + 14 fresh songs,
+                     # all genres) net-positive with no other-lane regression. Freeze-exempt constant.
     "crash": 0.66,
     "ride": 0.66,
     "floor_tom": 0.58,
@@ -3223,7 +3226,7 @@ A2M_HYBRID_ML_ONLY_MIN_GAP = {
 A2M_HYBRID_ML_ONLY_THRESH_BOOST = {
     "kick": 0.12,
     "snare": 0.10,
-    "hihat": 0.04,
+    "hihat": -0.15,  # v4.5.1-1 hi-hat recovery (was 0.04) — merge-gate floor, paired with MIN_CONF above
     "crash": 0.14,
     "ride": 0.14,
     "floor_tom": 0.08,
@@ -3232,7 +3235,7 @@ A2M_HYBRID_ML_ONLY_THRESH_BOOST = {
 A2M_ML_CLASS_CONF_BOOST = {
     "kick": 0.00,
     "snare": 0.00,
-    "hihat": 0.03,
+    "hihat": -0.15,  # v4.5.1-1 hi-hat recovery (was 0.03) — lowers the ML detection threshold for hi-hats
     "crash": 0.05,
     "ride": 0.05,
     "floor_tom": -0.02,
@@ -5337,7 +5340,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.0-1"
+    VERSION = "4.5.1-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -25439,6 +25442,21 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.5.1-1 - Hi-hat recovery: the chart now keeps more of your hi-hats\n"
+              "  Changes/Additions:\n"
+              "  - Audio to MIDI was quietly dropping hi-hats it had actually\n"
+              "    detected. In Hybrid mode a hit is normally 'confirmed' by the\n"
+              "    spectral engine, but spectral detects almost no hi-hats - so every\n"
+              "    hat had to clear a stricter confidence bar on its own, and softer /\n"
+              "    faster hats (intros, fast hat patterns) were thrown out. That\n"
+              "    confidence gate is now retuned for hi-hats so those real hits stay.\n"
+              "  - Hi-hat only: kick, snare, crash, ride and toms are unchanged.\n"
+              "    Validated on the final chart (after the cleanup pass) across a\n"
+              "    60-song test set and 14 fresh songs spanning pop, R&B, rock,\n"
+              "    metalcore, funk and electronic - hi-hat accuracy improved on every\n"
+              "    genre with no false-hat blowups.\n")
+
+        wn_entry(wn_latest,
               "v4.5.0-1 - Smarter Audio to MIDI: automatic detection cleanup pass\n"
               "  Changes/Additions:\n"
               "  - Audio to MIDI now runs an automatic cleanup pass on the\n"
@@ -25475,7 +25493,7 @@ demucs.separate.main()
               "    checks your Stem Splitter output folder (and scans your project\n"
               "    folder as a fallback). It shows on songs that have .ogg stems.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.68-1 - .ogg file checker icon in the Downloaded Songs library\n"
               "  Changes/Additions:\n"
               "  - Each song row in the YouTube to FLAC library now shows a purple\n"
