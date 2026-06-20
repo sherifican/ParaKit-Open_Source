@@ -1,11 +1,11 @@
 # ParaKit (v4.x source release)
 
-> **Version in this release:** `4.5.1-1`  •  **Runtime:** Python **3.12** (required)
-
 **An all-in-one drum-charting tool for [Paradiddle](https://www.paradiddleapp.com/) (`.rlrr`), with Clone Hero (`.chart`) support.**
 
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works, until that ships
 >v4 will continue getting regular updates often.
+
+> **Version in this release:** `4.5.1-1`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
