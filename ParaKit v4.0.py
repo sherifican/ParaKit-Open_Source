@@ -23489,7 +23489,9 @@ demucs.separate.main()
         if neutral:
             border, fg = "#00d4d4", "#00d4d4"   # cyan = present format info
         elif text == "OGG":
-            border, fg = "#b388ff", "#b388ff"   # purple = .ogg files present (checker)
+            # purple when the .ogg is present, dim when absent (parallels STEMS/MIDI so
+            # the always-rendered OGG slot keeps the badge row a constant width)
+            border, fg = ("#b388ff", "#b388ff") if present else ("#4a4a6b", "#8a8aa2")
         elif present:
             border, fg = "#46d18a", "#46d18a"
         else:
@@ -23506,7 +23508,7 @@ demucs.separate.main()
         if neutral:
             _tip = "Audio file exists ✔" if present else f"{text} file not found ✖"
         elif text == "OGG":
-            _tip = ".ogg files exist"
+            _tip = ".ogg files exist ✔" if present else ".ogg file not found ✖"
         elif text == "STEMS":
             _tip = "Split drum stems exist ✔" if present else "STEMS file not found ✖"
         elif text == "MIDI":
@@ -23595,10 +23597,12 @@ demucs.separate.main()
         row._yt_color_targets.append(badges)
         self._yt_make_badge(badges, (entry.get("fmt") or "flac").upper(),
                             present=True, neutral=True, row=row)
-        # v4.4.68-1 — purple ".ogg files exist" checker, right next to the format
-        # badge; only rendered when an .ogg counterpart of the song is on disk.
-        if self._ogg_paired(path):
-            self._yt_make_badge(badges, "OGG", present=True, row=row)
+        # v4.4.68-1 — ".ogg files exist" checker badge, right after the format badge.
+        # v4.5.2-1 (owner): ALWAYS rendered now — purple when the .ogg is on disk, dim
+        # when absent (the SAME present/absent pattern as STEMS/MIDI) — so the badge
+        # row keeps a constant width and the Delete chip + "|" divider stay statically
+        # column-aligned across rows whether or not the .ogg exists yet.
+        self._yt_make_badge(badges, "OGG", present=self._ogg_paired(path), row=row)
         self._yt_make_badge(badges, "STEMS", present=split, row=row)
         self._yt_make_badge(badges, "MIDI", present=midi, row=row)
 
@@ -25717,7 +25721,11 @@ demucs.separate.main()
               "    audio's tags, or the file name if there are none.\n"
               "  - Fixed: the MIDI Editor waveform now scrolls and zooms in sync with the\n"
               "    chart when you use the mouse wheel (before, it only kept pace during\n"
-              "    playback or when you dragged the scrollbar).\n")
+              "    playback or when you dragged the scrollbar).\n"
+              "  - Fixed: in the YouTube to FLAC download library, the Delete button now\n"
+              "    lines up in a neat column on every row. The OGG badge shows for every\n"
+              "    song (dim until the .ogg exists, like the STEMS / MIDI badges), so rows\n"
+              "    with fewer files no longer shift the buttons out of alignment.\n")
 
         wn_entry(wn_latest,
               "v4.5.1-1 - Hi-hat recovery: the chart now keeps more of your hi-hats\n"
