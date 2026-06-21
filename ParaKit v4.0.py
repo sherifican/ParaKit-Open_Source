@@ -3204,8 +3204,15 @@ A2M_HYBRID_ML_ONLY_MIN_CONF = {
                      # all genres) net-positive with no other-lane regression. Freeze-exempt constant.
     "crash": 0.66,
     "ride": 0.66,
-    "floor_tom": 0.58,
-    "tom_mid": 0.58,
+    # v4.5.2-1 Tom Recovery — was 0.58 (the strict ML-only gate that hid real
+    # toms). Spectral finds ~zero toms, so every tom is an ML-only hit and this
+    # gate was rejecting toms the ML model had actually found. Lowering it
+    # recovers them. Default = "Conservative" (0.35); the Audio→MIDI ▸ Advanced
+    # ▸ "Tom detection sensitivity" dropdown overrides BOTH tom lanes per the
+    # validated A2M_TOM_SENSITIVITY_PRESETS below. Freeze-exempt; validated
+    # post-cleanup on 101 tracks with ZERO high-lane regression.
+    "floor_tom": 0.35,
+    "tom_mid": 0.35,
 }
 A2M_HYBRID_ML_ONLY_MIN_GAP = {
     # v4.4.52 — kick gap tightened 0.045 → 0.060 per F-DET-017 Phase 1
@@ -3229,8 +3236,8 @@ A2M_HYBRID_ML_ONLY_THRESH_BOOST = {
     "hihat": -0.15,  # v4.5.1-1 hi-hat recovery (was 0.04) — merge-gate floor, paired with MIN_CONF above
     "crash": 0.14,
     "ride": 0.14,
-    "floor_tom": 0.08,
-    "tom_mid": 0.08,
+    "floor_tom": -0.15,  # v4.5.2-1 Tom Recovery (was 0.08) — Conservative default (T−0.5);
+    "tom_mid": -0.15,    # overridden per-run by the Tom detection sensitivity dropdown
 }
 A2M_ML_CLASS_CONF_BOOST = {
     "kick": 0.00,
@@ -3238,8 +3245,8 @@ A2M_ML_CLASS_CONF_BOOST = {
     "hihat": -0.15,  # v4.5.1-1 hi-hat recovery (was 0.03) — lowers the ML detection threshold for hi-hats
     "crash": 0.05,
     "ride": 0.05,
-    "floor_tom": -0.02,
-    "tom_mid": -0.02,
+    "floor_tom": -0.15,  # v4.5.2-1 Tom Recovery (was -0.02) — Conservative default (T−0.5);
+    "tom_mid": -0.15,    # overridden per-run by the Tom detection sensitivity dropdown
 }
 A2M_ML_CLASS_MIN_GAP = {
     "kick": 0.020,
@@ -3250,6 +3257,39 @@ A2M_ML_CLASS_MIN_GAP = {
     "floor_tom": 0.020,
     "tom_mid": 0.020,
 }
+
+# ── Tom detection sensitivity presets (v4.5.2-1) ──────────────────────────────
+# Owner-directed, freeze-exempt control (NOT a protected-function / detection-algo
+# change): each preset sets the per-class tom ML-only gate constants for BOTH tom
+# lanes, faithfully reproducing the validated operating points from the 101-track
+# post-cleanup sweep (tools/detection_harness/results/tom_postcleanup_summary.json,
+# 2026-06-20). The kick/snare/hi-hat/crash lanes are byte-identical at every
+# setting — the gate touches toms only. Tuple = (MIN_CONF, THRESH_BOOST, CONF_BOOST).
+#   Strict       0.58 / 0.08 / -0.02  legacy baseline (pre-tom-recovery), fewest toms
+#   Conservative 0.35 /-0.15 / -0.15  DEFAULT — tom_mid F 0.169->0.279; identical
+#                                     to the shipped v4.5.1-1 hi-hat-fix values
+#   Balanced     0.28 /-0.22 / -0.22  F-knee — tom_mid F 0.295
+#   Aggressive   0.20 /-0.30 / -0.30  max recall — tom_mid F 0.295, R 0.40
+A2M_TOM_SENSITIVITY_PRESETS = {
+    "Strict":       (0.58,  0.08, -0.02),
+    "Conservative": (0.35, -0.15, -0.15),
+    "Balanced":     (0.28, -0.22, -0.22),
+    "Aggressive":   (0.20, -0.30, -0.30),
+}
+
+
+def _apply_tom_sensitivity_preset(preset_name):
+    """Set the freeze-exempt tom ML-only gate constants for the chosen sensitivity
+    preset. Mutates the module-level gate dicts for tom_mid + floor_tom ONLY; the
+    high lanes (kick/snare/hi-hat/crash) are never touched. Unknown name falls back
+    to Conservative. Same module-level-constant mechanism as the shipped hi-hat
+    recovery — it does NOT alter any protected detection function."""
+    min_conf, thresh_boost, conf_boost = A2M_TOM_SENSITIVITY_PRESETS.get(
+        preset_name, A2M_TOM_SENSITIVITY_PRESETS["Conservative"])
+    for _lane in ("tom_mid", "floor_tom"):
+        A2M_HYBRID_ML_ONLY_MIN_CONF[_lane] = min_conf
+        A2M_HYBRID_ML_ONLY_THRESH_BOOST[_lane] = thresh_boost
+        A2M_ML_CLASS_CONF_BOOST[_lane] = conf_boost
 
 
 def _a2m_filter_hybrid_ml_candidates(class_name, spec_times, ml_times, ml_confs,
@@ -10194,6 +10234,47 @@ demucs.separate.main()
             "snare flams."
         )
 
+        # ── Tom detection sensitivity (v4.5.2-1) ──────────────────────────────
+        # Freeze-exempt: drives the per-class tom ML-only gate constants (the same
+        # mechanism as the shipped v4.5.1-1 hi-hat recovery). Applied per-run at
+        # convert time via _apply_tom_sensitivity_preset(); never touches a
+        # protected detection function and never affects the high lanes.
+        tom_sens_row = ttk.Frame(adv_frame)
+        tom_sens_row.pack(anchor="w", fill=tk.X, pady=(8, 0))
+        ttk.Label(tom_sens_row, text="Tom detection sensitivity:").pack(
+            side=tk.LEFT, padx=(0, 6))
+        self.a2m_tom_sensitivity_var = tk.StringVar(
+            value=load_config().get("a2m_tom_sensitivity", "Conservative"))
+        if self.a2m_tom_sensitivity_var.get() not in A2M_TOM_SENSITIVITY_PRESETS:
+            self.a2m_tom_sensitivity_var.set("Conservative")
+        tom_sens_combo = ttk.Combobox(
+            tom_sens_row, textvariable=self.a2m_tom_sensitivity_var,
+            values=["Strict", "Conservative", "Balanced", "Aggressive"],
+            state="readonly", width=14)
+        tom_sens_combo.pack(side=tk.LEFT)
+        self.a2m_tom_sensitivity_var.trace_add(
+            "write", lambda *_: save_config(
+                {"a2m_tom_sensitivity": self.a2m_tom_sensitivity_var.get()}))
+        ttk.Label(adv_frame,
+                  text=("Recovers toms the AI detector found but the strict gate was hiding. "
+                        "Higher = more toms (and a few more phantom toms to clean up); "
+                        "Strict = legacy behavior. Kick / snare / hi-hat / crash are never "
+                        "affected. Takes effect on the next conversion."),
+                  style="Sub.TLabel", foreground="#9a9ab0",
+                  wraplength=560, justify="left").pack(anchor="w", pady=(2, 0))
+        self._add_tooltip(
+            tom_sens_combo,
+            "Controls how aggressively ParaKit recovers tom hits.\n\n"
+            "Spectral detection finds almost no toms, so the AI/ML model's tom\n"
+            "hits face a strict confidence gate that was throwing real toms away.\n"
+            "This loosens that gate — for toms only:\n\n"
+            "  Strict        — fewest toms (the older behavior)\n"
+            "  Conservative  — default; recovers most toms, few false ones\n"
+            "  Balanced      — a few more toms, a few more false ones\n"
+            "  Aggressive    — the most toms (best when a song is tom-heavy)\n\n"
+            "Kick, snare, hi-hat and crash are NEVER changed by this setting.\n"
+            "Takes effect on the next conversion.")
+
         # ── Dedup gap controls ────────────────────────────────────────────────
         ttk.Separator(adv_frame, orient="horizontal").pack(fill=tk.X, pady=(10, 8))
 
@@ -11362,6 +11443,13 @@ demucs.separate.main()
         self.a2m_progress.start(12)
         self.a2m_timer_lbl.configure(text="⏱  00:00")
         self._timer_start(self.a2m_timer_lbl)
+
+        # Apply the chosen Tom detection sensitivity preset to the freeze-exempt tom
+        # ML-only gate constants right before conversion. This is OUTSIDE
+        # _a2m_do_convert's protected body — the same module-level-constant mechanism
+        # as the shipped hi-hat recovery (it never alters a protected function).
+        if hasattr(self, "a2m_tom_sensitivity_var"):
+            _apply_tom_sensitivity_preset(self.a2m_tom_sensitivity_var.get())
 
         thread = threading.Thread(
             target=self._a2m_do_convert,
@@ -13737,8 +13825,9 @@ demucs.separate.main()
             "Useful for checking whether notes land exactly where you expect\n"
             "them in a tricky section — watch for the white flash at the beat.")
 
-        # v4.4.28 / v4.4.29 — Waveform display style selector. Three modes:
-        #   "bars" (default): per-pixel vertical-line rendering with
+        # v4.4.28 / v4.4.29 — Waveform display style selector. (v4.5.2-1 added a
+        # 4th mode, "stereo_color", and made it the default — see below.)
+        #   "bars": per-pixel vertical-line rendering with
         #     intensity-graded color (existing pre-toggle behavior).
         #   "filled_jagged": peak-traced polygon in ParaKit purple, one
         #     vertex per amps[] point in the visible region (jagged top
@@ -13757,10 +13846,11 @@ demucs.separate.main()
         wave_row.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(wave_row, text="Waveform:",
                   style="Sub.TLabel").pack(side=tk.LEFT, padx=(0, 4))
-        # v4.4.29 — config migration: the v4.4.28 "filled" smooth mode was
-        # removed. Any user with `me_waveform_style: "filled"` saved in
-        # their config gets reset to the safe "bars" default on next load.
-        _loaded_wave_style = load_config().get("me_waveform_style", "bars")
+        # v4.5.2-1 — the two-tone "Stereo" style is now the DEFAULT for users who
+        # have not picked a waveform style (anyone with a saved preference keeps it).
+        # v4.4.29 config migration still stands: the removed v4.4.28 "filled" smooth
+        # mode maps to the safe "bars" style on load.
+        _loaded_wave_style = load_config().get("me_waveform_style", "stereo_color")
         if _loaded_wave_style == "filled":
             _loaded_wave_style = "bars"
         self.me_waveform_style_var = tk.StringVar(value=_loaded_wave_style)
@@ -13784,9 +13874,9 @@ demucs.separate.main()
                 {"me_waveform_style": self.me_waveform_style_var.get()}))
         self._add_tooltip(
             _wave_rb.master,
-            "Bars: per-pixel vertical lines with intensity-graded color\n"
-            "  (default). Forces a 1-pixel line on every column so quiet\n"
-            "  sections still show a faint stripe.\n"
+            "Bars: per-pixel vertical lines with intensity-graded color.\n"
+            "  Forces a 1-pixel line on every column so quiet sections\n"
+            "  still show a faint stripe.\n"
             "Filled (Jagged): continuous purple polygon with the top edge\n"
             "  tracing every amplitude sample — spikier silhouette, more\n"
             "  amplitude detail on dense passages.\n"
@@ -13795,10 +13885,10 @@ demucs.separate.main()
             "  (silence skipped) so hits read as crisp peaks against empty\n"
             "  space — the same rendering style as the developer Stem\n"
             "  Compare tool.\n"
-            "Stereo: two-tone filled waveform in ParaKit's theme colors —\n"
-            "  the left channel in magenta above the midline, the right\n"
-            "  channel in cyan below (mono audio splits the same envelope\n"
-            "  top/bottom). The Paradiddle-style look.\n\n"
+            "Stereo: two-tone filled waveform in ParaKit's theme colors\n"
+            "  (default) — the left channel in magenta above the midline,\n"
+            "  the right channel in cyan below (mono audio splits the same\n"
+            "  envelope top/bottom). The Paradiddle-style look.\n\n"
             "Switch any time; the change applies immediately and your\n"
             "preference is remembered across app restarts.")
 
@@ -17401,7 +17491,7 @@ demucs.separate.main()
             # Mix to mono, take absolute value
             mono = np.abs(data.mean(axis=1))
             # v4 — also cache per-channel envelopes for the two-tone "Stereo"
-            # waveform style (left=green, right=magenta). Mono sources reuse
+            # waveform style (left=magenta, right=cyan). Mono sources reuse
             # the same envelope for both sides (top/bottom split).
             if data.shape[1] >= 2:
                 left = np.abs(data[:, 0]); right = np.abs(data[:, 1])
@@ -17597,8 +17687,8 @@ demucs.separate.main()
                 style = "bars"  # any rendering error → fall back to Bars
 
         elif style == "stereo_color":
-            # Two-tone "Stereo" (Paradiddle-style). Left channel filled GREEN
-            # above the midline, right channel filled MAGENTA below — per-pixel
+            # Two-tone "Stereo" (Paradiddle-style). Left channel filled MAGENTA
+            # above the midline, right channel filled CYAN below — per-pixel
             # columns (same perf profile as Bars; the 25ms tick still uses the
             # playhead-only fast path above). Falls back to Bars if the stereo
             # cache is missing (older session / load failure) or on any error.
@@ -18749,6 +18839,9 @@ demucs.separate.main()
             "enhanced_detection_mode": getattr(
                 self, "a2m_enhanced_detection_mode_var",
                 tk.StringVar(value="off")).get(),
+            "tom_sensitivity": getattr(
+                self, "a2m_tom_sensitivity_var",
+                tk.StringVar(value="Conservative")).get(),
         }
 
     def _a2m_apply_settings_snapshot(self, settings):
@@ -18768,6 +18861,7 @@ demucs.separate.main()
             ("a2m_cleanup_cymbal_var", "cleanup_cymbal"),
             ("a2m_cleanup_kick_var", "cleanup_kick"),
             ("a2m_enhanced_detection_mode_var", "enhanced_detection_mode"),
+            ("a2m_tom_sensitivity_var", "tom_sensitivity"),
         ]:
             if key in settings and hasattr(self, attr):
                 try:
@@ -25490,17 +25584,22 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
-              "v4.5.2-1 - New MIDI Editor waveform style: Stereo (two-tone)\n"
+              "v4.5.2-1 - Tom recovery control + two-tone Stereo waveform (now default)\n"
               "  Changes/Additions:\n"
-              "  - The MIDI Editor waveform strip has a new 'Stereo' display style\n"
-              "    (Display & Snap > Waveform). It draws a two-tone filled waveform\n"
-              "    in ParaKit's theme colors - the left channel in magenta above the\n"
-              "    midline, the right channel in cyan below (mono audio splits the\n"
-              "    same envelope top and bottom).\n"
-              "  - The two colors make small changes in the waveform easier to spot:\n"
-              "    differences that are hard to notice when the whole waveform is one\n"
-              "    color stand out at a glance. Switch any time; your choice is\n"
-              "    remembered. The Bars / Filled / Jagged styles are unchanged.\n")
+              "  - New 'Tom detection sensitivity' control (Audio to MIDI > Advanced).\n"
+              "    The detector finds toms but a strict confidence gate was hiding many\n"
+              "    of them; this lets you recover them. Four settings - Strict /\n"
+              "    Conservative / Balanced / Aggressive - with Conservative the new\n"
+              "    default, so charts keep more of the toms the detector actually found,\n"
+              "    out of the box. Kick, snare, hi-hat and crash are never affected; set\n"
+              "    it to Strict for the older behavior.\n"
+              "  - The MIDI Editor waveform's 'Stereo' display style (Display & Snap >\n"
+              "    Waveform) is now the DEFAULT. It draws a two-tone filled waveform in\n"
+              "    ParaKit's theme colors - the left channel in magenta above the\n"
+              "    midline, the right channel in cyan below (mono audio splits the same\n"
+              "    envelope top and bottom). The two colors make small waveform changes\n"
+              "    easier to spot than a single color. Switch to Bars / Filled / Jagged\n"
+              "    any time; your choice is remembered.\n")
 
         wn_entry(wn_latest,
               "v4.5.1-1 - Hi-hat recovery: the chart now keeps more of your hi-hats\n"
