@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works, until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.5.1-1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.2-1`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -80,7 +80,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.5.1-1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.2-1`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -456,6 +456,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.5.2-1**<br>2026-06-20 | <ul><li>**New MIDI Editor waveform style: "Stereo" (two-tone).** The waveform strip under the MIDI Editor has a new display style (**Display & Snap ▸ Waveform ▸ Stereo**) that draws a two-tone *filled* waveform in ParaKit's theme colors — the left channel in **magenta** above the midline, the right channel in **cyan** below (mono audio splits the same envelope top and bottom). The two colors make small changes in the waveform easier to spot — differences that are hard to notice when the whole waveform is one color stand out at a glance. Switch any time; your choice is remembered. The Bars / Filled / Jagged styles are unchanged.</li></ul> |
 | **v4.5.1-1**<br>2026-06-20 | <ul><li>**Hi-hat recovery — Audio → MIDI now keeps more of the hi-hats it was dropping.** In Hybrid mode a hit normally has to be "confirmed" by the spectral engine, but spectral detects almost no hi-hats — so every hat had to clear a stricter confidence bar on its own, and softer / faster hats (intros, fast hat patterns) were being thrown out. The hi-hat confidence gate is retuned so those real hits survive. **Hi-hat only** — kick, snare, crash, ride and toms are unchanged. Validated on the final chart (after the cleanup pass) across a 60-song corpus and 14 fresh songs spanning pop, R&B, rock, metalcore, funk and electronic — hi-hat accuracy improved on every genre with no false-hat blowups. (See the *Detection Update — Hi-Hat Recovery* section above for the data.)</li></ul> |
 | **v4.5.0-1**<br>2026-06-18 | <ul><li>**New: automatic detection cleanup pass for Audio → MIDI.** A trained pass now cleans the converted chart before it opens — moving cymbal hits into the right lane (hi-hat / crash / ride) when the detector lumped them together, and removing "phantom" kicks that don't match a real onset. On unseen songs it measurably improved cymbal accuracy (including recovering ride hits that were being missed) with no loss elsewhere. Three toggles under **Audio → MIDI ▸ Advanced** (all on by default); turn the master off for the exact raw output of older versions. With "Ride cymbal detection" off, the cleanup adds no rides either.</li><li>**Fixed: the MIDI Editor playback preview could slowly drift out of sync with the audio on long songs** — the playhead and falling notes now stay locked to the audio for the whole track.</li></ul> |
 | **v4.4.69-1**<br>2026-06-17 | <ul><li>**Fixed: the .ogg checker badge now actually shows up.** It was looking for the `.ogg` next to the song's FLAC, but the Stem Splitter saves `.ogg` files to a different folder than the `.flac` — so the badge now checks your Stem Splitter output folder (and scans your project folder as a fallback). It appears on songs that have `.ogg` stems.</li></ul> |

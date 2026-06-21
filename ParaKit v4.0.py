@@ -5340,7 +5340,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.1-1"
+    VERSION = "4.5.2-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -13766,7 +13766,8 @@ demucs.separate.main()
         self.me_waveform_style_var = tk.StringVar(value=_loaded_wave_style)
         for _wave_label, _wave_val in (("Bars", "bars"),
                                        ("Filled (Jagged)", "filled_jagged"),
-                                       ("Jagged Hollow", "jagged_detailed")):
+                                       ("Jagged Hollow", "jagged_detailed"),
+                                       ("Stereo", "stereo_color")):
             _wave_rb = ttk.Radiobutton(
                 wave_row, text=_wave_label,
                 variable=self.me_waveform_style_var,
@@ -13793,7 +13794,11 @@ demucs.separate.main()
             "  uniform color. Quiet sections render as a flat midline\n"
             "  (silence skipped) so hits read as crisp peaks against empty\n"
             "  space — the same rendering style as the developer Stem\n"
-            "  Compare tool.\n\n"
+            "  Compare tool.\n"
+            "Stereo: two-tone filled waveform in ParaKit's theme colors —\n"
+            "  the left channel in magenta above the midline, the right\n"
+            "  channel in cyan below (mono audio splits the same envelope\n"
+            "  top/bottom). The Paradiddle-style look.\n\n"
             "Switch any time; the change applies immediately and your\n"
             "preference is remembered across app restarts.")
 
@@ -17395,14 +17400,28 @@ demucs.separate.main()
             data, rate = sf.read(audio_path, dtype='float32', always_2d=True)
             # Mix to mono, take absolute value
             mono = np.abs(data.mean(axis=1))
-            # Downsample to ~2000 points for drawing
+            # v4 — also cache per-channel envelopes for the two-tone "Stereo"
+            # waveform style (left=green, right=magenta). Mono sources reuse
+            # the same envelope for both sides (top/bottom split).
+            if data.shape[1] >= 2:
+                left = np.abs(data[:, 0]); right = np.abs(data[:, 1])
+            else:
+                left = right = np.abs(data[:, 0])
+            # Downsample (max-pool) to ~2000 points for drawing — same length
+            # for mono/left/right so the draw can index them interchangeably.
             target = 2000
-            if len(mono) > target:
-                chunk = len(mono) // target
-                mono = mono[:chunk * target].reshape(target, chunk).max(axis=1)
+
+            def _ds(a):
+                if len(a) > target:
+                    chunk = len(a) // target
+                    a = a[:chunk * target].reshape(target, chunk).max(axis=1)
+                return a
+            mono, left, right = _ds(mono), _ds(left), _ds(right)
             self._me_waveform_data = (mono, len(data) / rate)  # (amplitudes, duration_secs)
+            self._me_waveform_stereo = (left, right)            # (left_env, right_env)
         except Exception:
             self._me_waveform_data = None
+            self._me_waveform_stereo = None
         self._me_waveform_draw()
 
     def _me_waveform_draw(self, pos=None):
@@ -17574,6 +17593,35 @@ demucs.separate.main()
                 if len(top_pts) >= 4:  # need ≥2 vertices = ≥4 coords
                     c.create_line(*top_pts, fill="#b388ff", width=1)
                     c.create_line(*bot_pts, fill="#b388ff", width=1)
+            except Exception:
+                style = "bars"  # any rendering error → fall back to Bars
+
+        elif style == "stereo_color":
+            # Two-tone "Stereo" (Paradiddle-style). Left channel filled GREEN
+            # above the midline, right channel filled MAGENTA below — per-pixel
+            # columns (same perf profile as Bars; the 25ms tick still uses the
+            # playhead-only fast path above). Falls back to Bars if the stereo
+            # cache is missing (older session / load failure) or on any error.
+            try:
+                _stereo = getattr(self, "_me_waveform_stereo", None)
+                if not _stereo:
+                    style = "bars"
+                else:
+                    left_env, right_env = _stereo
+                    nL = len(left_env); nR = len(right_env)
+                    smax = max(float(left_env.max()), float(right_env.max()), 0.001)
+                    half = max(1, h // 2 - 2)
+                    # ParaKit theme: logo magenta (#bd02c1) above, UI cyan
+                    # (#00d4d4) below. Left channel = magenta, right = cyan.
+                    MAGENTA = "#bd02c1"; CYAN = "#00d4d4"
+                    for px in range(w):
+                        t = secs_start + (secs_end - secs_start) * px / w
+                        iL = max(0, min(int(t / audio_dur * nL), nL - 1))
+                        iR = max(0, min(int(t / audio_dur * nR), nR - 1))
+                        topH = max(1, int(left_env[iL] / smax * half))
+                        botH = max(1, int(right_env[iR] / smax * half))
+                        c.create_line(px, mid_y - topH, px, mid_y, fill=MAGENTA)
+                        c.create_line(px, mid_y, px, mid_y + botH, fill=CYAN)
             except Exception:
                 style = "bars"  # any rendering error → fall back to Bars
 
@@ -25442,6 +25490,19 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.5.2-1 - New MIDI Editor waveform style: Stereo (two-tone)\n"
+              "  Changes/Additions:\n"
+              "  - The MIDI Editor waveform strip has a new 'Stereo' display style\n"
+              "    (Display & Snap > Waveform). It draws a two-tone filled waveform\n"
+              "    in ParaKit's theme colors - the left channel in magenta above the\n"
+              "    midline, the right channel in cyan below (mono audio splits the\n"
+              "    same envelope top and bottom).\n"
+              "  - The two colors make small changes in the waveform easier to spot:\n"
+              "    differences that are hard to notice when the whole waveform is one\n"
+              "    color stand out at a glance. Switch any time; your choice is\n"
+              "    remembered. The Bars / Filled / Jagged styles are unchanged.\n")
+
+        wn_entry(wn_latest,
               "v4.5.1-1 - Hi-hat recovery: the chart now keeps more of your hi-hats\n"
               "  Changes/Additions:\n"
               "  - Audio to MIDI was quietly dropping hi-hats it had actually\n"
@@ -25484,7 +25545,7 @@ demucs.separate.main()
               "    would slide off the beat partway through. Playback now stays\n"
               "    locked to the audio for the whole track.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.4.69-1 - .ogg checker icon now finds your Stem Splitter .ogg files\n"
               "  Bug Fixes:\n"
               "  - The new purple OGG badge wasn't appearing because it looked for\n"
