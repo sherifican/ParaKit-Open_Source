@@ -245,7 +245,7 @@ with hands-on testing on real songs, **with sources listed**, and the experiment
 <img src="screenshots/app-05-audio-to-midi.png" width="900" alt="Audio to MIDI">
 
 ### 6 · MIDI Editor
-<img src="screenshots/app-06-midi-editor.png" width="900" alt="MIDI Editor">
+<img src="screenshots/app-06-midi-editor.png?v=20260620" width="900" alt="MIDI Editor">
 
 ### 7 · Sheet Music → MIDI
 <img src="screenshots/app-07-sheet-music-to-midi.png" width="900" alt="Sheet Music to MIDI">
