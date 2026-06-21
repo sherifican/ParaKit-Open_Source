@@ -379,8 +379,8 @@ A from-scratch rebuild that folds the falling-note **play** experience together 
 
 <p align="center">
   <img src="screenshots/practice-v3-home.png" width="270" alt="Practice v3 — home (Song / Setup / Input)">
-  <img src="screenshots/practice-v3-gameplay.png" width="270" alt="Practice v3 — gameplay">
-  <img src="screenshots/practice-v3-kit-studio.png" width="270" alt="Practice v3 — Kit Studio">
+  <img src="screenshots/practice-v3-gameplay.png?v=2" width="270" alt="Practice v3 — gameplay">
+  <img src="screenshots/practice-v3-kit-studio.png?v=2" width="270" alt="Practice v3 — Kit Studio">
   <img src="screenshots/practice-v3-song-details.png" width="270" alt="Practice v3 — a song expanded in the library, showing note count + audio-stem breakdown, difficulty, speed, and kit">
 </p>
 
