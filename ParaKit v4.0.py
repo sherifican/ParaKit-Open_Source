@@ -13451,6 +13451,30 @@ demucs.separate.main()
             "(from your Stem Splitter / YouTube output folders and next to the\n"
             "MIDI) and fills the Drums and Full Mix fields. Never touches Stem 3/4.")
 
+        # v4.5.2-1 — Song-title readout. Lives in af_row's EXISTING empty space to
+        # the right of Auto Fetch. LAYOUT-SAFE BY CONSTRUCTION: af_row is a single
+        # row whose height is the button's, and the much wider playback row
+        # (pb_frame, below) already fixes playback_col's width — so this label can
+        # never grow the column or add a row, i.e. it cannot reflow / smush the
+        # editor canvas or velocity lane. Shows the loaded song's title/artist (from
+        # the Full Mix tags, then Drums tags, then a cleaned file name); kept short
+        # in _me_update_song_title(). Updated by traces on the MIDI + audio vars.
+        self.me_song_title_var = tk.StringVar(value="")
+        self.me_song_title_lbl = ttk.Label(
+            af_row, textvariable=self.me_song_title_var,
+            font=("Segoe UI", 11, "bold"), foreground="#b388ff", anchor="w")
+        self.me_song_title_lbl.pack(side=tk.LEFT, padx=(14, 0))
+        self._add_tooltip(
+            self.me_song_title_lbl,
+            "The song you're working on — read from the Full Mix audio's title /\n"
+            "artist tags (or the Drums stem, or the file name). Updates when you\n"
+            "load a MIDI or fill the audio fields (e.g. via Auto Fetch Audio).")
+        try:
+            self.me_midi_var.trace_add(
+                "write", lambda *_: self._me_update_song_title())
+        except Exception:
+            pass
+
         # ── Playback controls ─────────────────────────────────────────────────
         pb_frame = ttk.Frame(playback_col)
         pb_frame.pack(fill=tk.X, pady=(0, 2))
@@ -14249,6 +14273,19 @@ demucs.separate.main()
         # Keep backward compat aliases
         self.me_audio_var     = self.me_stem_vars[0]
         self.me_audio_mix_var = self.me_stem_vars[1]
+        # v4.5.2-1 — refresh the toolbar song-title readout whenever the Drums /
+        # Full Mix paths change (Auto Fetch, manual Browse, or typing a path).
+        for _sv in (self.me_audio_var, self.me_audio_mix_var):
+            try:
+                _sv.trace_add("write", lambda *_: self._me_update_song_title())
+            except Exception:
+                pass
+        # Initial sync: reflect any MIDI / audio path already prefilled from recent
+        # files / config before these traces existed (the method is fully guarded).
+        try:
+            self._me_update_song_title()
+        except Exception:
+            pass
 
         def _me_preserve_active_cache():
             """Keep cached prepared audio for unchanged stems/speeds."""
@@ -16543,6 +16580,12 @@ demucs.separate.main()
             new = max(0.3, min(4.0, cur + delta * 0.15))
             self.me_zoom_var.set(round(new, 2))
             self._me_redraw()
+            # resync the waveform on wheel-zoom too (this branch calls _me_redraw
+            # directly, bypassing the deferred path that now resyncs it)
+            try:
+                self._me_waveform_draw()
+            except Exception:
+                pass
         else:
             units = int(-1 * (event.delta / 120)) if event.delta else 0
             self.me_canvas.xview_scroll(units, "units")
@@ -17147,6 +17190,15 @@ demucs.separate.main()
         """Called by _me_schedule_redraw after the debounce interval."""
         self._me_redraw_pending = None
         self._me_redraw()
+        # v4.5.2-1 — keep the waveform's visible window locked to the chart after a
+        # scroll/zoom redraw. Previously only scrollbar-drag (_me_hscroll_both) and
+        # playback resynced it, so wheel-scroll / Button-4/5 / the zoom & note-size
+        # sliders left the waveform frozen out of sync (oversight). The draw caches
+        # on the visible window, so an unchanged view fast-paths to a no-op.
+        try:
+            self._me_waveform_draw()
+        except Exception:
+            pass
 
     def _me_snapshot(self):
         """Build a full snapshot of editor state for undo/redo.
@@ -19374,6 +19426,66 @@ demucs.separate.main()
                 "Browse buttons.\n\n"
                 "Tip: Auto Fetch matches by file name — the Drums stem should be "
                 f"named '{song}_drums.<ext>' and the Full Mix '{song}.<ext>'.")
+
+    def _me_update_song_title(self):
+        """Refresh the MIDI Editor's song-title readout (the label beside Auto
+        Fetch Audio). Source priority: Full Mix audio tags (the non-split source) →
+        Drums stem tags → a cleaned MIDI/audio file name. Pure display; never raises
+        (all reads are guarded) and width-bounded, so it cannot reflow the editor."""
+        if not hasattr(self, "me_song_title_var"):
+            return
+        title = artist = ""
+        # 1. Prefer embedded title/artist tags — Full Mix first, then Drums.
+        for _vn in ("me_audio_mix_var", "me_audio_var"):
+            _v = getattr(self, _vn, None)
+            try:
+                _p = _v.get().strip() if _v is not None else ""
+            except Exception:
+                _p = ""
+            if _p and os.path.exists(_p):
+                try:
+                    _tags = batch_audio_metadata_lookup(_p)
+                except Exception:
+                    _tags = {}
+                title = (_tags.get("title") or "").strip()
+                artist = (_tags.get("artist") or "").strip()
+                if title:
+                    break
+        # 2. Fall back to a cleaned file name (MIDI → Full Mix → Drums).
+        if not title:
+            import re as _re
+            for _vn in ("me_midi_var", "me_audio_mix_var", "me_audio_var"):
+                _v = getattr(self, _vn, None)
+                try:
+                    _p = _v.get().strip() if _v is not None else ""
+                except Exception:
+                    _p = ""
+                if _p:
+                    _nm = os.path.splitext(os.path.basename(_p))[0]
+                    _nm = _re.sub(r'\s*\((?:editor\s+copy|copy)(?:\s*\d+)?\)', ' ', _nm,
+                                  flags=_re.I)
+                    _nm = _re.sub(r'\s{2,}', ' ', _nm).strip()
+                    # strip a trailing "_drums MIDI" / "_drums" / " MIDI" tail
+                    # (whitespace-tolerant so the order of the strips above is safe)
+                    _nm = _re.sub(r'(?:[_ ]drums)?(?:[_ ]MIDI)?\s*$', '', _nm,
+                                  flags=_re.I).strip()
+                    title = _nm
+                    if title:
+                        break
+        # 3. Compose + bound the length (the column width is already fixed by the
+        #    wider playback row below, so this is a defensive aesthetic cap only).
+        if title and artist:
+            _txt = f"\U0001F3B5  {title}  —  {artist}"
+        elif title:
+            _txt = f"\U0001F3B5  {title}"
+        else:
+            _txt = ""
+        if len(_txt) > 70:
+            _txt = _txt[:69].rstrip() + "…"
+        try:
+            self.me_song_title_var.set(_txt)
+        except Exception:
+            pass
 
     def _me_loop_set_in(self):
         """Set loop in point to current playback position."""
@@ -25584,7 +25696,7 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
-              "v4.5.2-1 - Tom recovery control + two-tone Stereo waveform (now default)\n"
+              "v4.5.2-1 - Tom recovery, Stereo waveform default, MIDI Editor song title + waveform sync fix\n"
               "  Changes/Additions:\n"
               "  - New 'Tom detection sensitivity' control (Audio to MIDI > Advanced).\n"
               "    The detector finds toms but a strict confidence gate was hiding many\n"
@@ -25599,7 +25711,13 @@ demucs.separate.main()
               "    midline, the right channel in cyan below (mono audio splits the same\n"
               "    envelope top and bottom). The two colors make small waveform changes\n"
               "    easier to spot than a single color. Switch to Bars / Filled / Jagged\n"
-              "    any time; your choice is remembered.\n")
+              "    any time; your choice is remembered.\n"
+              "  - New: the MIDI Editor now shows the song you're working on (title and\n"
+              "    artist) next to the Auto Fetch Audio button - read from the Full Mix\n"
+              "    audio's tags, or the file name if there are none.\n"
+              "  - Fixed: the MIDI Editor waveform now scrolls and zooms in sync with the\n"
+              "    chart when you use the mouse wheel (before, it only kept pace during\n"
+              "    playback or when you dragged the scrollbar).\n")
 
         wn_entry(wn_latest,
               "v4.5.1-1 - Hi-hat recovery: the chart now keeps more of your hi-hats\n"
