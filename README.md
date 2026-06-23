@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works, until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.5.2-1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.3-1`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -80,7 +80,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.5.2-1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.3-1`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -148,6 +148,27 @@ in Firefox before I had fixed the MIDI config, see below for details, although C
 - **Preview & Practice** — falling notes synced to the audio, keyboard or USB MIDI kit
 - **Song Tester** — verify sync before export
 - **Export** — Paradiddle (`.rlrr`) and Clone Hero (`.chart`)
+
+---
+
+## 🥁 Difficulty Update — better Easy / Medium / Hard charts *(v4.5.3-1)*
+
+The automatic **difficulty reduction** — the Easy / Medium / Hard versions ParaKit builds from your full chart —
+was **rebuilt.** The old version dropped the **kick and toms entirely** on Easy and Medium, so those charts were
+missing whole parts of the kit. It now **keeps a thinned-down kick and tom line** the way real charts do, matches
+the note density of human-made difficulties much more closely, and keeps the **strongest beats first** (downbeats
+before off-beats). **Expert charts are unchanged.** Instrument variants (alternate kicks/snares, china/splash
+cymbals) that used to vanish on lower difficulties are kept now too. Validated against the human-made Easy/Medium/Hard
+charts for 100+ Paradiddle songs.
+
+> **Heads-up / caveats:**
+> - **Hard** comes out closest to human charts, **Medium** is good, and **Easy** is the roughest tier.
+> - On the most heavily-thinned lanes — especially the **Easy kick and toms**, where a human keeps only a handful of
+>   notes — the reduction keeps the *right lanes at about the right density*, but **which exact notes it keeps won't
+>   always match a human's feel** (there are many equally-valid ways to thin an Easy chart).
+> - Reduced charts run **slightly busier** than a human's (a bit more kept than dropped).
+> - As always, give a reduced chart a quick once-over in the **MIDI Editor** — it's a strong starting point, not a
+>   finished hand-made difficulty.
 
 ---
 
@@ -456,6 +477,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.5.3-1**<br>2026-06-23 | <ul><li>**Difficulty reduction rebuilt — Easy / Medium / Hard charts are much better.** The auto-reduction used to drop the **kick and toms entirely** on Easy and Medium; it now **keeps a thinned-down kick + tom line** like real charts, matches human note density far more closely, and keeps the strongest beats first. **Expert is unchanged.** Instrument variants (alt kicks/snares, china/splash) that used to disappear on lower difficulties are kept now too. (See the *Difficulty Update* section above.)</li><li>**Caveats:** **Hard** is closest to human charts, **Medium** is good, **Easy** is the roughest tier — on heavily-thinned lanes (Easy kick/toms) it keeps the right lanes at about the right density, but the exact notes won't always match a human's feel, and reduced charts run slightly busier than a human's. Give reduced charts a quick once-over in the MIDI Editor.</li></ul> |
 | **v4.5.2-1**<br>2026-06-20 | <ul><li>**New: "Tom detection sensitivity" control for Audio → MIDI.** The detector finds toms, but a strict confidence gate was hiding many of them. A new dropdown under **Audio → MIDI ▸ Advanced** lets you pick how aggressively to recover them — **Strict / Conservative / Balanced / Aggressive** — with **Conservative the new default**, so charts keep more of the toms the detector actually found out of the box (tom F-score ≈ 0.17 → 0.28). **Kick, snare, hi-hat and crash are never affected** by it; choose Strict for the older behavior.</li><li>**The two-tone "Stereo" MIDI Editor waveform is now the default.** The waveform strip draws a *filled* two-tone waveform in ParaKit's theme colors — the left channel in **magenta** above the midline, the right channel in **cyan** below (mono audio splits the same envelope top and bottom). The two colors make small changes in the waveform easier to spot — differences that are hard to notice when the whole waveform is one color stand out at a glance. Switch to **Bars / Filled / Jagged** any time (**Display & Snap ▸ Waveform**); your choice is remembered.</li><li>**New: the MIDI Editor shows the song you're working on.** A title / artist readout sits next to **Auto Fetch Audio**, read from the Full Mix audio's tags (then the drum stem's tags, then a cleaned file name) — so you can see at a glance which song the open chart belongs to.</li><li>**Fixed: the MIDI Editor waveform now scrolls and zooms in sync with the chart on the mouse wheel.** Previously the waveform only kept pace during playback or when you dragged the scrollbar — wheel-scroll and zoom left it behind.</li><li>**Fixed: in the YouTube → FLAC download library, the Delete button now lines up in a clean column on every row.** The **OGG** badge now shows on every song (dim until the `.ogg` exists, just like the **STEMS / MIDI** badges), so rows with fewer files no longer shift the action buttons out of alignment.</li></ul> |
 | **v4.5.1-1**<br>2026-06-20 | <ul><li>**Hi-hat recovery — Audio → MIDI now keeps more of the hi-hats it was dropping.** In Hybrid mode a hit normally has to be "confirmed" by the spectral engine, but spectral detects almost no hi-hats — so every hat had to clear a stricter confidence bar on its own, and softer / faster hats (intros, fast hat patterns) were being thrown out. The hi-hat confidence gate is retuned so those real hits survive. **Hi-hat only** — kick, snare, crash, ride and toms are unchanged. Validated on the final chart (after the cleanup pass) across a 60-song corpus and 14 fresh songs spanning pop, R&B, rock, metalcore, funk and electronic — hi-hat accuracy improved on every genre with no false-hat blowups. (See the *Detection Update — Hi-Hat Recovery* section above for the data.)</li></ul> |
 | **v4.5.0-1**<br>2026-06-18 | <ul><li>**New: automatic detection cleanup pass for Audio → MIDI.** A trained pass now cleans the converted chart before it opens — moving cymbal hits into the right lane (hi-hat / crash / ride) when the detector lumped them together, and removing "phantom" kicks that don't match a real onset. On unseen songs it measurably improved cymbal accuracy (including recovering ride hits that were being missed) with no loss elsewhere. Three toggles under **Audio → MIDI ▸ Advanced** (all on by default); turn the master off for the exact raw output of older versions. With "Ride cymbal detection" off, the cleanup adds no rides either.</li><li>**Fixed: the MIDI Editor playback preview could slowly drift out of sync with the audio on long songs** — the playhead and falling notes now stay locked to the audio for the whole track.</li></ul> |

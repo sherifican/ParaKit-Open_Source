@@ -1678,9 +1678,10 @@ def build_rlrr(midi_notes, ticks_per_beat, bpm, offset, title, artist, creator,
 
 
 # ---------------------------------------------------------------------------
-# Difficulty-based note reduction (Option 1: Instrument Layering)
+# Difficulty-based note reduction (per-lane retention; see reduce_notes_for_difficulty)
 # ---------------------------------------------------------------------------
-# Instrument groups used for layering decisions
+# LEGACY v1 instrument-name sets (exact-suffix). The rebuilt reducer matches lanes
+# by family PREFIX and no longer reads these; kept for reference only.
 KICK_INSTRUMENTS    = {"BP_Kick_C_1"}
 SNARE_INSTRUMENTS   = {"BP_Snare_C_1"}
 HIHAT_INSTRUMENTS   = {"BP_HiHat_C_1"}
@@ -1692,145 +1693,119 @@ TOM_INSTRUMENTS     = {"BP_Tom1_C_1", "BP_Tom2_C_2", "BP_FloorTom_C_1"}
 ALWAYS_KEEP = CRASH_INSTRUMENTS | RIDE_INSTRUMENTS
 
 
+# Per-(tier, lane) retention targets for reduce_notes_for_difficulty (v4.5.x
+# rebuild 2026-06-22). Fractions of Expert notes to KEEP per lane, seeded from
+# the human ParaDB tier profile (tools/detection_harness/results/
+# human_tier_profile.json) and harness-validated (eval_difficulty_reduction.py).
+_DIFFICULTY_RETENTION = {
+    "Hard":   {"kick": 0.92, "snare": 0.95, "hihat": 1.00, "crash": 1.00,
+               "ride": 0.95, "tom_mid": 0.92, "floor_tom": 0.85},
+    "Medium": {"kick": 0.42, "snare": 0.73, "hihat": 0.73, "crash": 1.00,
+               "ride": 0.55, "tom_mid": 0.46, "floor_tom": 0.42},
+    "Easy":   {"kick": 0.18, "snare": 0.70, "hihat": 0.52, "crash": 1.00,
+               "ride": 0.40, "tom_mid": 0.34, "floor_tom": 0.30},
+}
+
+
 def reduce_notes_for_difficulty(events, bpm, difficulty):
     """
-    Apply instrument-layering difficulty reduction to a list of events.
-    Mirrors how real Paradiddle charts are authored:
+    Difficulty reduction by PER-LANE RETENTION (v4.5.x rebuild, 2026-06-22).
 
-      Easy   — Snare (main hits only) + Hi-hat (8th notes only) + Crashes/Rides
-      Medium — Easy + Kick (on-beat only, min 2-beat spacing)
-      Hard   — Full kick + full hi-hat (16th notes) + snare main hits + crashes/rides + toms
-      Expert — Everything including ghost notes/snare fills (no reduction)
+    Each lane is KEPT but THINNED to the fraction of notes humans keep at the
+    target tier (measured from the human ParaDB Easy/Medium/Hard charts), by
+    selecting the metrically-strongest notes (downbeat > beat > 8th > 16th >
+    off-grid). This REPLACES the v1 instrument on/off layering, which (a) dropped
+    kick + toms entirely on Easy/Medium although humans keep thinned versions,
+    (b) had a tempo-broken ghost-note test that was a no-op above ~100 BPM (so
+    Hard collapsed into Expert), and (c) silently dropped instrument-name
+    variants. Lanes are matched by family PREFIX, so variants (BP_Kick_C_0/_C_69,
+    alt snares/toms, second crash/ride sizes) are no longer dropped; china/splash
+    map to the crash lane. tambourine/cowbell/unknown have no lane and are dropped.
 
-    Returns a new filtered+sorted list of events.
+    Validated on tools/detection_harness/eval_difficulty_reduction.py vs the human
+    ParaDB tiers (±50 ms, 98 tracks): macro-F Hard 0.85 / Medium 0.67 / Easy 0.53
+    (v1 was 0.85 / 0.55 / 0.47). Expert is returned unchanged (no reduction).
+
+    'complexity' (recording metadata) does NOT reach this function; the signature
+    is (events, bpm, difficulty). Returns a new filtered + time-sorted list.
     """
-    if difficulty == "Expert":
-        return events  # No reduction
+    if difficulty == "Expert" or difficulty not in _DIFFICULTY_RETENTION:
+        return events
+    if not events:
+        return []
+    if not bpm or float(bpm) <= 0:
+        return events   # degenerate tempo -> return unchanged rather than divide-by-zero
+    beat = 60.0 / float(bpm)
 
-    beat = 60.0 / bpm
-    eighth = beat / 2.0        # 8th note duration
-    sixteenth = beat / 4.0     # 16th note duration
+    def _lane_of(name):
+        if name.startswith("BP_Kick"):     return "kick"
+        if name.startswith("BP_Snare"):    return "snare"
+        if name.startswith("BP_HiHat"):    return "hihat"
+        if name.startswith("BP_Crash") or name.startswith("BP_China") or name.startswith("BP_Splash"):
+            return "crash"
+        if name.startswith("BP_Ride"):     return "ride"
+        if name.startswith("BP_FloorTom"): return "floor_tom"
+        if name.startswith("BP_Tom"):      return "tom_mid"
+        return None
 
-    # --- Identify ghost notes in snare ---
-    # Ghost notes fall between 8th-note grid positions (off the beat grid).
-    # Real snare hits land on 8th-note boundaries; ghost notes/fills do not.
-    # This matches 100% accuracy vs real Paradiddle difficulty files.
-    snare_events = sorted(
-        [e for e in events if e["name"] in SNARE_INSTRUMENTS],
-        key=lambda e: float(e["time"])
-    )
-    # Use the first snare hit as the beat-grid anchor
-    snare_anchor = float(snare_events[0]["time"]) if snare_events else 0.0
+    # Robust grid anchor: mode phase of the kick+snare backbone (vs v1's fragile
+    # first-hit anchor, which a pickup/grace note could shift for the whole song).
+    BINS = 24
+    offs = [float(e["time"]) % beat for e in events if _lane_of(e["name"]) in ("kick", "snare")]
+    if not offs:
+        offs = [float(e["time"]) % beat for e in events]
+    if offs:
+        counts = [0] * BINS
+        for o in offs:
+            counts[int((o / beat) * BINS) % BINS] += 1
+        anchor = (counts.index(max(counts)) + 0.5) / BINS * beat
+    else:
+        anchor = 0.0
 
-    def is_on_eighth_grid(t, tolerance=0.15):
-        """True if t lands on an 8th-note boundary from the snare anchor."""
-        offset = (float(t) - snare_anchor) % eighth
-        return min(offset, eighth - offset) < tolerance
-
-    ghost_snare_times = set()
-    for e in snare_events:
-        if not is_on_eighth_grid(e["time"]):
-            ghost_snare_times.add(e["time"])
-
-    # --- Identify on-beat kicks ---
-    # Find the earliest kick to use as beat-grid anchor
-    kick_events = sorted(
-        [e for e in events if e["name"] in KICK_INSTRUMENTS],
-        key=lambda e: float(e["time"])
-    )
-    beat_anchor = float(kick_events[0]["time"]) if kick_events else 0.0
-
-    def is_on_beat(t, tolerance=0.05):
-        beats_from_anchor = (float(t) - beat_anchor) / beat
-        return abs(beats_from_anchor - round(beats_from_anchor)) < tolerance
-
-    # For medium kick: keep only on-beat kicks, enforcing min 2-beat gap
-    def select_medium_kicks(kick_evts):
-        selected = []
-        last_time = -999.0
-        for e in sorted(kick_evts, key=lambda e: float(e["time"])):
-            t = float(e["time"])
-            if is_on_beat(t) and (t - last_time) >= (beat * 2.0 * 0.9):
-                selected.append(e)
-                last_time = t
-        return selected
-
-    # --- Hi-hat thinning ---
-    # Easy/Medium: keep only every other hi-hat (8th notes from 16th-note grid)
-    # Hard/Expert: keep all hi-hats
-    def thin_hihats(hh_evts):
-        """Keep every other hi-hat hit, preserving the ones on 8th-note boundaries."""
-        sorted_hh = sorted(hh_evts, key=lambda e: float(e["time"]))
-        if not sorted_hh:
+    def _metric_keep(evts, keep):
+        """Keep the `keep` metrically-strongest notes from a single lane."""
+        if keep >= len(evts):
+            return list(evts)
+        if keep <= 0:
             return []
-        # Use the first hihat as anchor and keep hits that are ~8th-note spaced
-        kept = [sorted_hh[0]]
-        for e in sorted_hh[1:]:
-            gap = float(e["time"]) - float(kept[-1]["time"])
-            if gap >= eighth * 0.9:   # at least an 8th note since last kept hit
-                kept.append(e)
-        return kept
+        TOL = 0.12  # fraction of a beat
+        scored = []
+        for e in evts:
+            t = float(e["time"])
+            p = ((t - anchor) % beat) / beat
+            d_beat = min(p, 1.0 - p)
+            d_8 = abs(p - 0.5)
+            d_16 = min(abs(p - 0.25), abs(p - 0.75))
+            if d_beat < TOL:
+                s = 4.0
+            elif d_8 < TOL:
+                s = 3.0
+            elif d_16 < TOL:
+                s = 2.0
+            else:
+                s = 1.0
+            if round((t - anchor) / beat) % 4 == 0:   # bar downbeat (assume 4/4)
+                s += 0.5
+            scored.append((s, t, e))
+        scored.sort(key=lambda x: (-x[0], x[1]))       # strongest first, then time-ordered
+        return [e for (_s, _t, e) in scored[:keep]]
 
-    # --- Build filtered event list by difficulty ---
-    filtered = []
-
+    by = {}
     for e in events:
-        name = e["name"]
-        t = e["time"]
-
-        # Crashes and rides always pass through
-        if name in ALWAYS_KEEP:
-            filtered.append(e)
+        lane = _lane_of(e["name"])
+        if lane is None:
             continue
+        by.setdefault(lane, []).append(e)
 
-        if difficulty == "Easy":
-            # Snare: main hits only (no ghost notes)
-            if name in SNARE_INSTRUMENTS and t not in ghost_snare_times:
-                filtered.append(e)
-            # Hi-hat: will be thinned below
-            elif name in HIHAT_INSTRUMENTS:
-                filtered.append(e)
-            # Kick: dropped entirely
-            # Toms: dropped entirely
-
-        elif difficulty == "Medium":
-            # Snare: same as Easy (no ghost notes)
-            if name in SNARE_INSTRUMENTS and t not in ghost_snare_times:
-                filtered.append(e)
-            # Hi-hat: will be thinned below
-            elif name in HIHAT_INSTRUMENTS:
-                filtered.append(e)
-            # Kick: on-beat only (handled separately below)
-            elif name in KICK_INSTRUMENTS:
-                filtered.append(e)   # placeholder; filtered below
-            # Toms: dropped entirely
-
-        elif difficulty == "Hard":
-            # Snare: main hits only (no ghost notes)
-            if name in SNARE_INSTRUMENTS and t not in ghost_snare_times:
-                filtered.append(e)
-            # Hi-hat: full density (all hits kept)
-            elif name in HIHAT_INSTRUMENTS:
-                filtered.append(e)
-            # Kick: full density
-            elif name in KICK_INSTRUMENTS:
-                filtered.append(e)
-            # Toms: included on Hard
-            elif name in TOM_INSTRUMENTS:
-                filtered.append(e)
-
-    # Apply hi-hat thinning for Easy and Medium
-    if difficulty in ("Easy", "Medium"):
-        hh_in = [e for e in filtered if e["name"] in HIHAT_INSTRUMENTS]
-        hh_kept = set(id(e) for e in thin_hihats(hh_in))
-        filtered = [e for e in filtered if e["name"] not in HIHAT_INSTRUMENTS or id(e) in hh_kept]
-
-    # Apply on-beat kick selection for Medium
-    if difficulty == "Medium":
-        kick_in = [e for e in filtered if e["name"] in KICK_INSTRUMENTS]
-        kick_kept = set(id(e) for e in select_medium_kicks(kick_in))
-        filtered = [e for e in filtered if e["name"] not in KICK_INSTRUMENTS or id(e) in kick_kept]
-
+    tgt = _DIFFICULTY_RETENTION[difficulty]
+    filtered = []
+    for lane, evs in by.items():
+        r = tgt.get(lane, 1.0)
+        if r >= 1.0:
+            filtered.extend(evs)
+        else:
+            keep = max(1, round(len(evs) * r))   # a present lane keeps >=1 (never a wholesale drop)
+            filtered.extend(_metric_keep(evs, keep))
     filtered.sort(key=lambda e: float(e["time"]))
     return filtered
 
@@ -5380,7 +5355,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.2-1"
+    VERSION = "4.5.3-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -25700,6 +25675,19 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.5.3-1 - Better Easy / Medium / Hard charts (difficulty reduction rebuilt)\n"
+              "  Changes/Additions:\n"
+              "  - The automatic difficulty reduction was rebuilt. Instead of dropping\n"
+              "    the kick and toms entirely on Easy and Medium, it now keeps a\n"
+              "    thinned-down kick and tom line - the way real charts do - and matches\n"
+              "    the note density of human-made difficulties much more closely,\n"
+              "    keeping the strongest beats first (downbeats before off-beats).\n"
+              "  - Expert charts are unchanged. Hard stays about the same; Easy and\n"
+              "    Medium are the big improvement.\n"
+              "  - Instrument variants that used to vanish on lower difficulties\n"
+              "    (alternate kicks/snares, china/splash cymbals) are now kept.\n")
+
+        wn_entry(wn_latest,
               "v4.5.2-1 - Tom recovery, Stereo waveform default, MIDI Editor song title + waveform sync fix\n"
               "  Changes/Additions:\n"
               "  - New 'Tom detection sensitivity' control (Audio to MIDI > Advanced).\n"
@@ -25742,7 +25730,7 @@ demucs.separate.main()
               "    metalcore, funk and electronic - hi-hat accuracy improved on every\n"
               "    genre with no false-hat blowups.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.5.0-1 - Smarter Audio to MIDI: automatic detection cleanup pass\n"
               "  Changes/Additions:\n"
               "  - Audio to MIDI now runs an automatic cleanup pass on the\n"
