@@ -151,7 +151,7 @@ in Firefox before I had fixed the MIDI config, see below for details, although C
 
 ---
 
-## 🥁 Difficulty Update — better Easy / Medium / Hard charts *(v4.5.3-1)*
+## 🥁 Auto Difficulty Adjuster Update — Better Easy / Medium / Hard charts *(v4.5.3-1)*
 
 The automatic **difficulty reduction** — the Easy / Medium / Hard versions ParaKit builds from your full chart —
 was **rebuilt.** The old version dropped the **kick and toms entirely** on Easy and Medium, so those charts were
