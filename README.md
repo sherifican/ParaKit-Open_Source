@@ -9,6 +9,8 @@
 
 `Check the bottom of the page for the Change/fix log`
 
+> 📄 **Prefer plain text, or reading outside GitHub?** A Notepad-friendly **[`README.txt`](README.txt)** and a separate, full **[`CHANGELOG.txt`](CHANGELOG.txt)** are now included in the repo — the same info without the Markdown clutter.
+
 ---
 
 >Note: the compiled .exe version is a little bit behind the .py version at the moment (4.4.52), I've seen a LOT more engagement
