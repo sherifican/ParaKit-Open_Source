@@ -5355,7 +5355,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.3.1-1"
+    VERSION = "4.5.4-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -7473,10 +7473,29 @@ class MidiToRlrrApp:
         # Apply initial lock state (deferred — audio_var is empty at construction)
         self.root.after(50, self._on_metadata_art_toggle)
 
+        # Auto Fetch Audio (2026-06-25, owner) — placed BETWEEN the Cover Image and
+        # Preview Clip rows. The same button the MIDI Editor has: from the MIDI File's
+        # name, fills Song Audio + Drum Audio. Purple button + cyan border + 🎵 icon.
+        _sc_af_outer = ttk.Frame(files_frame)
+        _sc_af_outer.grid(row=7, column=0, columnspan=4, sticky="w", pady=(4, 4))
+        _sc_af_border = tk.Frame(_sc_af_outer, bg="#00d4d4")
+        _sc_af_border.pack(side=tk.LEFT)
+        _sc_af_btn = ttk.Button(_sc_af_border, text="🎵  Auto Fetch Audio",
+                                command=self._creator_auto_fetch_audio, width=21)
+        _sc_af_btn.pack(padx=2, pady=2)
+        self._add_tooltip(
+            _sc_af_btn,
+            "From the MIDI File's name, finds the matching Drum Audio + Song Audio\n"
+            "(from your Stem Splitter / YouTube output folders and next to the MIDI)\n"
+            "and fills those two fields. Same as the MIDI Editor's Auto Fetch Audio.")
+        ttk.Label(_sc_af_outer,
+                  text="  Fills Song Audio + Drum Audio from the MIDI file's name",
+                  style="Sub.TLabel", foreground="#888888").pack(side=tk.LEFT, padx=(8, 0))
+
         # Preview audio — 15s clip for song selection menu
         self.preview_audio_var = tk.StringVar()
         self._preview_clip_widgets = self._file_row(
-            files_frame, "Preview Clip", self.preview_audio_var, 7,
+            files_frame, "Preview Clip", self.preview_audio_var, 8,
             [("Audio files", "*.ogg *.mp3 *.wav *.flac"), ("All files", "*.*")],
             config_key="recent_preview_audio")
 
@@ -7487,7 +7506,7 @@ class MidiToRlrrApp:
                  "with no drums, so auto-clipping it can sound wrong.",
             style="Sub.TLabel", foreground="#58a6ff",
             wraplength=820, justify=tk.LEFT)
-        preview_note.grid(row=8, column=1, columnspan=3, sticky="w", pady=(0, 4))
+        preview_note.grid(row=9, column=1, columnspan=3, sticky="w", pady=(0, 4))
 
         # ── Song Info ─────────────────────────────────────────────────────────
         info_frame = ttk.LabelFrame(main, text=" Song Info ", padding=10)
@@ -9480,6 +9499,21 @@ demucs.separate.main()
                   style="Sub.TLabel", foreground="#b388ff",
                   justify=tk.LEFT, wraplength=410).pack(anchor="w")
 
+        # Cyan note (owner 2026-06-25) — sits BELOW the red "Heads up" overwrite text in
+        # the Reality Check box; cyan so it contrasts and stands out under the red.
+        # Explains the optional ".alt_detector.mid" comparison files so the extra MIDI
+        # next to a converted song isn't confusing.
+        ttk.Label(tips_frame,
+                  text="💡  Seeing an extra '.alt_detector.mid' file next to a converted song? "
+                       "It's an optional helper for the MIDI Editor's Ghost Overlay -- a deliberately "
+                       "over-eager detection pass that fills a chart with lots of candidate tom hits "
+                       "(most are wrong, but some catch real toms the normal pass missed). Open it in "
+                       "the Ghost Overlay as a layer UNDER your main chart and use the opacity slider to "
+                       "spot the good ones, then place those toms into your real chart. It never changes "
+                       "your main MIDI -- safe to ignore or delete if you don't use it.",
+                  style="Sub.TLabel", foreground="#00d4d4",
+                  justify=tk.LEFT, wraplength=860).pack(anchor="w", pady=(6, 2))
+
         _, input_tips = self._make_collapsible_tips(
             main, title="Input and accuracy notes", start_open=False,
             pack_kw={"pady": (0, 10)})
@@ -9977,7 +10011,22 @@ demucs.separate.main()
         # CPU time per song. License-NOASSERTION model is user-downloaded only;
         # no weights ship with ParaKit.
         sep_cfg = load_config()
-        sep_default = sep_cfg.get("a2m_separator_slot", "off")
+        sep_default = sep_cfg.get("a2m_separator_slot")
+        if sep_default is None:
+            # No saved preference yet -> default ON (recommended) WHEN the Jarredou
+            # model is already installed on disk; otherwise stay Off so first-run
+            # users aren't forced into the ~417 MB download. (Owner-approved
+            # 2026-06-25; folds into 4.5.3.1-1.)
+            _jarredou_ready = False
+            try:
+                from parakit_separators import get_separator
+                _jsep = get_separator("jarredou_mdx23c")
+                _jarredou_ready = bool(
+                    _jsep and _jsep.is_available()
+                    and _jsep.resolve_model_path() is not None)
+            except Exception:
+                _jarredou_ready = False
+            sep_default = "jarredou_mdx23c" if _jarredou_ready else "off"
         if sep_default not in ("off", "jarredou_mdx23c"):
             sep_default = "off"  # Defensive fallback for any future migration
         self.a2m_separator_slot_var = tk.StringVar(value=sep_default)
@@ -9992,7 +10041,8 @@ demucs.separate.main()
             sep_frame,
             text=("Pre-clean drum audio with an AI splitter before detection. "
                   "Helpful on tricky tracks where kick / snare / cymbal bleed "
-                  "into each other. Adds ~30-60s per song on CPU. Off by default."),
+                  "into each other. Adds ~30-60s per song on CPU. Recommended; "
+                  "turns on automatically once the model is installed."),
             style="Sub.TLabel", foreground="#c9d1d9",
             justify=tk.LEFT, wraplength=700)
         sep_intro.pack(anchor="w", fill=tk.X, pady=(0, 4))
@@ -10010,7 +10060,7 @@ demucs.separate.main()
 
         rb_jarredou = ttk.Radiobutton(
             sep_radio_row,
-            text="Jarredou MDX23C 6-stem (CPU, ~30-60s extra per song)",
+            text="Jarredou MDX23C 6-stem (CPU, ~30-60s extra per song) (recommended)",
             value="jarredou_mdx23c",
             variable=self.a2m_separator_slot_var)
         rb_jarredou.pack(anchor="w", pady=1)
@@ -13436,8 +13486,8 @@ demucs.separate.main()
         af_border = tk.Frame(af_row, bg="#00d4d4")
         af_border.pack(side=tk.LEFT)
         self.me_auto_fetch_btn = ttk.Button(
-            af_border, text="Auto Fetch Audio",
-            command=self._me_auto_fetch_audio, width=18)
+            af_border, text="🎵  Auto Fetch Audio",
+            command=self._me_auto_fetch_audio, width=21)
         self.me_auto_fetch_btn.pack(padx=2, pady=2)
         self._add_tooltip(
             self.me_auto_fetch_btn,
@@ -19168,44 +19218,36 @@ demucs.separate.main()
             var.set(path)
             self._add_recent_file(config_key, path)
 
-    def _me_auto_fetch_audio(self):
-        """QoL (v4.4.62-1): from the loaded MIDI's song name, find + fill the
-        Drums stem and Full Mix audio from the configured Stem/YouTube output
-        folders (and next to the MIDI). Only ever touches the Drums + Full Mix
-        fields — never Stem 3/4."""
-        midi_path = (getattr(self, "_me_last_midi", None)
-                     or self.me_midi_var.get().strip())
+    def _find_song_audio_from_midi(self, midi_path):
+        """Shared Auto-Fetch-Audio SEARCH (v4.4.62-1 logic, factored out 2026-06-25
+        so the MIDI Editor, Single Song Creator, and Preview/Practice tabs share ONE
+        implementation). From a MIDI path's FILE NAME, finds the matching Drums stem +
+        Full Mix audio in the configured Stem/YouTube output folders, next to the MIDI,
+        and (as a bounded fallback) a recursive scan of the project folder. Touches NO
+        UI fields. Returns (drums_or_None, mix_or_None, used_recursive, song_str);
+        song_str is '' if no usable name could be read from the file name."""
         if not midi_path:
-            messagebox.showinfo(
-                "Auto Fetch Audio",
-                "Load a MIDI in the editor first — Auto Fetch uses its file "
-                "name to find the matching Drums and Full Mix audio.")
-            return
+            return (None, None, False, "")
 
         # Core song name. ORDER MATTERS (owner-reported 2026-06-16): ParaKit's
-        # "Save a copy" appends " (editor copy)" AFTER the "_drums MIDI" tag, so
-        # that decoration has to come off FIRST — otherwise the endswith() suffix
-        # strip below never sees the tag at the end and the whole
-        # "..._drums MIDI (editor copy)" tail is carried into the search (which is
-        # why "Bury The Light (Funky Remix)_drums MIDI (editor copy)" found nothing).
+        # "Save a copy" appends " (editor copy)" AFTER the "_drums MIDI" tag, so that
+        # decoration has to come off FIRST.
         import re as _re
         song = os.path.splitext(os.path.basename(midi_path))[0]
         song = _re.sub(r'\s*\((?:editor\s+copy|copy)(?:\s*\d+)?\)', ' ', song, flags=_re.I)
+        # Strip the editor's "_drums MIDI" / " MIDI" tag AND ANY trailing words the user
+        # appended AFTER it (owner-reported 2026-06-25: "..._drums MIDI edited",
+        # "..._drums MIDI MOSTLY FINISHED"). The song name is whatever sits BEFORE the
+        # tag, so cut from the tag to the end of the name — the old endswith() checks
+        # missed these because the file name no longer *ended* with the tag. Most-
+        # specific tag first; each requires a leading space/underscore so a song whose
+        # own title contains "drums"/"midi" mid-name isn't truncated.
+        song = _re.sub(r'[\s_]+drums?\s+midi\b.*$', '', song, flags=_re.I)   # "_drums MIDI …", " drums MIDI …"
+        song = _re.sub(r'[\s_]+midi\b.*$',          '', song, flags=_re.I)   # " MIDI …", "_MIDI …"
+        song = _re.sub(r'[\s_]+drums?\s*$',         '', song, flags=_re.I)   # trailing "_drums" / " drums"
         song = _re.sub(r'\s{2,}', ' ', song).strip()
-        for suffix in (" drums MIDI", "_drums MIDI", " MIDI", "_MIDI"):
-            if song.endswith(suffix):
-                song = song[: -len(suffix)]
-                break
-        for suffix in ("_drums", " drums"):
-            if song.endswith(suffix):
-                song = song[: -len(suffix)]
-                break
-        song = song.strip()
         if not song:
-            messagebox.showinfo(
-                "Auto Fetch Audio",
-                "Couldn't read a song name from the MIDI file name.")
-            return
+            return (None, None, False, "")
 
         # Ordered name variants, most-specific first (owner 2026-06-16). Every
         # candidate path below is built EXACTLY from one variant, so matching is
@@ -19386,17 +19428,14 @@ demucs.separate.main()
                     used_recursive = True
                     break
 
-        # Populate ONLY the Drums (me_audio_var) + Full Mix (me_audio_mix_var).
-        found = []
-        if drums:
-            self.me_audio_var.set(drums)
-            self._add_recent_file("recent_me_drums", drums)
-            found.append("Drums:     " + os.path.basename(drums))
-        if mix:
-            self.me_audio_mix_var.set(mix)
-            self._add_recent_file("recent_me_mix", mix)
-            found.append("Full Mix:  " + os.path.basename(mix))
+        return (drums, mix, used_recursive, song)
 
+    # ── Auto Fetch Audio — shared result dialog + per-tab thin handlers ───────
+    # (2026-06-25, owner-directed) The search lives in _find_song_audio_from_midi
+    # above; each tab's handler derives its MIDI path, fills ITS OWN audio fields,
+    # and shows this one shared result dialog. Mirrors the MIDI Editor button onto
+    # the Single Song Creator + Preview/Practice tabs.
+    def _auto_fetch_show_result(self, song, drums, mix, used_recursive, found):
         if found:
             note = ""
             if not drums:
@@ -19420,6 +19459,118 @@ demucs.separate.main()
                 "Browse buttons.\n\n"
                 "Tip: Auto Fetch matches by file name — the Drums stem should be "
                 f"named '{song}_drums.<ext>' and the Full Mix '{song}.<ext>'.")
+
+    def _me_auto_fetch_audio(self):
+        """MIDI Editor Auto Fetch Audio (v4.4.62-1): from the loaded MIDI's song
+        name, fill ONLY the Drums (me_audio_var) + Full Mix (me_audio_mix_var)
+        fields — never Stem 3/4. Shared search = _find_song_audio_from_midi."""
+        midi_path = (getattr(self, "_me_last_midi", None)
+                     or self.me_midi_var.get().strip())
+        if not midi_path:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Load a MIDI in the editor first — Auto Fetch uses its file "
+                "name to find the matching Drums and Full Mix audio.")
+            return
+        drums, mix, used_recursive, song = self._find_song_audio_from_midi(midi_path)
+        if not song:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Couldn't read a song name from the MIDI file name.")
+            return
+        found = []
+        if drums:
+            self.me_audio_var.set(drums)
+            self._add_recent_file("recent_me_drums", drums)
+            found.append("Drums:     " + os.path.basename(drums))
+        if mix:
+            self.me_audio_mix_var.set(mix)
+            self._add_recent_file("recent_me_mix", mix)
+            found.append("Full Mix:  " + os.path.basename(mix))
+        self._auto_fetch_show_result(song, drums, mix, used_recursive, found)
+
+    def _creator_auto_fetch_audio(self):
+        """Single Song Creator Auto Fetch Audio (2026-06-25): from the MIDI File
+        field's name, fill Song Audio (the Full Mix) + Drum Audio."""
+        midi_path = self.midi_var.get().strip()
+        if not midi_path:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Pick a MIDI File first — Auto Fetch uses its file name to find "
+                "the matching Song Audio and Drum Audio.")
+            return
+        drums, mix, used_recursive, song = self._find_song_audio_from_midi(midi_path)
+        if not song:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Couldn't read a song name from the MIDI file name.")
+            return
+        found = []
+        if drums:
+            self.drum_audio_var.set(drums)
+            self._add_recent_file("recent_drum_audio", drums)
+            found.append("Drum Audio: " + os.path.basename(drums))
+        if mix:
+            self.audio_var.set(mix)
+            self._add_recent_file("recent_audio", mix)
+            found.append("Song Audio: " + os.path.basename(mix))
+        self._auto_fetch_show_result(song, drums, mix, used_recursive, found)
+
+    def _viz_auto_fetch_audio(self):
+        """Preview/Practice Auto Fetch Audio (2026-06-25): from the MIDI File (or
+        the .rlrr override) name, fill Full Mix Audio + Drum Audio."""
+        midi_path = (self.viz_midi_var.get().strip()
+                     or self.viz_rlrr_override_var.get().strip())
+        if not midi_path:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Pick a MIDI File (or a .rlrr) first — Auto Fetch uses its file "
+                "name to find the matching Full Mix and Drum Audio.")
+            return
+        drums, mix, used_recursive, song = self._find_song_audio_from_midi(midi_path)
+        if not song:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Couldn't read a song name from the MIDI file name.")
+            return
+        found = []
+        if drums:
+            self.viz_drum_var.set(drums)
+            self._add_recent_file("recent_viz_drum", drums)
+            found.append("Drum Audio: " + os.path.basename(drums))
+        if mix:
+            self.viz_audio_var.set(mix)
+            self._add_recent_file("recent_viz_audio", mix)
+            found.append("Full Mix:   " + os.path.basename(mix))
+        self._auto_fetch_show_result(song, drums, mix, used_recursive, found)
+
+    def _tester_auto_fetch_audio(self):
+        """Song Tester Auto Fetch Audio (2026-06-25): from the MIDI File (or the
+        .rlrr) name, fill Song Audio + Drum Audio."""
+        midi_path = (self.tester_midi_var.get().strip()
+                     or self.tester_rlrr_var.get().strip())
+        if not midi_path:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Pick a MIDI (or .rlrr) file first — Auto Fetch uses its file name "
+                "to find the matching Song Audio and Drum Audio.")
+            return
+        drums, mix, used_recursive, song = self._find_song_audio_from_midi(midi_path)
+        if not song:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Couldn't read a song name from the file name.")
+            return
+        found = []
+        if drums:
+            self.tester_drum_var.set(drums)
+            self._add_recent_file("recent_tester_drum", drums)
+            found.append("Drum Audio: " + os.path.basename(drums))
+        if mix:
+            self.tester_audio_var.set(mix)
+            self._add_recent_file("recent_tester_audio", mix)
+            found.append("Song Audio: " + os.path.basename(mix))
+        self._auto_fetch_show_result(song, drums, mix, used_recursive, found)
 
     def _me_update_song_title(self):
         """Refresh the MIDI Editor's song-title readout (the label beside Auto
@@ -25431,6 +25582,21 @@ demucs.separate.main()
         ttk.Button(btn_row, text="▶  Collapse All",
                    command=_collapse_all).pack(side=tk.LEFT)
 
+        # Cyan note (owner 2026-06-25) — prominent, near the top of the Help tab, so
+        # users aren't confused by the optional ".alt_detector.mid" comparison files.
+        # Cyan to stand out (the Help tab has no red heads-up of its own up here).
+        ttk.Label(main,
+                  text="💡  What are the '.alt_detector.mid' files next to my songs?  When Enhanced "
+                       "Detection is on, Audio → MIDI writes an extra comparison MIDI beside your chart. "
+                       "It's a deliberately over-eager detection pass that fills a chart with lots of "
+                       "candidate tom hits -- most are wrong, but some catch real toms the normal pass "
+                       "missed. Open it in the MIDI Editor's Ghost Overlay as a layer UNDER your main "
+                       "chart and use the opacity slider to spot the good ones, then place those toms "
+                       "into your real chart. It never changes your main MIDI -- safe to ignore or "
+                       "delete if you don't use it.",
+                  style="Sub.TLabel", foreground="#00d4d4",
+                  justify=tk.LEFT, wraplength=900).pack(anchor="w", pady=(0, 10))
+
         # ── Two-column body ───────────────────────────────────────────────────
         body = ttk.Frame(main)
         body.pack(fill=tk.BOTH, expand=True)
@@ -25694,6 +25860,24 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.5.4-1 - Auto Fetch Audio on more tabs + Jarredou on by default + fixes\n"
+              "  Changes/Additions:\n"
+              "  - The MIDI Editor's 'Auto Fetch Audio' button is now on the Single Song\n"
+              "    Creator, the Preview/Practice Track, and the Song Tester tabs too. From\n"
+              "    the loaded MIDI's name it finds the matching Drums stem + Full Mix from\n"
+              "    your Stem Splitter / YouTube output folders (and next to the MIDI) and\n"
+              "    fills that tab's audio fields. The buttons now carry a music-note icon.\n"
+              "  - Neural Stem Isolation (Jarredou MDX23C) now turns ON by default once its\n"
+              "    model is installed, and is labelled (recommended). First-run users with\n"
+              "    no model are unaffected - it stays Off until they download it.\n"
+              "  - Fixed: Auto Fetch Audio now finds your audio even when the MIDI name has\n"
+              "    extra words after the tag (e.g. '..._drums MIDI edited', '...MOSTLY\n"
+              "    FINISHED') - it reads the song name correctly instead of coming up empty.\n"
+              "  - New note (Audio to MIDI + Quick Start tabs) explaining the optional\n"
+              "    '.alt_detector.mid' comparison files - the over-eager tom pass you load\n"
+              "    under your chart in the MIDI Editor's Ghost Overlay to catch missed toms.\n")
+
+        wn_entry(wn_latest,
               "v4.5.3.1-1 - Neural Stem Isolation (Jarredou) download rewired to Hugging Face + fallback\n"
               "  Changes/Additions:\n"
               "  - The in-app download for the optional Jarredou MDX23C neural stem\n"
@@ -25718,7 +25902,7 @@ demucs.separate.main()
               "  - Instrument variants that used to vanish on lower difficulties\n"
               "    (alternate kicks/snares, china/splash cymbals) are now kept.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.5.2-1 - Tom recovery, Stereo waveform default, MIDI Editor song title + waveform sync fix\n"
               "  Changes/Additions:\n"
               "  - New 'Tom detection sensitivity' control (Audio to MIDI > Advanced).\n"
@@ -32007,6 +32191,16 @@ demucs.separate.main()
                    command=lambda: [self._viz_load_notes(),
                                     self._viz_redraw_static()]
                    ).pack(side=tk.LEFT, padx=(8, 0))
+        # Auto Fetch Audio (2026-06-25, owner) — between Reload Notes and Apply Offset;
+        # plain button (matches its row neighbors) with the 🎵 now-playing icon.
+        _viz_af_btn = ttk.Button(clear_row, text="🎵  Auto Fetch Audio",
+                                 command=self._viz_auto_fetch_audio)
+        _viz_af_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self._add_tooltip(
+            _viz_af_btn,
+            "From the MIDI File's name (or the .rlrr), finds the matching Full Mix +\n"
+            "Drum Audio (from your Stem Splitter / YouTube output folders and next to\n"
+            "the MIDI) and fills those fields. Same as the MIDI Editor's Auto Fetch.")
         ttk.Button(clear_row, text="✓  Apply Offset",
                    command=self._viz_redraw_static
                    ).pack(side=tk.LEFT, padx=(8, 0))
@@ -34348,6 +34542,25 @@ demucs.separate.main()
                   [("RLRR files","*.rlrr"),("All","*.*")],
                   config_key="recent_tester_rlrr")
         files_frame.columnconfigure(1, weight=1)
+
+        # Auto Fetch Audio (2026-06-25, owner) — below the .rlrr field. From the MIDI
+        # (or .rlrr) file name, fills Song Audio + Drum Audio. Purple button + cyan
+        # border + 🎵 icon, like the MIDI Editor's.
+        _ts_af_outer = ttk.Frame(files_frame)
+        _ts_af_outer.grid(row=4, column=1, columnspan=2, sticky="w", pady=(4, 2))
+        _ts_af_border = tk.Frame(_ts_af_outer, bg="#00d4d4")
+        _ts_af_border.pack(side=tk.LEFT)
+        _ts_af_btn = ttk.Button(_ts_af_border, text="🎵  Auto Fetch Audio",
+                                command=self._tester_auto_fetch_audio, width=21)
+        _ts_af_btn.pack(padx=2, pady=2)
+        self._add_tooltip(
+            _ts_af_btn,
+            "From the MIDI (or .rlrr) file name, finds the matching Song Audio +\n"
+            "Drum Audio (from your Stem Splitter / YouTube output folders and next\n"
+            "to the file) and fills those fields. Same as the MIDI Editor's Auto Fetch.")
+        ttk.Label(_ts_af_outer,
+                  text="  Fills Song Audio + Drum Audio from the MIDI / .rlrr name",
+                  style="Sub.TLabel", foreground="#888888").pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Label(files_frame,
                   text="ℹ  RECOMMENDED: Use the .rlrr for the most accurate test — it tests your\n"

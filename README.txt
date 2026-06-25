@@ -4,7 +4,7 @@
   with Clone Hero (.chart) support.
 ==============================================================================
 
-  Version in this release: 4.5.3-1
+  Version in this release: 4.5.4-1
   Runtime:                 Python 3.12 (required)
 
   This is the plain-text companion to README.md. It has the same information
@@ -39,6 +39,14 @@
 
     README for the .exe version:
       https://github.com/sherifican/ParaKit---Releases
+
+  Note (v4.5.3.1-1): the in-app download button for the Jarredou neural
+  stem-isolation model is now rewired to the official Hugging Face repo
+  (https://huggingface.co/Politrees/UVR_resources), with a second Hugging Face
+  mirror tried automatically if the first is down (the old GitHub source was
+  removed upstream). The file is size- and SHA256-verified after download. If
+  both mirrors are ever unavailable, the model is still on the LimeWire
+  Requirements bundle above as a manual fallback.
 
   ParaKit official homepage: (site temporarily down)
 
@@ -177,7 +185,7 @@
   further down.)
 
 ------------------------------------------------------------------------------
-  DIFFICULTY UPDATE -- better Easy / Medium / Hard charts  (v4.5.3-1)
+  AUTO DIFFICULTY ADJUSTER UPDATE -- better Easy / Medium / Hard charts  (v4.5.3-1)
 ------------------------------------------------------------------------------
 
   The automatic difficulty reduction -- the Easy / Medium / Hard versions

@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.3-1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.4-1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -20,6 +20,38 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.4-1   --   2026-06-25
+------------------------------------------------------------------------------
+  - Auto Fetch Audio is now on the Single Song Creator, Preview/Practice Track,
+    and Song Tester tabs (it was MIDI-Editor-only). From the loaded MIDI's file
+    name it finds the matching Drums stem + Full Mix from your Stem Splitter /
+    YouTube output folders (and next to the MIDI) and fills that tab's audio
+    fields; the buttons carry a music-note icon.
+  - Neural Stem Isolation (Jarredou MDX23C) now defaults ON once its model is
+    installed, and is labelled "(recommended)". First-run users with no model
+    are unaffected -- it stays Off until they download it.
+  - Fixed: Auto Fetch Audio now finds your audio even when the MIDI file name
+    has extra words after the tag (e.g. "..._drums MIDI edited", "...MOSTLY
+    FINISHED") -- it reads the song name correctly instead of coming up empty.
+  - New note (Audio -> MIDI and Quick Start & FAQ tabs) explaining the optional
+    ".alt_detector.mid" comparison files -- the deliberately over-eager
+    tom-detection pass you load UNDER your chart in the MIDI Editor's Ghost
+    Overlay to catch toms the normal pass missed.
+
+------------------------------------------------------------------------------
+  v4.5.3.1-1   --   2026-06-25
+------------------------------------------------------------------------------
+  - Jarredou neural-stem-isolation model download rewired to Hugging Face
+    (+ automatic fallback mirror). The in-app download button for the optional
+    Jarredou MDX23C stem-isolation model now pulls from the official Hugging
+    Face repo (Politrees/UVR_resources), with a second Hugging Face mirror tried
+    automatically if the first is down (the old GitHub source had been removed).
+    The file is size- and SHA256-verified after download. If both mirrors are
+    ever unavailable, the model is still on the LimeWire Requirements bundle
+    (linked at the top) as a manual fallback. (Download-source fix only -- no
+    detection or charting changes.)
 
 ------------------------------------------------------------------------------
   v4.5.3-1   --   2026-06-23
