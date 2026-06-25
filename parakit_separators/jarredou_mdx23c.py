@@ -50,11 +50,20 @@ UPSTREAM_FILENAME = "aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.ckp
 # follows the HF resolve->CDN 302 redirect, and the post-download SHA256 verify still gates
 # correctness. UPSTREAM_FILENAME + the old GitHub URL are kept above/here for provenance only.
 #   Old (dead): github.com/jarredou/models/releases/download/aufr33-jarredou_MDX23C_DrumSep_model_v0.1/<UPSTREAM_FILENAME>
-#   Fallback mirror (SHA NOT pre-verified — the post-download check rejects it if bytes differ):
+#   Fallback mirror (now WIRED as DOWNLOAD_URL_FALLBACK below — tried automatically on primary
+#   failure; SHA NOT pre-verified, but the post-download check rejects it if the bytes differ):
 #     https://huggingface.co/Sucial/MSST-WebUI/resolve/main/All_Models/multi_stem_models/aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.ckpt
 DOWNLOAD_URL = (
     "https://huggingface.co/Politrees/UVR_resources/resolve/main/"
     "models/MDX23C/MDX23C-DrumSep-aufr33-jarredou.ckpt"
+)
+# Secondary HF mirror — tried automatically if the primary fails (wired 2026-06-25). Same
+# checkpoint, different uploader (Sucial/MSST-WebUI); verified 2026-06-25 to be byte-size-identical
+# (437,652,699 B) to the primary. The post-download SHA256 verify still gates correctness either way.
+DOWNLOAD_URL_FALLBACK = (
+    "https://huggingface.co/Sucial/MSST-WebUI/resolve/main/"
+    "All_Models/multi_stem_models/"
+    "aufr33-jarredou_DrumSep_model_mdx23c_ep_141_sdr_10.8059.ckpt"
 )
 CONFIG_URL = (
     "https://raw.githubusercontent.com/TRvlvr/application_data/main/"

@@ -5355,7 +5355,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.3-1"
+    VERSION = "4.5.3.1-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -11578,6 +11578,7 @@ demucs.separate.main()
         if sep_name == "jarredou_mdx23c":
             from parakit_separators import jarredou_mdx23c as _jmod
             url = _jmod.DOWNLOAD_URL
+            fallback_url = getattr(_jmod, "DOWNLOAD_URL_FALLBACK", None)
             expected_size = _jmod.EXPECTED_SIZE_BYTES
             expected_sha = _jmod.EXPECTED_SHA256
             model_filename = _jmod.MODEL_FILENAME
@@ -11598,8 +11599,9 @@ demucs.separate.main()
             f"  Saves to: {dest_path}\n\n"
             f"License note: this model's upstream repository does not declare "
             f"a license, so ParaKit doesn't redistribute the weights. Clicking "
-            f"OK downloads the file from the upstream GitHub release directly "
-            f"to your machine. The download is yours to use, keep, or delete; "
+            f"OK downloads the file directly to your machine from the official "
+            f"Hugging Face mirror (with a second Hugging Face mirror as an "
+            f"automatic fallback). The download is yours to use, keep, or delete; "
             f"ParaKit only reads it locally during conversion.\n\n"
             f"Continue?")
         if not messagebox.askokcancel("Download neural stem isolation model",
@@ -11658,22 +11660,39 @@ demucs.separate.main()
         result_holder = {"path": None, "error": None}
 
         def _worker():
+            # Try the primary URL, then any fallback mirror(s) on a download failure
+            # (network error / dead source / size or hash mismatch). Cancellation is
+            # never retried. The post-download SHA256 verify gates every source.
+            sources = [u for u in (url, fallback_url) if u]
+            last_err = None
             try:
-                p = model_resolver.download_with_progress(
-                    url=url,
-                    dest_path=dest_path,
-                    expected_size_bytes=expected_size,
-                    expected_sha256=expected_sha,
-                    progress_cb=_progress_cb,
-                    timeout_s=600)
-                result_holder["path"] = p
-            except model_resolver.DownloadError as e:
-                result_holder["error"] = str(e)
-            except RuntimeError as e:
-                # Cancellation
-                result_holder["error"] = "Cancelled by user"
-            except Exception as e:
-                result_holder["error"] = f"Unexpected error: {e}"
+                for idx, src in enumerate(sources):
+                    if idx > 0:
+                        self.root.after(0, lambda: prog_status_var.set(
+                            "Primary source failed — trying fallback mirror..."))
+                    try:
+                        p = model_resolver.download_with_progress(
+                            url=src,
+                            dest_path=dest_path,
+                            expected_size_bytes=expected_size,
+                            expected_sha256=expected_sha,
+                            progress_cb=_progress_cb,
+                            timeout_s=600)
+                        result_holder["path"] = p
+                        last_err = None
+                        break
+                    except model_resolver.DownloadError as e:
+                        last_err = str(e)
+                        continue
+                    except RuntimeError:
+                        # Cancellation — do not fall through to the mirror
+                        last_err = "Cancelled by user"
+                        break
+                    except Exception as e:
+                        last_err = f"Unexpected error: {e}"
+                        continue
+                if result_holder["path"] is None:
+                    result_holder["error"] = last_err
             finally:
                 self.root.after(0, _on_done)
 
@@ -25675,6 +25694,18 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.5.3.1-1 - Neural Stem Isolation (Jarredou) download rewired to Hugging Face + fallback\n"
+              "  Changes/Additions:\n"
+              "  - The in-app download for the optional Jarredou MDX23C neural stem\n"
+              "    isolation model now points at the official Hugging Face mirror, with a\n"
+              "    second Hugging Face mirror tried automatically if the first is down\n"
+              "    (the old GitHub source had been taken down). The file is size- and\n"
+              "    SHA256-verified after download either way.\n"
+              "  - If both mirrors are ever unavailable, the model is still on the\n"
+              "    LimeWire Requirements bundle (see the README) as a manual fallback.\n"
+              "  - Download-source fix only - no detection or charting changes.\n")
+
+        wn_entry(wn_latest,
               "v4.5.3-1 - Better Easy / Medium / Hard charts (difficulty reduction rebuilt)\n"
               "  Changes/Additions:\n"
               "  - The automatic difficulty reduction was rebuilt. Instead of dropping\n"
@@ -25715,7 +25746,7 @@ demucs.separate.main()
               "    song (dim until the .ogg exists, like the STEMS / MIDI badges), so rows\n"
               "    with fewer files no longer shift the buttons out of alignment.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.5.1-1 - Hi-hat recovery: the chart now keeps more of your hi-hats\n"
               "  Changes/Additions:\n"
               "  - Audio to MIDI was quietly dropping hi-hats it had actually\n"
