@@ -5355,7 +5355,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.4.1-1"
+    VERSION = "4.5.4.2-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -19288,14 +19288,23 @@ demucs.separate.main()
             var.set(path)
             self._add_recent_file(config_key, path)
 
-    def _find_song_audio_from_midi(self, midi_path):
+    def _find_song_audio_from_midi(self, midi_path, prefer_ogg=False,
+                                   song_is_backing=False):
         """Shared Auto-Fetch-Audio SEARCH (v4.4.62-1 logic, factored out 2026-06-25
         so the MIDI Editor, Single Song Creator, and Preview/Practice tabs share ONE
         implementation). From a MIDI path's FILE NAME, finds the matching Drums stem +
         Full Mix audio in the configured Stem/YouTube output folders, next to the MIDI,
         and (as a bounded fallback) a recursive scan of the project folder. Touches NO
         UI fields. Returns (drums_or_None, mix_or_None, used_recursive, song_str);
-        song_str is '' if no usable name could be read from the file name."""
+        song_str is '' if no usable name could be read from the file name.
+
+        prefer_ogg=True searches .ogg BEFORE .flac/.wav/.mp3 (the Single Song
+        Creator compiles its pack to .ogg, so BOTH fields should be the .ogg copy).
+        song_is_backing=True makes the SONG-audio result the BACKING (no-drums)
+        stem (from the Stem Splitter "BACKINGS" output) instead of the full mix,
+        with NO full-mix fallback -- the Single Song Creator must NEVER layer a full
+        mix over the separate drums stem (it doubles the drums in the compiled pack;
+        owner 2026-06-30). Both default False, so the OTHER tabs are byte-unchanged."""
         if not midi_path:
             return (None, None, False, "")
 
@@ -19366,7 +19375,10 @@ demucs.separate.main()
         iso_base  = _cfg_or_var("output_folder_iso", "stem_iso_output_var")
         yt_base   = (cfg.get("output_folder_yt") or "").strip()
 
-        EXTS = (".flac", ".ogg", ".wav", ".mp3")
+        # .ogg-first when the caller wants it (Single Song Creator compiles to
+        # .ogg); default keeps .flac-first for the other tabs (byte-unchanged).
+        EXTS = ((".ogg", ".flac", ".wav", ".mp3") if prefer_ogg
+                else (".flac", ".ogg", ".wav", ".mp3"))
 
         def _first_file(cands):
             for c in cands:
@@ -19394,20 +19406,37 @@ demucs.separate.main()
                     drums_cands.append(os.path.join(d, f"{s}_drums{ext}"))
         drums = _first_file(drums_cands)
 
-        # Full mix — the complete original song (NOT the backing). YouTube output
-        # folder + next to the MIDI; never the drums stem itself.
+        # Song audio. Two modes:
+        #   - default (full mix): the complete original song (NOT the backing).
+        #     YouTube output folder + next to the MIDI; never the drums stem.
+        #   - song_is_backing (Single Song Creator): the BACKING (no-drums) stem
+        #     from the Stem-Splitter "BACKINGS" output + next to the MIDI. NO
+        #     full-mix fallback -- a full mix layered over the separate drums stem
+        #     doubles the drums in the compiled pack (owner 2026-06-30).
         try:
             drums_norm = os.path.normcase(os.path.abspath(drums)) if drums else None
         except Exception:
             drums_norm = None
         mix_cands = []
-        for s in song_variants:
-            if yt_base:
-                for ext in EXTS:
-                    mix_cands.append(os.path.join(yt_base, f"{s}{ext}"))
-            for d in (midi_dir, parent_dir):
-                for ext in EXTS:
-                    mix_cands.append(os.path.join(d, f"{s}{ext}"))
+        if song_is_backing:
+            for s in song_variants:
+                for base in (stem_base, iso_base):
+                    if not base:
+                        continue
+                    for folder in ("BACKINGS", "BACKING"):
+                        for ext in EXTS:
+                            mix_cands.append(os.path.join(base, folder, f"{s}_backing{ext}"))
+                for d in (midi_dir, parent_dir):
+                    for ext in EXTS:
+                        mix_cands.append(os.path.join(d, f"{s}_backing{ext}"))
+        else:
+            for s in song_variants:
+                if yt_base:
+                    for ext in EXTS:
+                        mix_cands.append(os.path.join(yt_base, f"{s}{ext}"))
+                for d in (midi_dir, parent_dir):
+                    for ext in EXTS:
+                        mix_cands.append(os.path.join(d, f"{s}{ext}"))
         mix = None
         for c in mix_cands:
             try:
@@ -19450,10 +19479,11 @@ demucs.separate.main()
                     uniq.append(r)
 
             drums_targets, mix_targets = {}, {}
+            mix_suffix = "_backing" if song_is_backing else ""   # creator wants the backing
             for idx, s in enumerate(song_variants):
                 for ext in EXTS:
                     drums_targets.setdefault((s + "_drums" + ext).lower(), idx)
-                    mix_targets.setdefault((s + ext).lower(), idx)
+                    mix_targets.setdefault((s + mix_suffix + ext).lower(), idx)
             best_drums, best_mix = {}, {}
             SKIP = {"$recycle.bin", "system volume information", "node_modules",
                     ".git", "__pycache__"}
@@ -19505,13 +19535,18 @@ demucs.separate.main()
     # above; each tab's handler derives its MIDI path, fills ITS OWN audio fields,
     # and shows this one shared result dialog. Mirrors the MIDI Editor button onto
     # the Single Song Creator + Preview/Practice tabs.
-    def _auto_fetch_show_result(self, song, drums, mix, used_recursive, found):
+    def _auto_fetch_show_result(self, song, drums, mix, used_recursive, found,
+                                mix_label="Full Mix", mix_pattern=None):
+        # mix_label / mix_pattern let the Single Song Creator say "Backing track" /
+        # "<song>_backing.<ext>" instead of the default "Full Mix" / "<song>.<ext>".
+        if mix_pattern is None:
+            mix_pattern = f"{song}.<ext>"
         if found:
             note = ""
             if not drums:
                 note = "\n\n(No Drums stem found — Browse for it if you have one.)"
             elif not mix:
-                note = "\n\n(No Full Mix found — Browse for it if you have one.)"
+                note = f"\n\n(No {mix_label} found — Browse for it if you have one.)"
             if used_recursive:
                 note += ("\n\n(Found by scanning your project folder — some files "
                          "were outside the usual output folders.)")
@@ -19521,14 +19556,14 @@ demucs.separate.main()
         else:
             messagebox.showinfo(
                 "Auto Fetch Audio",
-                f"Couldn't find Drums or Full Mix audio for '{song}'.\n\n"
+                f"Couldn't find Drums or {mix_label} audio for '{song}'.\n\n"
                 "Auto Fetch checks your Stem Splitter output folder "
-                "(DRUMS ONLY / LOSSLESS SPLITS (DRUMS) / DRUMS), your YouTube "
-                "output folder, the folder next to the MIDI, and (as a fallback) "
-                "your wider project folder. If the files are elsewhere, use the "
-                "Browse buttons.\n\n"
+                "(DRUMS ONLY / LOSSLESS SPLITS (DRUMS) / DRUMS / BACKINGS), your "
+                "YouTube output folder, the folder next to the MIDI, and (as a "
+                "fallback) your wider project folder. If the files are elsewhere, "
+                "use the Browse buttons.\n\n"
                 "Tip: Auto Fetch matches by file name — the Drums stem should be "
-                f"named '{song}_drums.<ext>' and the Full Mix '{song}.<ext>'.")
+                f"named '{song}_drums.<ext>' and the {mix_label} '{mix_pattern}'.")
 
     def _me_auto_fetch_audio(self):
         """MIDI Editor Auto Fetch Audio (v4.4.62-1): from the loaded MIDI's song
@@ -19561,7 +19596,11 @@ demucs.separate.main()
 
     def _creator_auto_fetch_audio(self):
         """Single Song Creator Auto Fetch Audio (2026-06-25): from the MIDI File
-        field's name, fill Song Audio (the Full Mix) + Drum Audio."""
+        field's name, fill Song Audio + Drum Audio. UNLIKE the other tabs, the Song
+        Audio here is the BACKING (no-drums) stem -- never the full mix -- and both
+        fields prefer the .ogg copy (owner 2026-06-30): the Creator compiles a pack
+        from Song + Drums, so a full mix would double the drums, and .ogg is the
+        pack's target format."""
         midi_path = self.midi_var.get().strip()
         if not midi_path:
             messagebox.showinfo(
@@ -19569,7 +19608,8 @@ demucs.separate.main()
                 "Pick a MIDI File first — Auto Fetch uses its file name to find "
                 "the matching Song Audio and Drum Audio.")
             return
-        drums, mix, used_recursive, song = self._find_song_audio_from_midi(midi_path)
+        drums, mix, used_recursive, song = self._find_song_audio_from_midi(
+            midi_path, prefer_ogg=True, song_is_backing=True)
         if not song:
             messagebox.showinfo(
                 "Auto Fetch Audio",
@@ -19584,7 +19624,9 @@ demucs.separate.main()
             self.audio_var.set(mix)
             self._add_recent_file("recent_audio", mix)
             found.append("Song Audio: " + os.path.basename(mix))
-        self._auto_fetch_show_result(song, drums, mix, used_recursive, found)
+        self._auto_fetch_show_result(song, drums, mix, used_recursive, found,
+                                     mix_label="Backing track",
+                                     mix_pattern=f"{song}_backing.<ext>")
 
     def _viz_auto_fetch_audio(self):
         """Preview/Practice Auto Fetch Audio (2026-06-25): from the MIDI File (or
@@ -25952,6 +25994,17 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.5.4.2-1 - Single Song Creator Auto Fetch Audio: backing track + .ogg fix\n"
+              "  Bug Fixes:\n"
+              "  - On the Single Song Creator, 'Auto Fetch Audio' now fills the Song Audio\n"
+              "    field with the BACKING track (the no-drums stem) instead of the full mix,\n"
+              "    and prefers the .ogg copy for BOTH Song Audio and Drum Audio. Filling the\n"
+              "    full mix layered a second set of drums over your drums stem in the built\n"
+              "    pack; it now pulls the .ogg backing from your Stem Splitter 'BACKINGS'\n"
+              "    output. If no backing exists, Song Audio is left empty (with a note) so a\n"
+              "    full mix is never auto-filled. The other tabs are unchanged.\n")
+
+        wn_entry(wn_latest,
               "v4.5.4.1-1 - Album Art Preview + YouTube custom filename clears between videos\n"
               "  Changes/Additions:\n"
               "  - The Single Song Creator now shows a live Album Art Preview next to the\n"
@@ -25988,7 +26041,7 @@ demucs.separate.main()
               "    '.alt_detector.mid' comparison files - the over-eager tom pass you load\n"
               "    under your chart in the MIDI Editor's Ghost Overlay to catch missed toms.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.5.3.1-1 - Neural Stem Isolation (Jarredou) download rewired to Hugging Face + fallback\n"
               "  Changes/Additions:\n"
               "  - The in-app download for the optional Jarredou MDX23C neural stem\n"

@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)      4.5.4.1-1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)      4.5.4.2-1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -20,6 +20,18 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.4.2-1   --   2026-06-30
+------------------------------------------------------------------------------
+  - Fixed - Single Song Creator "Auto Fetch Audio": the Song Audio field is now
+    filled with the BACKING track (the no-drums stem) instead of the full mix,
+    and both Song Audio + Drum Audio prefer the .ogg copy. Filling the full mix
+    layered a second set of drums over your separate drums stem when you built
+    the pack (doubling the drums); it now pulls the .ogg backing from your Stem
+    Splitter "BACKINGS" output. If no backing exists, Song Audio is left empty
+    (with a note) so a full mix is never auto-filled. The other tabs are
+    unchanged.
 
 ------------------------------------------------------------------------------
   v4.5.4.1-1   --   2026-06-29
