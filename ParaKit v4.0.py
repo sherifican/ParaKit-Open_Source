@@ -7434,14 +7434,49 @@ class MidiToRlrrApp:
             files_frame, "Cover Image", self.cover_var, 5,
             [("Images", "*.jpg *.jpeg *.png"), ("All files", "*.*")],
             config_key="recent_cover")
-        # Auto-metadata art indicator — shows when Asset Manager found art
+        # Auto-metadata art indicator — shows when Asset Manager found art.
+        # (The label now lives inside the Album Art Preview block below.)
         self._am_auto_art_path = None
         self.am_art_indicator_var = tk.StringVar(value="")
-        ttk.Label(files_frame, textvariable=self.am_art_indicator_var,
-                  style="Sub.TLabel", foreground="#b388ff").grid(
-                      row=6, column=1, sticky="w", pady=(0, 2))
         # When user manually browses cover, clear the auto-art flag
         self.cover_var.trace_add("write", lambda *_: self._on_cover_manual_change())
+
+        # ── Album Art Preview (v4.5.4.1-1) ─────────────────────────────────────
+        # Live thumbnail of whatever cover will actually be embedded — whether
+        # browsed manually OR pulled from the audio file's metadata (both paths
+        # set cover_var) — so the user can confirm it's the right image and see
+        # how it's cropped (the dimensions caption flags non-square art) before
+        # building. Read-only; no effect on the build pipeline. Placed directly
+        # under the Cover Image row at the START of the entry column (sticky w)
+        # so it stays visible no matter how long the file paths get.
+        self._COVER_PREVIEW_PX = 120
+        art_prev_frame = ttk.Frame(files_frame)
+        art_prev_frame.grid(row=6, column=1, columnspan=3, sticky="nw",
+                            pady=(2, 4))
+        _art_box = tk.Frame(art_prev_frame, width=self._COVER_PREVIEW_PX,
+                            height=self._COVER_PREVIEW_PX, bg="#17172d",
+                            highlightbackground="#3a2e5e", highlightthickness=1)
+        _art_box.pack(side=tk.LEFT)
+        _art_box.pack_propagate(False)
+        self._cover_preview_label = tk.Label(_art_box, bg="#17172d",
+                                             fg="#666666", text="No art")
+        self._cover_preview_label.pack(expand=True)
+        self._cover_preview_imgref = None  # keep a ref so Tk doesn't GC the image
+        _art_meta = ttk.Frame(art_prev_frame)
+        _art_meta.pack(side=tk.LEFT, anchor="n", padx=(10, 0))
+        ttk.Label(_art_meta, text="Album Art Preview",
+                  style="Sub.TLabel", foreground="#888888").pack(anchor="w")
+        self._cover_preview_caption_var = tk.StringVar(value="No art selected")
+        ttk.Label(_art_meta, textvariable=self._cover_preview_caption_var,
+                  style="Sub.TLabel", foreground="#666666").pack(anchor="w", pady=(2, 0))
+        # The Asset-Manager "found art" indicator now sits next to the preview.
+        ttk.Label(_art_meta, textvariable=self.am_art_indicator_var,
+                  style="Sub.TLabel", foreground="#b388ff",
+                  wraplength=300, justify=tk.LEFT).pack(anchor="w", pady=(2, 0))
+        # Refresh on any cover change (manual Browse OR metadata-extracted), and
+        # once now in case a recent song restored a cover before this widget existed.
+        self.cover_var.trace_add("write", lambda *_: self._update_cover_preview())
+        self.root.after(60, self._update_cover_preview)
 
         # ── "Use album art from audio metadata" toggle ─────────────────────────
         # When ON: locks the Cover Image row, extracts embedded art from the
@@ -7942,6 +7977,41 @@ class MidiToRlrrApp:
             self._am_auto_art_path = None
             try: self.am_art_indicator_var.set("")
             except Exception: pass
+
+    def _update_cover_preview(self, *_):
+        """Render the current cover art (cover_var) as a thumbnail so the user
+        can confirm the right image is loaded and see how it's cropped. cover_var
+        is set by BOTH the manual Browse and the 'use metadata art' toggle, so a
+        single hook covers both. Read-only — never touches the build pipeline."""
+        label = getattr(self, "_cover_preview_label", None)
+        if label is None:
+            return
+        px = getattr(self, "_COVER_PREVIEW_PX", 120)
+        path = (self.cover_var.get() or "").strip()
+        if path and os.path.isfile(path):
+            try:
+                from PIL import Image, ImageTk
+                img = Image.open(path)
+                w, h = img.size
+                thumb = img.copy()
+                if thumb.mode not in ("RGB", "RGBA"):
+                    thumb = thumb.convert("RGB")
+                thumb.thumbnail((px, px), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(thumb)
+                label.configure(image=photo, text="")
+                self._cover_preview_imgref = photo  # keep ref (Tk GC quirk)
+                cap = f"{w}×{h}"
+                if w != h:
+                    cap += "  ·  not square"
+                self._cover_preview_caption_var.set(cap)
+            except Exception:
+                self._cover_preview_imgref = None
+                label.configure(image="", text="(can't preview)")
+                self._cover_preview_caption_var.set(os.path.basename(path)[:28])
+        else:
+            self._cover_preview_imgref = None
+            label.configure(image="", text="No art")
+            self._cover_preview_caption_var.set("No art selected")
 
     # ── "Use album art from audio metadata" toggle helpers ─────────────────────
 
@@ -25867,7 +25937,13 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
-              "v4.5.4.1-1 - YouTube custom filename now clears itself between videos\n"
+              "v4.5.4.1-1 - Album Art Preview + YouTube custom filename clears between videos\n"
+              "  Changes/Additions:\n"
+              "  - The Single Song Creator now shows a live Album Art Preview next to the\n"
+              "    Cover Image row - a thumbnail of whatever art will be embedded, whether\n"
+              "    you browsed it yourself or used 'Use album art from audio file metadata'.\n"
+              "    The caption shows the dimensions and flags non-square art, so you can be\n"
+              "    sure the right image is loaded and cropped how you expect before building.\n"
               "  Bug Fixes:\n"
               "  - When 'Name file other than video title' is on, the custom name box now\n"
               "    clears automatically after you convert a video, and when you press the\n"
