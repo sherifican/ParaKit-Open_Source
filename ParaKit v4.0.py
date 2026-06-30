@@ -23636,15 +23636,16 @@ demucs.separate.main()
             q = (self._yt_lib_search_var.get() or "").strip().lower()
         if q:
             live = [e for e in live
-                    if q in (e.get("title", "") or "").lower()
+                    if q in self._yt_lib_display_title(e).lower()
+                    or q in (e.get("title", "") or "").lower()
                     or q in (e.get("artist", "") or "").lower()]
 
         sort_mode = self._yt_lib_sort_var.get()
         if sort_mode == "Title":
-            live.sort(key=lambda e: (e.get("title", "") or "").lower())
+            live.sort(key=lambda e: self._yt_lib_display_title(e).lower())
         elif sort_mode == "Not-split first":
             live.sort(key=lambda e: (self._stem_is_split(e.get("path", "")),
-                                     (e.get("title", "") or "").lower()))
+                                     self._yt_lib_display_title(e).lower()))
         else:
             live.sort(key=lambda e: e.get("added_ts", 0), reverse=True)
 
@@ -23746,6 +23747,19 @@ demucs.separate.main()
             except Exception:
                 pass
 
+    def _yt_lib_display_title(self, entry):
+        """The library's display title. v4.5.4.1-1: the FILE NAME is now the
+        PRIMARY title (so a custom download filename — set via 'Name file other
+        than video title' — is what shows), with the download metadata title as
+        a fallback for the rare empty case. The artist line stays from metadata.
+        A right-click 'Rename' still wins: it sets title_custom, which overrides
+        the file name here."""
+        meta = (entry.get("title") or "").strip()
+        fname = os.path.splitext(os.path.basename(entry.get("path", "") or ""))[0]
+        if entry.get("title_custom"):
+            return meta or fname
+        return fname or meta
+
     def _yt_lib_row(self, parent, entry, split, midi, idx):
         path = entry.get("path", "")
         rest_bg = "#181830" if (idx % 2) else "#15152a"
@@ -23793,7 +23807,7 @@ demucs.separate.main()
         textcol = tk.Frame(row, bg=rest_bg)
         textcol.grid(row=0, column=2, sticky="ew")
         row._yt_color_targets.append(textcol)
-        title = entry.get("title") or os.path.splitext(os.path.basename(path))[0]
+        title = self._yt_lib_display_title(entry)
         title_lbl = tk.Label(textcol, text=self._yt_ellipsize(title, 42),
                              bg=rest_bg, fg="#e8e8f0",
                              font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
@@ -23977,7 +23991,7 @@ demucs.separate.main()
         for e in self._yt_library_load():
             try:
                 if os.path.normcase(os.path.abspath(e.get("path", ""))) == norm:
-                    cur = e.get("title", "") or ""
+                    cur = self._yt_lib_display_title(e)
                     break
             except Exception:
                 pass
@@ -23995,6 +24009,7 @@ demucs.separate.main()
                 try:
                     if os.path.normcase(os.path.abspath(e.get("path", ""))) == norm:
                         e["title"] = new
+                        e["title_custom"] = True   # manual Rename overrides the file name
                 except Exception:
                     pass
             self._yt_library_save(entries)
@@ -24050,8 +24065,8 @@ demucs.separate.main()
         # Rename deliberately never renames the file (it would break the
         # name-based links to <song>_drums.* / <song> MIDI.mid), so the file
         # name can stay stale ("Home Soon") after the user renamed the row to
-        # "Issues - Headspace". Match the row label (_yt_lib_row): title first,
-        # file-name stem only as a fallback.
+        # "Issues - Headspace". Match the row label (_yt_lib_display_title):
+        # file name first, metadata title as fallback, a manual Rename overriding.
         raw_name = ""
         try:
             _norm = os.path.normcase(os.path.abspath(path))
@@ -24060,7 +24075,7 @@ demucs.separate.main()
         for _e in self._yt_library_load():
             try:
                 if os.path.normcase(os.path.abspath(_e.get("path", ""))) == _norm:
-                    raw_name = (_e.get("title") or "").strip()
+                    raw_name = self._yt_lib_display_title(_e)
                     break
             except Exception:
                 pass
@@ -25948,7 +25963,12 @@ demucs.separate.main()
               "  - When 'Name file other than video title' is on, the custom name box now\n"
               "    clears automatically after you convert a video, and when you press the\n"
               "    URL field's ✕ button - so the next video no longer silently inherits\n"
-              "    the previous video's custom name.\n")
+              "    the previous video's custom name.\n"
+              "  - The Downloaded Songs library now shows the FILE NAME as the song title\n"
+              "    (so a custom download name actually appears), with the download's\n"
+              "    metadata name as a fallback; the artist still shows underneath from the\n"
+              "    metadata. Search and sort follow the displayed name, and right-click\n"
+              "    Rename still overrides it.\n")
 
         wn_entry(wn_latest,
               "v4.5.4-1 - Auto Fetch Audio on more tabs + Jarredou on by default + fixes\n"
