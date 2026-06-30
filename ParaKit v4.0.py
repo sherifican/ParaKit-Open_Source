@@ -26162,15 +26162,18 @@ demucs.separate.main()
             _pin_body.pack(fill=tk.X)
             _ph, _pb = _entries[0]
             wn_entry(_pin_body, _ph + ("\n" + _pb if _pb else ""))
-            # the REST of the newest 30 in collapsible sections of 10 (section 1
-            # open by default); the pinned newest is NOT repeated here.
+            # the REST of the newest 30 in collapsible sections of 10, ALL
+            # CLOSED by default so only the pinned newest shows at a glance —
+            # users expand a section to read older entries (less render work on
+            # weaker systems, and the lazy bodies don't build until first open).
+            # the pinned newest is NOT repeated here.
             _rest = _entries[1:]
             for _si in range(0, len(_rest), WN_PER_SECTION):
                 _chunk = _rest[_si:_si + WN_PER_SECTION]
                 _fv, _lv = _wn_ver(_chunk[0][0]), _wn_ver(_chunk[-1][0])
                 _stitle = ("Versions  " + _fv + "  …  " + _lv if _fv != _lv
                            else "Version  " + _fv)
-                _wn_lazy_section(_stitle, _chunk, expanded=(_si == 0))
+                _wn_lazy_section(_stitle, _chunk, expanded=False)
             _wn_end = tk.Frame(whats_new_frame, bg="#17172d",
                                highlightthickness=1, highlightbackground="#2b2b55")
             _wn_end.pack(fill=tk.X, pady=(2, 0))

@@ -30,11 +30,13 @@
   v4.5.4.3   --   2026-06-30
 ------------------------------------------------------------------------------
   - The Help tab's "What's New" no longer lags. The version history is now loaded
-    from this CHANGELOG.txt and shown in collapsible sections of 10 that draw only
-    when you open them; the in-app list is capped at the 30 most recent versions
-    (the full history is right here in CHANGELOG.txt). The most recent entry is
-    always pinned at the top, so the latest update/fix is visible at a glance even
-    with every section collapsed. This also trimmed ~2,200 lines out of the app.
+    from this CHANGELOG.txt and shown in collapsible sections of 10 that start
+    collapsed and only draw when you expand them; the in-app list is capped at the
+    30 most recent versions (the full history is right here in CHANGELOG.txt). The
+    most recent entry is always pinned and visible at the top, so the latest
+    update/fix is seen at a glance while every older section stays closed until you
+    click it -- less render work on weaker systems. This also trimmed ~2,200 lines
+    out of the app.
   - MIDI Editor waveform: the two-tone "Stereo" style is now the FIRST option
     (Bars moved to last) and is the robust default -- a blank or unrecognized
     saved preference now falls back to Stereo instead of Bars.
