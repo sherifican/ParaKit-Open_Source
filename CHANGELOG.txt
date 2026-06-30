@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.4-1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)      4.5.4.1-1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -20,6 +20,26 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.4.1-1   --   2026-06-29
+------------------------------------------------------------------------------
+  - New - Album Art Preview: the Single Song Creator now shows a live thumbnail
+    under the Cover Image field of whatever cover will actually be embedded --
+    whether you browsed it yourself or used "Use album art from audio file
+    metadata." A caption shows the dimensions and flags non-square art, so you
+    can confirm the right image is loaded and cropped how you expect before
+    building.
+  - Fixed: the YouTube -> FLAC custom filename ("Name file other than video
+    title") now clears itself between videos -- the name box empties
+    automatically after you convert a video, and when you press the URL field's
+    X button -- so the next video no longer silently inherits the previous
+    one's custom name.
+  - Fixed: the Downloaded Songs library now shows the file name as the song
+    title -- so a custom download name actually appears -- with the download's
+    metadata name as a fallback; the artist still shows underneath from the
+    metadata. Search and sort follow the displayed name, and a right-click
+    Rename still overrides it.
 
 ------------------------------------------------------------------------------
   v4.5.4-1   --   2026-06-25
