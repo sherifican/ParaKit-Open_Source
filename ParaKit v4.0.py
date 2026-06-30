@@ -5355,7 +5355,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.4-1"
+    VERSION = "4.5.4.1-1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -22070,7 +22070,8 @@ demucs.separate.main()
         self.yt_url_var = tk.StringVar()
         ttk.Entry(url_row, textvariable=self.yt_url_var, width=70).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(url_row, text="✕", width=2,
-                   command=lambda: self.yt_url_var.set("")).pack(side=tk.LEFT)
+                   command=lambda: (self.yt_url_var.set(""),
+                                    self.yt_custom_name_var.set(""))).pack(side=tk.LEFT)
 
         # v4.4.61-1 (owner layout revision) — TOP BAND. The asset preview sits at
         # the left; the Format, JS-Runtime and Cookies boxes move UP beside it,
@@ -24659,6 +24660,12 @@ demucs.separate.main()
                              daemon=True)
         t.start()
 
+        # v4.5.4.1-1: the custom filename is one-shot — this conversion has
+        # already captured it into custom_basename, so reset the field now so
+        # the next video doesn't silently inherit this one's name. (The URL ✕
+        # button clears it too.)
+        self.yt_custom_name_var.set("")
+
     def _yt_download_worker(self, url, out_dir, fmt, cookie_args=None,
                              cookie_desc="Cookie source: none", embed_art=False,
                              custom_basename=None):
@@ -25860,6 +25867,14 @@ demucs.separate.main()
             entry(card, normalized, color=color)
 
         wn_entry(wn_latest,
+              "v4.5.4.1-1 - YouTube custom filename now clears itself between videos\n"
+              "  Bug Fixes:\n"
+              "  - When 'Name file other than video title' is on, the custom name box now\n"
+              "    clears automatically after you convert a video, and when you press the\n"
+              "    URL field's ✕ button - so the next video no longer silently inherits\n"
+              "    the previous video's custom name.\n")
+
+        wn_entry(wn_latest,
               "v4.5.4-1 - Auto Fetch Audio on more tabs + Jarredou on by default + fixes\n"
               "  Changes/Additions:\n"
               "  - The MIDI Editor's 'Auto Fetch Audio' button is now on the Single Song\n"
@@ -25889,7 +25904,7 @@ demucs.separate.main()
               "    LimeWire Requirements bundle (see the README) as a manual fallback.\n"
               "  - Download-source fix only - no detection or charting changes.\n")
 
-        wn_entry(wn_latest,
+        wn_entry(wn_older,
               "v4.5.3-1 - Better Easy / Medium / Hard charts (difficulty reduction rebuilt)\n"
               "  Changes/Additions:\n"
               "  - The automatic difficulty reduction was rebuilt. Instead of dropping\n"
