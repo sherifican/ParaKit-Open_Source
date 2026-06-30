@@ -5,6 +5,11 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works, until that ships
 >v4 will continue getting regular updates often.
 
+>Update on the v5 rebuild progress: 60%-70% complete, the easy stuff is done now i'm finishing up the more complicated
+>legs of the dev work but I estimate a release sometime around mid-July.
+>Thank you for over 1700+ clones on v4 in the first 3 weeks!! Means a lot to see and I hope ya'll are getting good use out of ParaKit
+>and are charting your hearts out, stay tuned for v5 coming soon.
+
 > **Version in this release:** `4.5.4.1-1`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
