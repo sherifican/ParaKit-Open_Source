@@ -4,22 +4,39 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)      4.5.4.2-1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.4.3  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
-    - Source releases use a "<app>-<htmlrev>" form (e.g. 4.5.3-1). The trailing
-      "-N" tracks the companion Practice/Preview HTML editions, not a patch
-      counter, so it can stay the same across app-only changes.
+    - Source releases now use a plain "<app>" form (e.g. 4.5.4.3). Older entries
+      below used an "<app>-<htmlrev>" form where the trailing "-N" tracked the
+      companion Practice/Preview HTML editions; that "-N" was dropped from 4.5.4.3
+      on (Practice Mode v2 is no longer updated -- a v3 / Kit Studio is coming in
+      the ParaKit v5 rebuild).
     - The earlier .exe line uses a plain "vX.Y.Z" form. The compiled .exe
       currently lags the .py source on purpose (see README.txt); the entries
       below it are the historical release notes carried over from the .exe repo
       (https://github.com/sherifican/ParaKit---Releases).
+    - This is the curated history. A handful of very old 4.0-4.4 rapid-iteration
+      micro-versions only ever appeared in the in-app log and aren't repeated
+      here; everything meaningful is included.
 
 
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.4.3   --   2026-06-30
+------------------------------------------------------------------------------
+  - The Help tab's "What's New" no longer lags. The version history is now loaded
+    from this CHANGELOG.txt and shown in collapsible sections of 10 that draw only
+    when you open them; the in-app list is capped at the 30 most recent versions
+    (the full history is right here in CHANGELOG.txt). This also trimmed ~2,200
+    lines out of the app.
+  - Practice Mode v2 (the in-app alpha) is no longer being updated -- Practice
+    Mode work is moving to a new v3 / Kit Studio in the ParaKit v5 rebuild. The
+    version number drops the trailing "-N" from here on.
 
 ------------------------------------------------------------------------------
   v4.5.4.2-1   --   2026-06-30
