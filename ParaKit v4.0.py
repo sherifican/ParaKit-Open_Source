@@ -14037,11 +14037,18 @@ demucs.separate.main()
         _loaded_wave_style = load_config().get("me_waveform_style", "stereo_color")
         if _loaded_wave_style == "filled":
             _loaded_wave_style = "bars"
+        # Any unknown / empty / missing value -> Stereo (the intended default since
+        # v4.5.2-1); only a VALID saved choice keeps a non-Stereo style. This makes
+        # the Stereo default robust against a blank/garbled config (owner 2026-06-30).
+        if _loaded_wave_style not in ("bars", "filled_jagged",
+                                      "jagged_detailed", "stereo_color"):
+            _loaded_wave_style = "stereo_color"
         self.me_waveform_style_var = tk.StringVar(value=_loaded_wave_style)
-        for _wave_label, _wave_val in (("Bars", "bars"),
+        # Order: Stereo FIRST (it's the default), Bars LAST (owner 2026-06-30).
+        for _wave_label, _wave_val in (("Stereo", "stereo_color"),
                                        ("Filled (Jagged)", "filled_jagged"),
                                        ("Jagged Hollow", "jagged_detailed"),
-                                       ("Stereo", "stereo_color")):
+                                       ("Bars", "bars")):
             _wave_rb = ttk.Radiobutton(
                 wave_row, text=_wave_label,
                 variable=self.me_waveform_style_var,
@@ -14058,9 +14065,10 @@ demucs.separate.main()
                 {"me_waveform_style": self.me_waveform_style_var.get()}))
         self._add_tooltip(
             _wave_rb.master,
-            "Bars: per-pixel vertical lines with intensity-graded color.\n"
-            "  Forces a 1-pixel line on every column so quiet sections\n"
-            "  still show a faint stripe.\n"
+            "Stereo: two-tone filled waveform in ParaKit's theme colors\n"
+            "  (default) — the left channel in magenta above the midline,\n"
+            "  the right channel in cyan below (mono audio splits the same\n"
+            "  envelope top/bottom). The Paradiddle-style look.\n"
             "Filled (Jagged): continuous purple polygon with the top edge\n"
             "  tracing every amplitude sample — spikier silhouette, more\n"
             "  amplitude detail on dense passages.\n"
@@ -14069,10 +14077,9 @@ demucs.separate.main()
             "  (silence skipped) so hits read as crisp peaks against empty\n"
             "  space — the same rendering style as the developer Stem\n"
             "  Compare tool.\n"
-            "Stereo: two-tone filled waveform in ParaKit's theme colors\n"
-            "  (default) — the left channel in magenta above the midline,\n"
-            "  the right channel in cyan below (mono audio splits the same\n"
-            "  envelope top/bottom). The Paradiddle-style look.\n\n"
+            "Bars: per-pixel vertical lines with intensity-graded color.\n"
+            "  Forces a 1-pixel line on every column so quiet sections\n"
+            "  still show a faint stripe.\n\n"
             "Switch any time; the change applies immediately and your\n"
             "preference is remembered across app restarts.")
 
