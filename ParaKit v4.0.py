@@ -26142,8 +26142,24 @@ demucs.separate.main()
             if not _entries:
                 _wn_missing_disclaimer()
                 return
-            for _si in range(0, len(_entries), WN_PER_SECTION):
-                _chunk = _entries[_si:_si + WN_PER_SECTION]
+            # PINNED: the most recent entry is ALWAYS visible at the top, so the
+            # latest update/fix is seen at a glance even with every section closed.
+            _pin = tk.Frame(whats_new_frame, bg="#17231a",
+                            highlightthickness=1, highlightbackground="#2f6b3f")
+            _pin.pack(fill=tk.X, pady=(0, 6))
+            _pin_hdr = tk.Label(_pin, text="  ★  Latest update", bg="#17231a",
+                                fg="#9bd36b", font=("Segoe UI", 9, "bold"),
+                                anchor="w")
+            _pin_hdr.pack(anchor="w", fill=tk.X, padx=(2, 0), pady=(5, 0))
+            _pin_body = ttk.Frame(_pin, padding=(12, 2, 12, 6))
+            _pin_body.pack(fill=tk.X)
+            _ph, _pb = _entries[0]
+            wn_entry(_pin_body, _ph + ("\n" + _pb if _pb else ""))
+            # the REST of the newest 30 in collapsible sections of 10 (section 1
+            # open by default); the pinned newest is NOT repeated here.
+            _rest = _entries[1:]
+            for _si in range(0, len(_rest), WN_PER_SECTION):
+                _chunk = _rest[_si:_si + WN_PER_SECTION]
                 _fv, _lv = _wn_ver(_chunk[0][0]), _wn_ver(_chunk[-1][0])
                 _stitle = ("Versions  " + _fv + "  …  " + _lv if _fv != _lv
                            else "Version  " + _fv)

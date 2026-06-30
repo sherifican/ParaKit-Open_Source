@@ -32,8 +32,9 @@
   - The Help tab's "What's New" no longer lags. The version history is now loaded
     from this CHANGELOG.txt and shown in collapsible sections of 10 that draw only
     when you open them; the in-app list is capped at the 30 most recent versions
-    (the full history is right here in CHANGELOG.txt). This also trimmed ~2,200
-    lines out of the app.
+    (the full history is right here in CHANGELOG.txt). The most recent entry is
+    always pinned at the top, so the latest update/fix is visible at a glance even
+    with every section collapsed. This also trimmed ~2,200 lines out of the app.
   - Practice Mode v2 (the in-app alpha) is no longer being updated -- Practice
     Mode work is moving to a new v3 / Kit Studio in the ParaKit v5 rebuild. The
     version number drops the trailing "-N" from here on.
