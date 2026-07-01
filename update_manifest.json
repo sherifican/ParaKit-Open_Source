@@ -1,10 +1,98 @@
 {
   "version": "4.5.5.1",
-  "note": "Runtime files the in-app updater keeps current (main 'ParaKit v4.0.py' handled separately). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
+  "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; README/CHANGELOG and screenshots/ are intentionally excluded. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
-      "path": "CHANGELOG.txt",
-      "sha256": "63ab37b1b009cd12a729c00d8e15b618878ff00588e7ae68e1f9812f9da9cb57"
+      "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
+      "sha256": "333695fc7b3c3574234feb0699c0ed843f3d40a2fd6fa3cc55c02b0972bc37eb"
+    },
+    {
+      "path": "Detection Research Notes - Web Edition/reports/1-detection-cleanup-and-results.md",
+      "sha256": "7fe2a659dff66e7963283dad7387a19ca478deed0c8e129de34875dcb1a7bce1"
+    },
+    {
+      "path": "Detection Research Notes - Web Edition/reports/2-what-the-field-knows.md",
+      "sha256": "be894ff3754739d7c03a27a74645810e4916bb1b32bcdfc2272d11c1d3debf0e"
+    },
+    {
+      "path": "Detection Research Notes - Web Edition/reports/3-literature-review-and-findings.md",
+      "sha256": "1e9a87a9f3f223c3f9790515b3b3e5deb8dc5ae54ae7ea44ff5d221a6f52ca74"
+    },
+    {
+      "path": "Detection Research Notes - Web Edition/reports/README.md",
+      "sha256": "b9cc88be11acad2c70c9950bdb1f97ad7591ed5a7ac23c8bdcf7bcb81be5f0c7"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    {
+      "path": "Practice Window v2 - Web Edition/parakit-practice.html",
+      "sha256": "ae57ebd813509f021c5bd3d24d8b6045013071e1e489fba1886ecc739ba47efa"
+    },
+    {
+      "path": "Practice Window v3 - Web Edition/README.md",
+      "sha256": "acccf02a90d8559041aa3bd39cf7e79e8672c3f65e15c316d8ebf9de2760a297"
+    },
+    {
+      "path": "Practice Window v3 - Web Edition/parakit-practice-v3.html",
+      "sha256": "4b60eed948b02f40ba456efebbe234a71d07f8823a647943584796cfb212626a"
+    },
+    {
+      "path": "Preview Track v2 - Web Edition/README.md",
+      "sha256": "2ba827b808830969260d7808b93de4be4115c1ca8edc54a7944b8d2be3c4370b"
+    },
+    {
+      "path": "Preview Track v2 - Web Edition/parakit-preview.html",
+      "sha256": "bf95ee72d8b3db4d7cec122422cb4cb8fe64217f166e484bca0beed11fb9c9f1"
+    },
+    {
+      "path": "Run ParaKit v4.0.bat",
+      "sha256": "a9fd9a28d082f2c8bcd186cb956239b466fe89f8990a167a7619334184a64b65"
+    },
+    {
+      "path": "docs/BUILDING.md",
+      "sha256": "c89a26b0cfb025cc5b2dd3a84f2eab5ffabf4d26b0b19e45ce9ca6ad4e4f0218"
+    },
+    {
+      "path": "docs/ROADMAP.md",
+      "sha256": "47e5a2cb9e0002163323392106d6966b4c503b02731f46cf084c9064dfe66660"
+    },
+    {
+      "path": "docs/TROUBLESHOOTING.md",
+      "sha256": "e51cde656ebcb565d29f1703729a8a88031a5d34f31c826d411347491a1a0a3b"
+    },
+    {
+      "path": "dot_lit_v2.png",
+      "sha256": "bd2ea1ee867b940234eb759febec65f5e7a2bab5116bc8c1bff25a739e6916b8"
+    },
+    {
+      "path": "dot_lit_v3_tight.png",
+      "sha256": "2c661acda35331ca241124686d69284141e1168712a731d3ce62cb4937f6a717"
+    },
+    {
+      "path": "dot_unlit.png",
+      "sha256": "4443e7b801fabe8b9a9e087a6c9825707cf2ba1aed994b83b607bc92ff5731ae"
+    },
+    {
+      "path": "extractor/README.md",
+      "sha256": "ac5adb500baab39b4a38f5d660547b9b0e3c87d943873f82aff03f2c3937e793"
+    },
+    {
+      "path": "extractor/Run RLRR Extractor.bat",
+      "sha256": "9381c07853cdc54f30ab449653f241fa82e2064a2f16e1e32e4f5a26ad7642f6"
+    },
+    {
+      "path": "extractor/rlrr_extract_gui.py",
+      "sha256": "74078d9304cbc9b1d62a92c0c9637b384a748afca581f49b236f8867c5bd4f80"
+    },
+    {
+      "path": "extractor/rlrr_parse.py",
+      "sha256": "677121f22147806c5215486f00acea9326aefe0be7a5e017ccd6c99bd2c29ad6"
+    },
+    {
+      "path": "parakit.ico",
+      "sha256": "0e5b25b007afe62d3f9d1e347b417342b01724a59d0e11fff17dc914f2bee4e0"
     },
     {
       "path": "parakit_cleanup/__init__.py",
@@ -51,6 +139,14 @@
       "sha256": "dc5c6d18c107bd4f030697ccd0c51d9518f40adb761cee94bc0dbae168946056"
     },
     {
+      "path": "parakit_header_logo.png",
+      "sha256": "97d933fe79d5869ef4000ef555fc8f53bcd015d0e2ffab22a22282fedbeeeb10"
+    },
+    {
+      "path": "parakit_logo_FINAL.png",
+      "sha256": "99179f00b65716143cf7e2c899422b08245b3fcaac8bcf59fe09a4e1ffd69705"
+    },
+    {
       "path": "parakit_separators/__init__.py",
       "sha256": "317be060414de8dd4985349f66c1ac857ae84f9c38ab330740afe896ca707bd1"
     },
@@ -65,6 +161,246 @@
     {
       "path": "parakit_separators/model_resolver.py",
       "sha256": "419d057ddc578b117d7427376141cdf1e673a65077042d98eda2ba4e294bb5f1"
+    },
+    {
+      "path": "practice_minigame/__init__.py",
+      "sha256": "b56bc578c82758dfb783b5c0b31cc69357034b31f2539d99f300e3aa81d16027"
+    },
+    {
+      "path": "practice_minigame/main.py",
+      "sha256": "7e46bff0a2664430d2129f0033ea9199907223866959e5b26b93479245657ad4"
+    },
+    {
+      "path": "practice_v2/README.md",
+      "sha256": "155235da36fb4280ae015c9b6ff5050922ccd40418c4cfc402fa01df41f8ad14"
+    },
+    {
+      "path": "practice_v2/Run Practice Window v2.bat",
+      "sha256": "344ab1b582abe549cd2e18381b42d454c850147b17d46dcea97b06ce952ffdfa"
+    },
+    {
+      "path": "practice_v2/__init__.py",
+      "sha256": "b56bc578c82758dfb783b5c0b31cc69357034b31f2539d99f300e3aa81d16027"
+    },
+    {
+      "path": "practice_v2/assets/ui/FINAL PARAKIT LOGO.png",
+      "sha256": "99179f00b65716143cf7e2c899422b08245b3fcaac8bcf59fe09a4e1ffd69705"
+    },
+    {
+      "path": "practice_v2/assets/ui/asset_contact_sheet.png",
+      "sha256": "7e44228ae0b464056bfea51ed14065a7f546de290cdfcc8eb3e3076f89382893"
+    },
+    {
+      "path": "practice_v2/assets/ui/common/icon_crown.png",
+      "sha256": "430529019befc9fac95d1ab1b9ac35b740606458978388113970e909e165bba4"
+    },
+    {
+      "path": "practice_v2/assets/ui/common/icon_play.png",
+      "sha256": "f49d0ddf26cedfd8fc5ac049a2cac4eb54002835aba554e60bcec5c497bf4593"
+    },
+    {
+      "path": "practice_v2/assets/ui/common/icon_refresh.png",
+      "sha256": "e84fe49f59ed7c1dd0571ed8cf8d083c15b00e94292bb8dc76287b7f57e7e8d3"
+    },
+    {
+      "path": "practice_v2/assets/ui/common/icon_star.png",
+      "sha256": "caad83ffbf2b83db50d101599e4216b1c10ab2f2f23c922f02466bf012ffbbd1"
+    },
+    {
+      "path": "practice_v2/assets/ui/common/icon_target.png",
+      "sha256": "47bea34fd7d4d0bb2a9bd1529e304a7a4b06b819508903408965ebb1f280a381"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_bg.png",
+      "sha256": "09b9aae77ccc8d2838ffe77b449e8982b82a2a951fea1e9d3a0318e35d1b179a"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_btn_browse.png",
+      "sha256": "6cee7edd681e5d2a014e524267beb2e4c30bfb828d1d9e3899d80e80609689b4"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_btn_browse_hover.png",
+      "sha256": "b6b88a59c5266e0fc881cea291ef390909fa1f4d8628e207e66cde726377ffbf"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_btn_browse_pressed.png",
+      "sha256": "d6484f59bd529475db47b4c2ba88616435162763538f13b24a6ec1dfaf4a319d"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_btn_launch.png",
+      "sha256": "72be806d58ee192c035f7e084aabeb09d7a25081bd2299f96ed2fa79d1ce60bd"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_btn_launch_hover.png",
+      "sha256": "36c240c50e3217879efb8741a066e670035d7e623907b57037695a6773d434c4"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_btn_launch_pressed.png",
+      "sha256": "45227a317a4fbd1fd87a37b6727d78e89a71d56dc21439ee0272583af9c35c78"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_card_bg.png",
+      "sha256": "1fa73576c6fed7af529052e225c46cac25d7781f60319bc85f15aa2b3df0e061"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_header.png",
+      "sha256": "a46d24b1c91f6786412f45e56f63a6c8227e9f59c6bdadd29e66a49219266e53"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_icon_audio.png",
+      "sha256": "fa3ec1d48a5f1d3832763d051fd624109c74807ba870c20b392606ff3aded75e"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_icon_midi.png",
+      "sha256": "56ea015b9fc9d2ffd70ed176ff17b190326dde05e6e5e0203cc90a9cc9258d01"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_icon_midi_in.png",
+      "sha256": "cd6880b9d0dbf1279d4c78dde37750a14ae5387babd2459a3ddb2924b09429d5"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_icon_settings.png",
+      "sha256": "054bd8a38bd250427c1059d777304793e4eb4b9859e28bfa0a93fcbac68ac84d"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_input_bg.png",
+      "sha256": "18ff4cb17aaefbe93c2802f8e955a54be80e1a971fb92bb44c304c4c3b69b756"
+    },
+    {
+      "path": "practice_v2/assets/ui/launcher/launcher_separator.png",
+      "sha256": "1b4277dd9298b849576ede6be64377afc7f7909a94dd8019913e40644bf963b8"
+    },
+    {
+      "path": "practice_v2/assets/ui/manifest.json",
+      "sha256": "712cb655ec01052b2b8dd87997aa5b702adc9aa40f1f4462ee24c1a495b303b8"
+    },
+    {
+      "path": "practice_v2/assets/ui/results/btn_back.png",
+      "sha256": "958a91c1c85517dbb861b8ae0f6e244c0e76a17ce8c4dcd9f7c5deb7f449e17d"
+    },
+    {
+      "path": "practice_v2/assets/ui/results/btn_back_hover.png",
+      "sha256": "97b6b8d2e76764c656d5b0589909801cbc78e13d9b7b85602cbd08d65311c5ae"
+    },
+    {
+      "path": "practice_v2/assets/ui/results/btn_back_pressed.png",
+      "sha256": "5b569627074247efe2934bc1fc558ef67b9b2c17c76d176ac61d6c16f4420c3b"
+    },
+    {
+      "path": "practice_v2/assets/ui/results/btn_play_again.png",
+      "sha256": "f92a1523c51ad744cd23e531d260381ec387514b4cf3e5174464d168d5b53198"
+    },
+    {
+      "path": "practice_v2/assets/ui/results/btn_play_again_hover.png",
+      "sha256": "ed0150c8ccbee23192a0ee00ddbcc7c5069cd432a91eab91e6a5b71c9fbf3645"
+    },
+    {
+      "path": "practice_v2/assets/ui/results/btn_play_again_pressed.png",
+      "sha256": "d2a338f91eb24451d81f58b02a98b63d2cb17bd654d949a1669f4aef9834d87f"
+    },
+    {
+      "path": "practice_v2/assets/ui/results/grade_glow_spritesheet.png",
+      "sha256": "a6ab2beb848824aba0255fca7b71ba4107c6f5bed3ad69e19883e7c87cf01ccf"
+    },
+    {
+      "path": "practice_v2/assets/ui/results/results_bg_overlay.png",
+      "sha256": "fa59441387ad0b5be20ce485f9a0f62ef701aeb243b70e1348d4518eadbe46a2"
+    },
+    {
+      "path": "practice_v2/assets/ui/results/results_card_bg.png",
+      "sha256": "7df497c731a524801c8d7b7162ba1592f9a51b61750061e6fd608f40840e1f2d"
+    },
+    {
+      "path": "practice_v2/assets/ui/results/results_histogram_card_bg.png",
+      "sha256": "d994ae8ee7c81e4d67c3aece15d87a684584d07af7a01846b5aeed23b0d60174"
+    },
+    {
+      "path": "practice_v2/falling note icons/crash_orange_falling.png",
+      "sha256": "5e2a20a9147523ff7b2d4379534dbeb1464ac1092752cce0797493c9f25d7a87"
+    },
+    {
+      "path": "practice_v2/falling note icons/crash_orange_filled_example.png",
+      "sha256": "5e2a20a9147523ff7b2d4379534dbeb1464ac1092752cce0797493c9f25d7a87"
+    },
+    {
+      "path": "practice_v2/falling note icons/hi_hat_cyan_falling.png",
+      "sha256": "2ef06ec3548c0714c4dc90b06458719e0016f56312f6185b4d6e459506b534ec"
+    },
+    {
+      "path": "practice_v2/falling note icons/hi_hat_cyan_filled_example.png",
+      "sha256": "2ef06ec3548c0714c4dc90b06458719e0016f56312f6185b4d6e459506b534ec"
+    },
+    {
+      "path": "practice_v2/falling note icons/kick_pink_falling.png",
+      "sha256": "79cd01dbcd9fdfe6ec34c15a840a2c3844c7e081bbd05fa3bed20fd3a6a338af"
+    },
+    {
+      "path": "practice_v2/falling note icons/ride_yellow_falling.png",
+      "sha256": "22977d7aa2bed604b6d4e48c4f35157f157de7c45c639936f5967392ee7900a8"
+    },
+    {
+      "path": "practice_v2/falling note icons/ride_yellow_filled_example.png",
+      "sha256": "22977d7aa2bed604b6d4e48c4f35157f157de7c45c639936f5967392ee7900a8"
+    },
+    {
+      "path": "practice_v2/falling note icons/snare_red_falling.png",
+      "sha256": "928e88506e0be4ab0108769743f2e9f6d905604be9461af0ec37825300239d4c"
+    },
+    {
+      "path": "practice_v2/falling note icons/snare_red_filled_example.png",
+      "sha256": "928e88506e0be4ab0108769743f2e9f6d905604be9461af0ec37825300239d4c"
+    },
+    {
+      "path": "practice_v2/falling note icons/tom1_blue_falling.png",
+      "sha256": "12baeedf4333dfbc2e87a6e963b940b201a913882862e5e09e11c87e8277e507"
+    },
+    {
+      "path": "practice_v2/falling note icons/tom2_green_falling.png",
+      "sha256": "b1f32fb88fd3fae59f848710beda50c3b7b7a93f6a395c48b9b4dbae1c8d916e"
+    },
+    {
+      "path": "practice_v2/falling note icons/tom3_purple_falling.png",
+      "sha256": "1311cf9e6c1ed1b08889fc311764113ad22d009ce684c05bdcec4bb8eaa55968"
+    },
+    {
+      "path": "practice_v2/main.py",
+      "sha256": "ca85675a8b2dfe1ea60169a5f630c50b27c0806c2f3798d15542eb032fbac247"
+    },
+    {
+      "path": "practice_v2/note icons/crash_orange.png",
+      "sha256": "df8ab5f76ad3b286a234277fc8929b62cc890c8350e9c4ff16875ace96b28d61"
+    },
+    {
+      "path": "practice_v2/note icons/hi_hat_cyan.png",
+      "sha256": "1910c8aaba0ec6ef891da2c823facc6483049af00195f22854c3c551c5632fe8"
+    },
+    {
+      "path": "practice_v2/note icons/kick_pink.png",
+      "sha256": "d2a61a99078bc9910750a74d4dcf0a98fe31beafdd50ad7dbab218a013bc9fb6"
+    },
+    {
+      "path": "practice_v2/note icons/ride_yellow.png",
+      "sha256": "691d098a10c5d2ba83cb67a0aec2edce7aa89bd22deebd354dea23ed9431430e"
+    },
+    {
+      "path": "practice_v2/note icons/snare_red.png",
+      "sha256": "78c40ddc0ba7c04613e17188826426c45953a3ded3872c02d2f90cb668e52bf7"
+    },
+    {
+      "path": "practice_v2/note icons/tom1_blue.png",
+      "sha256": "5d0129f3e4f37df98ce289df72b4fe4038eaaf6f2fbe86d38ee3f0e1a75d083a"
+    },
+    {
+      "path": "practice_v2/note icons/tom2_green.png",
+      "sha256": "a99e5c57233bb458fed95bd1a4288853c09ce295419a859e891ec5695d415093"
+    },
+    {
+      "path": "practice_v2/note icons/tom3_purple.png",
+      "sha256": "a8e194a2526a51d041da73c6bc84ddc82af03cd43a456cffc53fdbb7a5d6f5d5"
+    },
+    {
+      "path": "practice_v2/practice_window_v2_launcher.py",
+      "sha256": "9b8ed1921a17a4a11765a55c817c5a599fa57f82edec73a40980afcd0c067f25"
     },
     {
       "path": "requirements.txt",
