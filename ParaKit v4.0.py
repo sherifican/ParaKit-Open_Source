@@ -7118,11 +7118,14 @@ class MidiToRlrrApp:
             "A bug in ParaKit's in-app updater (fixed in this version, 4.5.5.1) "
             "meant that when you updated from inside the app, only the main "
             "program file was downloaded — any supporting files a newer version "
-            "needed (detection models, cleanup code, the changelog, ...) could be "
+            "needed (detection models, cleanup code, separators, ...) could be "
             "left out of date.\n\n"
-            "To make sure your install is complete, either update your supporting "
-            "files now (recommended), or re-download / re-clone ParaKit from "
-            "GitHub. Updates from here on keep every file in sync automatically.")
+            "First time running ParaKit, or just cloned / downloaded it from "
+            "GitHub? This doesn't apply to you — a fresh copy already has every "
+            "current file — so you can simply dismiss this.\n\n"
+            "Otherwise, to make sure your install is complete, either update your "
+            "supporting files now (recommended), or re-download / re-clone ParaKit "
+            "from GitHub. Updates from here on keep every file in sync automatically.")
         ttk.Label(frame, text=explain, style="TLabel",
                   wraplength=484, justify=tk.LEFT).pack(anchor="w", pady=(6, 0))
 
