@@ -5401,7 +5401,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.4.3"
+    VERSION = "4.5.5"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -15377,6 +15377,11 @@ demucs.separate.main()
         self.me_redo_stack      = []
         self.me_flagged         = {}
         self._me_last_midi      = None
+        # v4.5.5: clear the suspicious-timing state too, so Clear-then-Play/Save
+        # can't fire a stale "MIDI timing may be off" warning for a MIDI that's
+        # no longer loaded (while its old audio is still in the fields).
+        self._me_timing_from_midi_ticks = False
+        self._me_loaded_midi_end = 0.0
         self._me_selected_notes = set()
         self._me_last_clicked_note = -1
         self._me_sel_start      = None
@@ -15613,8 +15618,9 @@ demucs.separate.main()
     # Priority order in `_me_load`:
     #   1. Manual override (`me_rlrr_override_var`) — Option C
     #   2. Sibling .rlrr in same folder, matching note count — Option B
-    #   3. MIDI ticks (legacy behavior) — fallback, with Option A warning
-    #      if MIDI duration disagrees with paired audio length
+    #   3. MIDI ticks (legacy behavior) — fallback. The pre-v4.2.13 drift
+    #      warning (MIDI duration vs paired audio) is no longer shown at load
+    #      (v4.5.5) — it's deferred to Play/Save via _me_maybe_warn_timing_mismatch.
     def _load_rlrr_as_me_notes(self, rlrr_path):
         """Parse a Paradiddle .rlrr into the MIDI Editor's note-dict format.
 
@@ -15773,6 +15779,31 @@ demucs.separate.main()
         except Exception:
             pass
 
+    def _me_maybe_warn_timing_mismatch(self):
+        """v4.5.5: fire the suspicious-MIDI (pre-v4.2.13 extractor drift) warning
+        ONLY when the user actually PLAYS or SAVES a MIDI whose own-tick timing
+        disagrees with the currently-loaded audio by > 3% AND > 5 seconds — NOT at
+        load time, which false-alarmed on a MIDI switch with the previous song's
+        audio still in the fields. Same threshold + once-per-MIDI-per-session guard
+        as the original load-time check (the guard lives in _me_warn_suspicious_midi).
+        No-ops when timing came from a .rlrr, when no audio is loaded, or when they
+        match — so a normal/partially-edited save never triggers it."""
+        if not getattr(self, "_me_timing_from_midi_ticks", False):
+            return
+        midi_end = getattr(self, "_me_loaded_midi_end", 0.0)
+        if not midi_end or midi_end <= 0:
+            return
+        try:
+            audio_secs = self._me_audio_length_secs()
+        except Exception:
+            audio_secs = 0
+        if not audio_secs or audio_secs <= 0:
+            return
+        diff_secs = abs(midi_end - audio_secs)
+        if diff_secs / audio_secs > 0.03 and diff_secs > 5.0:
+            self._me_warn_suspicious_midi(
+                self._me_last_midi or "", midi_end, audio_secs)
+
     def _me_browse_rlrr(self):
         """File-picker handler for the 'Source .rlrr:' override field."""
         path = filedialog.askopenfilename(
@@ -15892,6 +15923,13 @@ demucs.separate.main()
             self.me_redo_stack      = []
             self._me_last_midi      = fpath
             self._me_selected_notes = set()
+            # v4.5.5: reset the suspicious-timing state up-front, BEFORE the
+            # fallible audio auto-populate / auto-zoom below — so an exception
+            # there can't leak the prior MIDI's flag onto this new MIDI. The
+            # True/end get set later in the status block once the timing source
+            # is known. (Also reset in _me_clear.)
+            self._me_timing_from_midi_ticks = False
+            self._me_loaded_midi_end = 0.0
             self._me_last_clicked_note = -1
             self._add_recent_file("recent_midi_editor", fpath)
 
@@ -15947,8 +15985,14 @@ demucs.separate.main()
                 f"BPM: {bpm:.1f}  |  {len(notes)} notes  |  "
                 f"Duration: {self._me_fmt_time(duration)}  |  {count_str}")
 
-            # Status feedback + Option A warning (runs after audio auto-populate
-            # so the warning's duration check has audio context to compare against)
+            # v4.5.5: RECORD the suspicious-MIDI (pre-v4.2.13 extractor drift)
+            # state — do NOT warn at load (it false-alarmed when switching to a
+            # new MIDI with the previous song's audio still in the fields — a
+            # different song, not a broken chart). The flags were reset up-front
+            # above (right after me_notes); here they're set True only for
+            # own-tick timing. Play/Save then run the check
+            # (_me_maybe_warn_timing_mismatch).
+            # Status feedback (this is NOT the warning — safe to show at load).
             if chosen_source in ("override", "sibling") and chosen_rlrr_path:
                 try:
                     rlrr_name = os.path.basename(chosen_rlrr_path)
@@ -15960,19 +16004,12 @@ demucs.separate.main()
                 except Exception:
                     pass
             elif chosen_source == "midi" and chosen_notes:
-                # Suspicious-MIDI check: single set_tempo at tick 0 + audio
-                # length disagrees with MIDI end by > 3% AND > 5 seconds.
+                # Own-tick timing (single set_tempo at tick 0) is the pre-v4.2.13
+                # drift-risk case — record it + the MIDI end so Play/Save can run
+                # the >3% AND >5s audio-mismatch check at use time.
                 if len(tempo_map) == 1 and tempo_map[0][0] == 0:
-                    audio_secs = self._me_audio_length_secs()
-                    if audio_secs and audio_secs > 0:
-                        midi_end = chosen_notes[-1]["time"]
-                        diff_secs = abs(midi_end - audio_secs)
-                        diff_pct = diff_secs / audio_secs
-                        if diff_pct > 0.03 and diff_secs > 5.0:
-                            self.root.after(
-                                100,
-                                lambda mp=fpath, me=midi_end, asec=audio_secs:
-                                    self._me_warn_suspicious_midi(mp, me, asec))
+                    self._me_timing_from_midi_ticks = True
+                    self._me_loaded_midi_end = chosen_notes[-1]["time"]
 
             self._me_redraw()
 
@@ -17505,6 +17542,13 @@ demucs.separate.main()
 
     def _me_save(self, show_message=True):
         """Save the current notes back to a MIDI file."""
+        # v4.5.5: on an INTERACTIVE Save (the Save MIDI button), warn once per
+        # MIDI if its own-tick timing disagrees with the loaded audio — moved off
+        # load time. Gated on show_message so the quit-save flow
+        # (_me_save(show_message=False)) doesn't nag on the way out; no-ops anyway
+        # on a matching/partially-edited chart or when no audio is loaded.
+        if show_message:
+            self._me_maybe_warn_timing_mismatch()
         # Determine default save name based on edit mode
         orig = self._me_last_midi or "edited.mid"
         if self.me_edit_mode_var.get() == "copy":
@@ -19979,6 +20023,10 @@ demucs.separate.main()
             if not loaded:
                 messagebox.showwarning("No Audio", "Load at least one stem to play.")
                 return
+
+        # v4.5.5: warn (once per MIDI) if the user is about to PLAY a MIDI whose
+        # own-tick timing disagrees with the loaded audio — moved off load time.
+        self._me_maybe_warn_timing_mismatch()
 
         import time
         try:

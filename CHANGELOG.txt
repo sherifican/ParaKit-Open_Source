@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.4.3  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.5  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,24 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.5   --   2026-06-30
+------------------------------------------------------------------------------
+  - Audio to MIDI -- fewer phantom / double kicks. The kick cleanup pass now
+    also weighs each kick against the one just before it: a weaker kick that
+    lands in the ring-out of the previous kick is usually a false double-trigger,
+    and those get removed. Held-out testing (train on one half of the reference
+    library, measure on the unseen half) shows a small but consistent kick-lane
+    gain -- fewer spurious kicks, with real kicks preserved. It's part of the
+    existing Audio->MIDI cleanup pass (on by default; the Kick cleanup toggle
+    still turns it off), and with that pass off the detector output is
+    byte-identical to before.
+  - MIDI Editor -- the "MIDI timing may be off" warning no longer fires just from
+    loading a new MIDI while the previous song's audio is still in the fields
+    (a false alarm -- they're simply different songs). It now appears only when
+    you actually PLAY or SAVE a MIDI whose timing genuinely doesn't match the
+    loaded audio.
 
 ------------------------------------------------------------------------------
   v4.5.4.3   --   2026-06-30

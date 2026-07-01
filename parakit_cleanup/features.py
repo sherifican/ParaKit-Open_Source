@@ -80,6 +80,42 @@ def extract_features(y, sr, onset_times, win_s=WIN_S):
     return np.asarray(out, dtype=float) if out else np.zeros((0, len(FEATURE_NAMES)))
 
 
+# --- v4.5.5: decay-relationship features for the KICK phantom-remover ---------
+# On top of the 40 spectral features above, the decay-augmented kick model adds 2
+# RELATIONAL features vs the immediately-previous detected kick: dt_prev (time gap)
+# and strength_ratio (this kick's rms_mean / the previous kick's rms_mean). A
+# phantom double-trigger sits CLOSE to the prior kick AND WEAKER than it — the
+# "decay of the previous kick" signal the owner hypothesized. Confirmed 3-way
+# (deepseek/qwen/codex) at held-out kick-lane +0.006. This helper is SHARED by
+# training and the sidecar inference so the 42-feature vector is byte-identical at
+# both — the bit-exactness contract for the exported numpy model.
+DECAY_FEATURE_NAMES = ("dt_prev", "strength_ratio")
+RMS_MEAN_IDX = FEATURE_NAMES.index("rms_mean")   # == 8
+
+
+def add_decay_features(kick_times_sorted, F):
+    """Append (dt_prev, strength_ratio) to the (n, 40) matrix F -> (n, 42).
+
+    ``kick_times_sorted`` MUST be ascending (both features are relative to the
+    IMMEDIATELY-PREVIOUS kick) and in the SAME row order as F. The first kick has
+    no predecessor -> its two decay values are 0.0. strength_ratio reuses F's
+    rms_mean column (RMS_MEAN_IDX), so it needs no extra audio pass. Formula pinned
+    to match every reconcile leg exactly:
+        dt_prev[i]        = t[i] - t[i-1]                     (0.0 at i=0)
+        strength_ratio[i] = rms[i] / max(rms[i-1], 1e-9)     (0.0 at i=0)
+    """
+    t = np.asarray(kick_times_sorted, dtype=float)
+    F = np.asarray(F, dtype=float)
+    n = F.shape[0]
+    dt_prev = np.zeros(n, dtype=float)
+    strength_ratio = np.zeros(n, dtype=float)
+    if n >= 2:
+        rms = F[:, RMS_MEAN_IDX]
+        dt_prev[1:] = t[1:] - t[:-1]
+        strength_ratio[1:] = rms[1:] / np.maximum(rms[:-1], 1e-9)
+    return np.hstack([F, dt_prev[:, None], strength_ratio[:, None]])
+
+
 if __name__ == "__main__":
     # smoke demo: separation of hi-hat vs crash vs ride features on a real track
     import os, sys

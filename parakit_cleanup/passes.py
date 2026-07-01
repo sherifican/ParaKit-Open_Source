@@ -213,6 +213,17 @@ def remove_phantoms(y, sr, est_by_class, model=None, phantom_label=None,
     kicks = np.sort(np.asarray(est.get("kick", []), dtype=float))
     if kicks.size and gate is not None:
         F = cf.extract_features(y, sr, kicks.tolist())
+        # v4.5.5: the decay-augmented kick model uses 42 features (40 spectral +
+        # dt_prev + strength_ratio). Add the 2 decay features iff the LOADED model
+        # expects the wider vector — so this stays correct with either the legacy
+        # 40-feature npz or the new 42-feature one. `kicks` is already sorted above,
+        # which the decay features require (they're relative to the previous kick).
+        try:
+            n_model = int(model._mean.shape[0])
+        except Exception:
+            n_model = F.shape[1]
+        if n_model == F.shape[1] + 2:
+            F = cf.add_decay_features(kicks, F)
         kicks = filter_kicks(kicks, F, model, phantom_label=phantom_label, gate=gate)
     est["kick"] = kicks
     return est

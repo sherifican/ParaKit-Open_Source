@@ -10,7 +10,7 @@
 >Thank you for over 1700+ clones on v4 in the first 3 weeks!! Means a lot to see and I hope ya'll are getting good use out of ParaKit
 >and are charting your hearts out, stay tuned for v5 coming soon. (as of 06-30-2026)
 
-> **Version in this release:** `4.5.4.3`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.5`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -89,7 +89,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.5.4.3`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.5`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -486,6 +486,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.5.5**<br>2026-06-30 | <ul><li>**Audio → MIDI — fewer phantom / double kicks.** The kick cleanup pass now also weighs each kick against the one just before it: a weaker kick that lands in the ring-out of the previous kick is usually a false double-trigger, and those get removed. Held-out testing (train on one half of the reference library, measure on the unseen half) shows a small but consistent kick-lane gain — fewer spurious kicks, with real kicks preserved. It's part of the existing Audio→MIDI cleanup pass (on by default; the **Kick cleanup** toggle still turns it off), and with that pass off the detector output is byte-identical to before.</li><li>**MIDI Editor** — the "MIDI timing may be off" warning no longer fires just from loading a new MIDI while the previous song's audio is still in the fields (a false alarm — they're simply different songs). It now appears only when you actually **play or save** a MIDI whose timing genuinely doesn't match the loaded audio.</li></ul> |
 | **v4.5.4.3**<br>2026-06-30 | <ul><li>**The Help tab's "What's New" no longer lags.** The version history now loads from `CHANGELOG.txt` and shows in **collapsible sections of 10** that only draw when you open them, capped at the **30 most recent** versions in-app (the full history lives in `CHANGELOG.txt`). The **most recent entry is always pinned at the top**, so the latest update is visible at a glance even with every section collapsed. If `CHANGELOG.txt` is ever missing, a disclaimer + a one-click **Download CHANGELOG.txt** button fetch it back into place. This also trimmed ~2,200 lines out of the app.</li><li>**MIDI Editor waveform:** the two-tone **Stereo** style is now the **first** option (Bars moved to last) and is the robust default — a blank or unrecognized saved preference now falls back to Stereo instead of Bars.</li><li>**Practice Mode v2** (the in-app alpha) is no longer being updated — Practice Mode work is moving to a **v3 / Kit Studio** in the ParaKit **v5** rebuild. The version number drops the trailing `-N` from here on.</li></ul> |
 | **v4.5.4.2-1**<br>2026-06-30 | <ul><li>**Fixed — Single Song Creator "Auto Fetch Audio":** the **Song Audio** field is now filled with the **backing track** (the no-drums stem) instead of the full mix, and both Song Audio + Drum Audio prefer the **`.ogg`** copy. Filling the full mix layered a second set of drums over your separate drums stem when you built the pack (doubling the drums); it now pulls the `.ogg` backing from your Stem Splitter **BACKINGS** output. If no backing exists, Song Audio is left empty (with a note) so a full mix is never auto-filled. The other tabs are unchanged.</li></ul> |
 | **v4.5.4.1-1**<br>2026-06-29 | <ul><li>**New — Album Art Preview:** the Single Song Creator now shows a live thumbnail under the Cover Image field of whatever cover will actually be embedded — whether you browsed it yourself or used *“Use album art from audio file metadata.”* A caption shows the dimensions and flags non-square art, so you can confirm the right image is loaded and cropped how you expect before building.</li><li>**Fixed:** the YouTube → FLAC custom filename (*“Name file other than video title”*) now **clears itself between videos** — the name box empties automatically after you convert a video, and when you press the URL field’s ✕ button — so the next video no longer silently inherits the previous one’s custom name.</li><li>**Fixed:** the **Downloaded Songs library** now shows the **file name** as the song title — so a custom download name actually appears — with the download’s metadata name as a fallback; the artist still shows underneath from the metadata. Search and sort follow the displayed name, and a right-click Rename still overrides it.</li></ul> |
