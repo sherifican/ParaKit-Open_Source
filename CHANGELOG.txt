@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.5  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.5.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,25 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.5.1   --   2026-07-01
+------------------------------------------------------------------------------
+  - Fixed the in-app updater so "Download update now" pulls EVERYTHING a new
+    version needs, not just the main app file. Before, the button grabbed only
+    'ParaKit v4.0.py' -- so if a release also updated supporting files (the
+    detection cleanup code/models, stem-separator code, etc.), you could end up
+    with a mismatched install. The updater now reads a small manifest of the
+    version's files and downloads any that are missing or changed -- skipping the
+    ones you already have (so the big models aren't re-downloaded every time) and
+    backing up whatever it replaces. From here forward, updating via the button
+    gives you a complete, correct update without re-cloning the whole repo.
+  - Because the OLD updater couldn't fix itself (anyone who updated in-app before
+    this version may already have some out-of-date supporting files), 4.5.5.1
+    shows a one-time notice on first launch explaining it, with a single
+    "Update supporting files now" button that repairs your install in place --
+    or you can re-download / re-clone from GitHub. The update-available popup
+    also carries a short reminder about this for the next couple of versions.
 
 ------------------------------------------------------------------------------
   v4.5.5   --   2026-06-30

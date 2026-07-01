@@ -5401,7 +5401,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.5"
+    VERSION = "4.5.5.1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -5750,6 +5750,11 @@ class MidiToRlrrApp:
         # GitHub or click the button still hear about updates. Quiet on failure
         # and when up-to-date; only prompts when a newer version is available.
         self.root.after(3000, self._check_for_update)
+        # v4.5.5.1 — one-time notice: the pre-4.5.5.1 in-app updater pulled only
+        # the main .py, so anyone who updated in-app may have stale supporting
+        # files. Explain it once + offer a one-click in-place resync. Shown once
+        # (config-flagged); source installs only.
+        self.root.after(1500, self._maybe_show_dep_sync_notice)
 
         # Force header label colors after ttkbootstrap finishes touching them
         def _fix_header_labels():
@@ -6671,6 +6676,17 @@ class MidiToRlrrApp:
         "https://raw.githubusercontent.com/sherifican/ParaKit-Open_Source/main/README.md")
     PARAKIT_PY_RAW_URL = (
         "https://raw.githubusercontent.com/sherifican/ParaKit-Open_Source/main/ParaKit%20v4.0.py")
+    # v4.5.5.1: base for pulling any dependency file, + the manifest that lists them.
+    # The in-app updater syncs every runtime file a release needs (not just the main
+    # .py), so a multi-file update installs correctly without re-cloning the repo.
+    PARAKIT_RAW_BASE = (
+        "https://raw.githubusercontent.com/sherifican/ParaKit-Open_Source/main/")
+    PARAKIT_MANIFEST_RAW_URL = (
+        "https://raw.githubusercontent.com/sherifican/ParaKit-Open_Source/main/update_manifest.json")
+    # v4.5.5.1: the update-available popup keeps a short "your supporting files
+    # may be stale" reminder up for a few versions (belt-and-suspenders for users
+    # who skim the one-time notice), then auto-retires it at this version.
+    DEP_SYNC_NOTICE_UNTIL = "4.5.7"
 
     def _update_worker(self, silent=True):
         """Background: read the open-source repo's README "Version in this
@@ -6746,6 +6762,9 @@ class MidiToRlrrApp:
         running from source) a one-click single-file self-update."""
         import webbrowser
         is_frozen = bool(getattr(sys, "frozen", False))
+        # v4.5.5.1: keep the "supporting files may be stale" reminder up for a few
+        # versions (source installs only), then auto-retire at DEP_SYNC_NOTICE_UNTIL.
+        show_dep_note = (not is_frozen) and self._dep_note_active()
 
         dlg = tk.Toplevel(self.root)
         dlg.title("Update Available")
@@ -6754,7 +6773,7 @@ class MidiToRlrrApp:
         dlg.transient(self.root)
         dlg.grab_set()
         try:
-            pw, ph = 480, 230
+            pw, ph = 480, (320 if show_dep_note else 230)
             px = self.root.winfo_x() + (self.root.winfo_width() - pw) // 2
             py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
             dlg.geometry(f"{pw}x{ph}+{px}+{py}")
@@ -6773,11 +6792,21 @@ class MidiToRlrrApp:
                     "download is maintained separately and may lag this source "
                     "version.)")
         else:
-            body = ("Grab just the updated 'ParaKit v4.0.py' from GitHub — you "
-                    "don't need the whole repo — or let ParaKit download and "
-                    "replace that one file for you now, then restart.")
+            body = ("Grab the latest ParaKit from GitHub — you don't need the whole "
+                    "repo — or let ParaKit download and install the updated files "
+                    "for you now (the main app plus any supporting files this "
+                    "version needs), then restart.")
         ttk.Label(frame, text=body, style="TLabel",
                   wraplength=440, justify=tk.LEFT).pack(anchor="w")
+
+        if show_dep_note:
+            note = ("Heads-up: ParaKit versions before 4.5.5.1 only downloaded the "
+                    "main app file when updating in-app, so some supporting files "
+                    "could be left out of date. The “Download update now” "
+                    "button below now refreshes all of them — or re-clone from "
+                    "GitHub — to be sure your install is complete.")
+            ttk.Label(frame, text=note, foreground="#e09a3a",
+                      wraplength=440, justify=tk.LEFT).pack(anchor="w", pady=(10, 0))
 
         btn_row = ttk.Frame(frame)
         btn_row.pack(anchor="e", pady=(16, 0))
@@ -6796,84 +6825,405 @@ class MidiToRlrrApp:
         ttk.Button(btn_row, text="Open GitHub", command=_open_github).pack(
             side=tk.LEFT, padx=(0, 8))
         if not is_frozen:
-            ttk.Button(btn_row, text="Download update now",
-                       style="Convert.TButton",
-                       command=lambda: self._self_update_single_file(new_ver, dlg)
-                       ).pack(side=tk.LEFT)
+            dl_btn = ttk.Button(btn_row, text="Download update now",
+                                style="Convert.TButton")
+
+            def _start_self_update():
+                # Disable first (on the Tk thread) so a double-click can't spawn
+                # two concurrent updates before the worker thread starts.
+                try:
+                    dl_btn.configure(state=tk.DISABLED)
+                except Exception:
+                    pass
+                self._self_update_files(new_ver, dlg)
+
+            dl_btn.configure(command=_start_self_update)
+            dl_btn.pack(side=tk.LEFT)
         dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
 
-    def _self_update_single_file(self, new_ver, dlg=None):
-        """Download the raw 'ParaKit v4.0.py' from GitHub and replace the running
-        source file (source installs only) — validated + backed up first. This is
-        a single-file update on purpose; git clone would pull the entire repo for
-        a one-file change, which is exactly what users don't want."""
-        import urllib.request
-        target = None
+    def _locate_app_py(self):
+        """Return the absolute path to the running 'ParaKit v4.0.py' (source
+        installs), or None when frozen / it can't be located."""
         _argv0 = (sys.argv[0] if getattr(sys, "argv", None) else None)
         for cand in (_argv0, globals().get("__file__")):
             try:
                 if cand and os.path.isfile(cand) and cand.lower().endswith(".py"):
-                    target = os.path.abspath(cand)
-                    break
+                    return os.path.abspath(cand)
             except Exception:
                 pass
+        return None
+
+    def _dep_note_active(self):
+        """True while the running version is older than DEP_SYNC_NOTICE_UNTIL —
+        keeps the 'supporting files may be stale' reminder on the update popup for
+        a few versions after the v4.5.5.1 updater fix, then auto-retires it."""
+        import re
+
+        def _k(s):
+            m = re.match(r"^v?(\d+(?:\.\d+){1,3})(?:-(\d+))?$", str(s).strip())
+            if not m:
+                return None
+            return (tuple(int(x) for x in m.group(1).split("."))
+                    + (int(m.group(2) or 0),))
+
+        try:
+            a, b = _k(self.VERSION), _k(self.DEP_SYNC_NOTICE_UNTIL)
+            return a is not None and b is not None and a < b
+        except Exception:
+            return False
+
+    def _sync_manifest_deps(self, app_dir):
+        """Fetch update_manifest.json and sync every dependency file it lists into
+        app_dir. Each file is hash-checked (unchanged files are skipped — the big
+        models aren't re-downloaded), path-sanitized (no traversal / absolute /
+        drive paths, so a hostile manifest can never write outside app_dir),
+        hash-verified after download, and backed up (*.prev) before an atomic
+        replace. Does NOT touch the main 'ParaKit v4.0.py'. Synchronous, no UI —
+        call from a worker thread. Returns (updated_list, skipped_count,
+        failed_list); a repo with no manifest yields ([], 0, [])."""
+        import urllib.request, urllib.parse, hashlib, json as _json
+
+        def _fetch(url, timeout=120):
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "ParaKit-update"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+
+        dep = []
+        try:
+            man = _json.loads(
+                _fetch(self.PARAKIT_MANIFEST_RAW_URL, timeout=30).decode("utf-8"))
+            if isinstance(man, dict):
+                dep = man.get("files", []) or []
+        except Exception:
+            dep = []
+
+        # HARD path sanitization: reject absolute paths and '..' traversal; the
+        # resolved path MUST stay under app_dir, so a bad/hostile manifest can
+        # never write outside it.
+        def _safe(rel):
+            if not isinstance(rel, str):   # a malformed manifest entry (None/int/
+                return None                # list) must not become a junk filename
+            p = rel.replace("\\", "/").strip()
+            if (not p or p.startswith("/") or ".." in p.split("/")
+                    or (len(p) > 1 and p[1] == ":")):
+                return None
+            full = os.path.normpath(os.path.join(app_dir, p))
+            try:
+                if os.path.commonpath([full, os.path.normpath(app_dir)]) \
+                        != os.path.normpath(app_dir):
+                    return None
+            except Exception:
+                return None
+            return full
+
+        updated, skipped, failed = [], 0, []
+        for ent in dep:
+            rel = ent.get("path") if isinstance(ent, dict) else ent
+            want = ent.get("sha256") if isinstance(ent, dict) else None
+            local = _safe(rel)
+            if not local:
+                failed.append(f"{rel} (unsafe path)")
+                continue
+            if not want:
+                # No hash in the manifest => refuse to install it. Every real
+                # entry from gen_update_manifest.py carries a sha256; a hashless
+                # entry can only come from a malformed/hostile manifest, and we
+                # never write an unverified (potentially executable) file.
+                failed.append(f"{rel} (no hash in manifest)")
+                continue
+            try:
+                if want and os.path.isfile(local):
+                    with open(local, "rb") as _lf:
+                        if hashlib.sha256(_lf.read()).hexdigest() == want:
+                            skipped += 1
+                            continue   # already current — don't re-download
+                blob = _fetch(self.PARAKIT_RAW_BASE
+                              + urllib.parse.quote(str(rel), safe="/"))
+                if want and hashlib.sha256(blob).hexdigest() != want:
+                    failed.append(f"{rel} (hash mismatch)")
+                    continue
+                d = os.path.dirname(local)
+                if d:
+                    os.makedirs(d, exist_ok=True)
+                if os.path.isfile(local):
+                    try:
+                        shutil.copyfile(local, local + ".prev")
+                    except Exception:
+                        pass
+                tmp = local + ".dl.tmp"
+                with open(tmp, "wb") as f:
+                    f.write(blob)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except Exception:
+                        pass
+                os.replace(tmp, local)
+                updated.append(rel)
+            except Exception as e:
+                failed.append(f"{rel} ({e})")
+
+        return updated, skipped, failed
+
+    def _self_update_files(self, new_ver, dlg=None):
+        """Download the new 'ParaKit v4.0.py' AND every dependency file the new
+        version needs (per update_manifest.json) from GitHub, replacing them in
+        place (source installs only).
+
+        v4.5.5.1 fix: the old updater pulled ONLY the main .py, so a release that
+        also changed supporting files (parakit_cleanup/, parakit_separators/,
+        models, CHANGELOG.txt, ...) left users with a mismatched install. This now
+        syncs the whole runtime file set via _sync_manifest_deps (hash-checked,
+        path-sanitized, backed up), writing the main .py LAST. Still NOT a git
+        clone — only changed files are fetched. Runs off the UI thread so a large
+        model download doesn't freeze the app."""
+        import threading
+        target = self._locate_app_py()
         if not target:
             messagebox.showwarning(
                 "Update",
                 "Couldn't locate the running ParaKit .py to update in place. "
-                "Use 'Open GitHub' to download the new file manually.")
+                "Use 'Open GitHub' to download the new files manually.")
             return
-        try:
-            req = urllib.request.Request(
-                self.PARAKIT_PY_RAW_URL, headers={"User-Agent": "ParaKit-update"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = resp.read()
-        except Exception as e:
-            messagebox.showerror("Download Failed",
-                                 f"Could not download the update:\n{e}")
-            return
-        # Validate BEFORE touching the live file: must decode, be a real ParaKit
-        # build, and carry the version we expect (so a README/.py mismatch on
-        # GitHub can't install a wrong file).
-        try:
-            text = data.decode("utf-8")
-        except Exception:
-            text = ""
-        if (len(data) < 200000 or "class MidiToRlrrApp" not in text
-                or f'VERSION = "{new_ver}"' not in text):
-            messagebox.showerror(
-                "Update Aborted",
-                "The downloaded file didn't look like a valid ParaKit build (or "
-                "its version didn't match), so nothing was changed. Use 'Open "
-                "GitHub' to download it manually.")
-            return
-        try:
-            shutil.copyfile(target, target + ".prev")   # rollback copy
-            tmp = target + ".dl.tmp"
-            with open(tmp, "wb") as f:
-                f.write(data)
-                f.flush()
+        app_dir = os.path.dirname(target)
+
+        def _work():
+            import urllib.request
+
+            def _fetch(url, timeout=120):
+                req = urllib.request.Request(
+                    url, headers={"User-Agent": "ParaKit-update"})
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    return resp.read()
+
+            def _done(ok, title, msg):
+                def _show():
+                    if dlg is not None:
+                        try:
+                            dlg.destroy()
+                        except Exception:
+                            pass
+                    (messagebox.showinfo if ok else messagebox.showerror)(title, msg)
                 try:
-                    os.fsync(f.fileno())
+                    self.root.after(0, _show)
                 except Exception:
                     pass
-            os.replace(tmp, target)
-        except Exception as e:
-            messagebox.showerror(
-                "Update Failed",
-                f"Could not replace the file:\n{e}\n\nYour current version is "
-                f"unchanged.")
+
+            # 1) main 'ParaKit v4.0.py' — download + version-validate BEFORE touching
+            #    anything (so a README/.py mismatch on GitHub can't install a wrong file)
+            try:
+                data = _fetch(self.PARAKIT_PY_RAW_URL)
+                text = data.decode("utf-8", "replace")
+            except Exception as e:
+                _done(False, "Download Failed",
+                      f"Could not download the update:\n{e}")
+                return
+            if (len(data) < 200000 or "class MidiToRlrrApp" not in text
+                    or f'VERSION = "{new_ver}"' not in text):
+                _done(False, "Update Aborted",
+                      "The downloaded ParaKit didn't look like a valid build (or its "
+                      "version didn't match), so nothing was changed. Use 'Open "
+                      "GitHub' to download it manually.")
+                return
+
+            # 2) sync every dependency file the manifest lists (best-effort — a
+            #    pre-v4.5.5.1 repo may lack the manifest, so nothing gets synced).
+            updated, skipped, failed = self._sync_manifest_deps(app_dir)
+
+            # 3) write the main .py LAST — so a half-failed dependency set is never
+            #    left running under the new .py before the user restarts.
+            try:
+                shutil.copyfile(target, target + ".prev")
+                tmp = target + ".dl.tmp"
+                with open(tmp, "wb") as f:
+                    f.write(data)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except Exception:
+                        pass
+                os.replace(tmp, target)
+            except Exception as e:
+                _done(False, "Update Failed",
+                      f"Could not replace the main file:\n{e}\n\nYour current "
+                      f"version is unchanged.")
+                return
+
+            msg = f"ParaKit was updated to v{new_ver}."
+            if updated:
+                shown = ", ".join(str(u) for u in updated[:8])
+                msg += f"\n\n{len(updated)} supporting file(s) also updated: {shown}"
+                if len(updated) > 8:
+                    msg += f" (+{len(updated) - 8} more)"
+            if skipped:
+                msg += f"\n({skipped} already up to date.)"
+            if failed:
+                msg += ("\n\n⚠ Could not update: " + ", ".join(failed[:6])
+                        + ("  ..." if len(failed) > 6 else "")
+                        + "\nGrab these from GitHub if the app misbehaves.")
+            msg += ("\n\nClose and reopen ParaKit to run the new version.\n"
+                    "(Backups saved as *.prev.)")
+            _done(True, "Updated", msg)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _maybe_show_dep_sync_notice(self):
+        """One-time first-run notice (v4.5.5.1). The pre-4.5.5.1 in-app updater
+        pulled ONLY the main .py, so a user who updated in-app may be running with
+        stale supporting files (detection models, cleanup code, changelog, ...).
+        This explains it once and offers a one-click 'Update supporting files now'
+        (runs the shared manifest sync in place) plus a re-clone pointer. Source
+        installs only; shown once, then flagged in the config."""
+        try:
+            if bool(getattr(sys, "frozen", False)):
+                return  # the .exe ships self-contained — no loose deps to sync
+            if load_config().get("seen_dep_sync_notice_v4551"):
+                return
+        except Exception:
             return
-        if dlg is not None:
+
+        def _mark_seen():
+            try:
+                save_config({"seen_dep_sync_notice_v4551": True})
+            except Exception:
+                pass
+
+        target = self._locate_app_py()
+        app_dir = os.path.dirname(target) if target else None
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("One-time notice — check your supporting files")
+        dlg.configure(bg="#222222")
+        dlg.resizable(False, True)   # allow vertical grow so nothing clips at
+        dlg.transient(self.root)     # high-DPI / large Windows text scaling
+        try:
+            dlg.grab_set()
+        except Exception:
+            pass
+        try:
+            pw, ph = 520, 384
+            px = self.root.winfo_x() + (self.root.winfo_width() - pw) // 2
+            py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
+            dlg.geometry(f"{pw}x{ph}+{px}+{py}")
+        except Exception:
+            pass
+
+        frame = ttk.Frame(dlg, padding=18)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Please check your supporting files",
+                  font=("Segoe UI", 12, "bold"),
+                  foreground="#b388ff").pack(anchor="w")
+        explain = (
+            "A bug in ParaKit's in-app updater (fixed in this version, 4.5.5.1) "
+            "meant that when you updated from inside the app, only the main "
+            "program file was downloaded — any supporting files a newer version "
+            "needed (detection models, cleanup code, the changelog, ...) could be "
+            "left out of date.\n\n"
+            "To make sure your install is complete, either update your supporting "
+            "files now (recommended), or re-download / re-clone ParaKit from "
+            "GitHub. Updates from here on keep every file in sync automatically.")
+        ttk.Label(frame, text=explain, style="TLabel",
+                  wraplength=484, justify=tk.LEFT).pack(anchor="w", pady=(6, 0))
+
+        status = ttk.Label(frame, text="", foreground="#e09a3a", wraplength=484,
+                           justify=tk.LEFT)
+        status.pack(anchor="w", pady=(8, 0))
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(anchor="e", pady=(14, 0), fill=tk.X)
+        buttons = {}
+
+        def _open_github():
+            import webbrowser
+            try:
+                webbrowser.open(self.PARAKIT_RELEASE_FILE_URL)
+            except Exception:
+                pass
+
+        def _close():
+            _mark_seen()
             try:
                 dlg.destroy()
             except Exception:
                 pass
-        messagebox.showinfo(
-            "Updated",
-            f"ParaKit was updated to v{new_ver}.\n\nClose and reopen ParaKit to "
-            f"run the new version.\n(Your previous file was saved as "
-            f"{os.path.basename(target)}.prev.)")
+
+        def _do_sync():
+            if not app_dir:
+                status.configure(
+                    text="Couldn't locate your ParaKit folder — use Open GitHub instead.")
+                return
+            for b in buttons.values():
+                try:
+                    b.configure(state=tk.DISABLED)
+                except Exception:
+                    pass
+            status.configure(
+                text="Updating supporting files… (this can take a minute)")
+
+            def _work():
+                try:
+                    updated, skipped, failed = self._sync_manifest_deps(app_dir)
+                except Exception as e:
+                    updated, skipped, failed = [], 0, [f"error ({e})"]
+
+                def _finish():
+                    _mark_seen()
+                    try:
+                        dlg.destroy()
+                    except Exception:
+                        pass
+                    if not updated and not failed:
+                        messagebox.showinfo(
+                            "Supporting files",
+                            "Your supporting files are already up to date"
+                            + (f" ({skipped} checked)." if skipped else "."))
+                        return
+                    msg = ""
+                    if updated:
+                        shown = ", ".join(str(u) for u in updated[:8])
+                        msg += (f"{len(updated)} supporting file(s) updated: {shown}"
+                                + (f" (+{len(updated) - 8} more)"
+                                   if len(updated) > 8 else "") + "\n")
+                    if skipped:
+                        msg += f"{skipped} already up to date.\n"
+                    if failed:
+                        msg += ("\n⚠ Could not update: " + ", ".join(failed[:6])
+                                + ("  ..." if len(failed) > 6 else "")
+                                + "\nGrab these from GitHub if the app misbehaves.\n")
+                    msg += "\n(Backups saved as *.prev.)"
+                    (messagebox.showwarning if failed else messagebox.showinfo)(
+                        "Supporting files", msg.strip())
+
+                try:
+                    self.root.after(0, _finish)
+                except Exception:
+                    pass
+
+            threading.Thread(target=_work, daemon=True).start()
+
+        buttons["close"] = ttk.Button(btn_row, text="Close", command=_close)
+        buttons["close"].pack(side=tk.LEFT, padx=(0, 8))
+        buttons["github"] = ttk.Button(btn_row, text="Open GitHub",
+                                       command=_open_github)
+        buttons["github"].pack(side=tk.LEFT, padx=(0, 8))
+        if app_dir:
+            buttons["sync"] = ttk.Button(
+                btn_row, text="Update supporting files now",
+                style="Convert.TButton", command=_do_sync)
+            buttons["sync"].pack(side=tk.LEFT)
+
+        # Grow the window to the content's real height if the fixed 384 isn't
+        # enough (large text scaling / high-DPI), so the button row never clips.
+        try:
+            dlg.update_idletasks()
+            need = frame.winfo_reqheight()
+            if need > 384:
+                dlg.geometry(f"520x{need}")
+        except Exception:
+            pass
+
+        dlg.protocol("WM_DELETE_WINDOW", _close)
 
     def _current_monitor_work_area(self):
         """Return the nearest monitor work-area size in pixels."""

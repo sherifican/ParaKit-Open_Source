@@ -1,0 +1,78 @@
+{
+  "version": "4.5.5.1",
+  "note": "Runtime files the in-app updater keeps current (main 'ParaKit v4.0.py' handled separately). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
+  "files": [
+    {
+      "path": "CHANGELOG.txt",
+      "sha256": "63ab37b1b009cd12a729c00d8e15b618878ff00588e7ae68e1f9812f9da9cb57"
+    },
+    {
+      "path": "parakit_cleanup/__init__.py",
+      "sha256": "ab6d815022d9c98c024a99981c9a0c5ae85678514398aa91a59f6c8c3a8459bc"
+    },
+    {
+      "path": "parakit_cleanup/cleanup.py",
+      "sha256": "8e8208b9aade78c7b3ea89e827bdd4ed5071e511ce1a01a26deb0485e7199432"
+    },
+    {
+      "path": "parakit_cleanup/features.py",
+      "sha256": "bee17ac6bfdfdc1c245edeb0d66ae4a34673f6a9816a2f9b3485cce04386df41"
+    },
+    {
+      "path": "parakit_cleanup/midi_io.py",
+      "sha256": "ada798e4b4e28bbd12e1ebedfd71706fad20e8af6e04c461047d45ad68985c82"
+    },
+    {
+      "path": "parakit_cleanup/numpy_rf.py",
+      "sha256": "b97462fc2aa852bbb02541f120080971c75de680fbfd84cb3e0a92ae96d47c36"
+    },
+    {
+      "path": "parakit_cleanup/parakit_cymbal_cleanup.npz",
+      "sha256": "95ff5842ac078942ef103312b9c81e4d094a42838fadd3cdb4478b9769aad8d8"
+    },
+    {
+      "path": "parakit_cleanup/parakit_cymbal_cleanup.npz.json",
+      "sha256": "6939195b5df19199cb88ebcf6417cf15ee2fce6fde2321223ae4d0ad96baaef7"
+    },
+    {
+      "path": "parakit_cleanup/parakit_kick_cleanup.npz",
+      "sha256": "ee753b2db5d6fa027c49880d90870426bc9903a1c2be71e9ea8d0c229ad31705"
+    },
+    {
+      "path": "parakit_cleanup/parakit_kick_cleanup.npz.json",
+      "sha256": "76f9ba34a368c7f416b7e5788ef0786cf3dbe88bf0b97870157fcf20b31013f9"
+    },
+    {
+      "path": "parakit_cleanup/passes.py",
+      "sha256": "4f04b662d7a401dd6f127ac198ecc25bbccb8379d1d7f4eafff8c98f8086881f"
+    },
+    {
+      "path": "parakit_drum_model.onnx",
+      "sha256": "dc5c6d18c107bd4f030697ccd0c51d9518f40adb761cee94bc0dbae168946056"
+    },
+    {
+      "path": "parakit_separators/__init__.py",
+      "sha256": "317be060414de8dd4985349f66c1ac857ae84f9c38ab330740afe896ca707bd1"
+    },
+    {
+      "path": "parakit_separators/composite.py",
+      "sha256": "947380db7f96e21f867029cc8ae7d15fff963aada8e85bf79a3f7590e65528ce"
+    },
+    {
+      "path": "parakit_separators/jarredou_mdx23c.py",
+      "sha256": "9d02c2375c30de24e8d0f765f57d889878624e5a864199439f5f7eeb78a58804"
+    },
+    {
+      "path": "parakit_separators/model_resolver.py",
+      "sha256": "419d057ddc578b117d7427376141cdf1e673a65077042d98eda2ba4e294bb5f1"
+    },
+    {
+      "path": "requirements.txt",
+      "sha256": "ca6282438cdd8c16862a1a54574f10fe3e84dd1505715b35514b09cac5cbd5d2"
+    },
+    {
+      "path": "rlrr_parse.py",
+      "sha256": "677121f22147806c5215486f00acea9326aefe0be7a5e017ccd6c99bd2c29ad6"
+    }
+  ]
+}
