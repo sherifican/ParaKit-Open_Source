@@ -18,6 +18,42 @@
 
 ---
 
+## ⬇️ Download & run ParaKit (copy-paste setup)
+
+New to GitHub? There's no big "download" button here on purpose — the easiest way to get ParaKit, with every file placed correctly, is a few copy-paste commands in your terminal (**Command Prompt**, **PowerShell**, or **Terminal**). You only need two free things installed first: **[Git](https://git-scm.com/downloads)** and **[Python 3.12](https://www.python.org/downloads/)** (3.12 is required).
+
+**1 — Download everything** (clones the whole project into a new `ParaKit-Open_Source` folder):
+
+```
+git clone https://github.com/sherifican/ParaKit-Open_Source.git
+```
+
+**2 — Go into the folder:**
+
+```
+cd ParaKit-Open_Source
+```
+
+**3 — Install the Python dependencies** (one time):
+
+```
+py -3.12 -m pip install -r requirements.txt
+```
+
+**4 — Run ParaKit** — double-click **`Run ParaKit v4.0.bat`**, *or* run it from the terminal (handy if you don't want to use the .bat):
+
+```
+py -3.12 "ParaKit v4.0.py"
+```
+
+That's it. To **update** to the latest version later, just run `git pull` inside the folder (or use the in-app **Download update now** button).
+
+> **Don't have Git?** Either install it from the link above (recommended — then updating is one `git pull`), or click the green **`<> Code`** button near the top of this page → **Download ZIP**, unzip it, and start from step 3.
+>
+> **A few features need one more download:** the **Stem Splitter**, **YouTube → FLAC**, and some tools use a separate ~174 MB **Requirements bundle** (FFmpeg / yt-dlp / ADB) plus an optional AI stem-isolation model — see the full **[Requirements](#requirements)** section further down. The core charting workflow (Audio → MIDI, MIDI Editor, Song Creator, Song Tester) runs without them.
+
+---
+
 >Note: the compiled .exe version is a little bit behind the .py version at the moment (4.4.52), I've seen a LOT more engagement
 with the .py version so that's what I'm more actively supporting, I will periodically update the .exe version when enough changes
 pile up or there are significant fixes. I will also compile the v5 rebiuld when it's finished for those who want it.
