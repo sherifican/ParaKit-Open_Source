@@ -9,9 +9,12 @@ missing/changed and skips the rest (the big models aren't re-fetched every time)
 
 SCOPE (owner-set): the manifest covers ALL distributed app files EXCEPT --
   - the main 'ParaKit v4.0.py'  (the updater handles it specially, version-validated);
-  - README.md / README.txt and CHANGELOG.txt  (docs -- deliberately excluded; the
-    in-app "What's New" has its own Download-CHANGELOG button for CHANGELOG.txt);
   - screenshots/  (only render the GitHub README -- not needed by the app at runtime);
+NOTE: CHANGELOG.txt + README.md + README.txt ARE synced (owner 2026-07-04) --
+  CHANGELOG drives the in-app "What's New" and the READMEs carry the "Version in
+  this release" line the self-update check reads, so the main update button pulls
+  all three (CHANGELOG also still has its standalone Download button as a fallback
+  if the user deletes/moves it). All three are listed in ROOT_FILES below.
   - tools/  (dev-only tooling, incl. this generator) and __pycache__/ / *.pyc /
     *.prev / *_backup* build+backup cruft.
 It is a WHITELIST of the app-content dirs + named root assets (NOT a walk of the
@@ -34,12 +37,15 @@ import os
 import re
 import sys
 
-# Named root files the updater keeps current. README.md/README.txt/CHANGELOG.txt
-# are deliberately NOT here (owner: docs excluded); the main 'ParaKit v4.0.py' and
-# 'update_manifest.json' are handled specially / can't list themselves.
+# Named root files the updater keeps current. CHANGELOG.txt + README.md/README.txt
+# are here (owner 2026-07-04: CHANGELOG drives the in-app "What's New" + the
+# READMEs carry the "Version in this release" line the self-update check reads --
+# so the main update button should sync all three). The main 'ParaKit v4.0.py'
+# and 'update_manifest.json' are handled specially / can't list themselves.
 ROOT_FILES = [
     "requirements.txt", "rlrr_parse.py", "parakit_drum_model.onnx",
-    "LICENSE", "Run ParaKit v4.0.bat",
+    "LICENSE", "Run ParaKit v4.0.bat", "CHANGELOG.txt",
+    "README.md", "README.txt",
     "parakit.ico", "parakit_header_logo.png", "parakit_logo_FINAL.png",
     "dot_lit_v2.png", "dot_lit_v3_tight.png", "dot_unlit.png",
 ]
@@ -66,11 +72,22 @@ EXCLUDE_SUBSTR = ("_backup", ".backup", "40feat_backup")
 
 
 def _sha256(path):
+    """Hash the bytes the in-app updater will DOWNLOAD from GitHub (the committed
+    blob), not the raw working-tree bytes. With core.autocrlf=true a text file is
+    CRLF in the Windows working tree but stored + served as LF, so a text file is
+    hashed with CRLF->LF normalization (matching git); binaries (any NUL byte) are
+    hashed raw. Without this, a CRLF text file's manifest hash mismatches the LF
+    download and the updater rejects it (e.g. CHANGELOG.txt)."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+        head = f.read(8192)
+        if b"\x00" in head:                        # binary -> hash raw, streamed
+            h.update(head)
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+            return h.hexdigest()
+        data = head + f.read()                      # text -> normalize to LF
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
 
 
 def _skip(name):
@@ -112,8 +129,9 @@ def main():
     manifest = {
         "version": ver,
         "note": ("Runtime files the in-app updater keeps current. The main "
-                 "'ParaKit v4.0.py' is handled separately; README/CHANGELOG and "
-                 "screenshots/ are intentionally excluded. Regenerate with "
+                 "'ParaKit v4.0.py' is handled separately; screenshots/ are "
+                 "intentionally excluded. CHANGELOG.txt + README.md + README.txt "
+                 "ARE synced (What's New + version line). Regenerate with "
                  "tools/gen_update_manifest.py from the PUBLIC repo after any release."),
         "files": [{"path": rel, "sha256": h} for rel, h in files],
     }

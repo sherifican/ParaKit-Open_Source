@@ -1,7 +1,11 @@
 {
   "version": "4.5.5.1",
-  "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; README/CHANGELOG and screenshots/ are intentionally excluded. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
+  "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
+    {
+      "path": "CHANGELOG.txt",
+      "sha256": "476cff648b4ec30b49241127ddfb94ad43f5a4fd8d45f1e85b3e15ce6e78f84a"
+    },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
       "sha256": "333695fc7b3c3574234feb0699c0ed843f3d40a2fd6fa3cc55c02b0972bc37eb"
@@ -28,7 +32,7 @@
     },
     {
       "path": "Practice Window v2 - Web Edition/parakit-practice.html",
-      "sha256": "ae57ebd813509f021c5bd3d24d8b6045013071e1e489fba1886ecc739ba47efa"
+      "sha256": "4bf087c67f7348abb4e6e60a2a893371f54591ca348f54671638220bfd671d19"
     },
     {
       "path": "Practice Window v3 - Web Edition/README.md",
@@ -40,11 +44,19 @@
     },
     {
       "path": "Preview Track v2 - Web Edition/README.md",
-      "sha256": "2ba827b808830969260d7808b93de4be4115c1ca8edc54a7944b8d2be3c4370b"
+      "sha256": "d750f77ac3672743aee70b8d1b603e13fb851e1f7fb36a7bba137b42a965655d"
     },
     {
       "path": "Preview Track v2 - Web Edition/parakit-preview.html",
       "sha256": "bf95ee72d8b3db4d7cec122422cb4cb8fe64217f166e484bca0beed11fb9c9f1"
+    },
+    {
+      "path": "README.md",
+      "sha256": "db1de47ee25fd250e03aad00a83ab0a651e5cac2c6c54e8b53f2a9ae1bc2d762"
+    },
+    {
+      "path": "README.txt",
+      "sha256": "bff1bde47e14e741dcd10841beb28b56a1f6ee03afa606c38e3e816b6394d13c"
     },
     {
       "path": "Run ParaKit v4.0.bat",
@@ -56,11 +68,11 @@
     },
     {
       "path": "docs/ROADMAP.md",
-      "sha256": "47e5a2cb9e0002163323392106d6966b4c503b02731f46cf084c9064dfe66660"
+      "sha256": "e90b4e6b0c6788ac1efb66d072d260b497ad4b3a7b7780dee762162167e6d568"
     },
     {
       "path": "docs/TROUBLESHOOTING.md",
-      "sha256": "e51cde656ebcb565d29f1703729a8a88031a5d34f31c826d411347491a1a0a3b"
+      "sha256": "4ce2fc7d2fd0073264f09f15e80d14140f2f8fa0c46cbde07ac64203341abc19"
     },
     {
       "path": "dot_lit_v2.png",
@@ -120,7 +132,7 @@
     },
     {
       "path": "parakit_cleanup/parakit_cymbal_cleanup.npz.json",
-      "sha256": "6939195b5df19199cb88ebcf6417cf15ee2fce6fde2321223ae4d0ad96baaef7"
+      "sha256": "2abaf1143f6cabb9e756270df0db8d6d05cc5bfbbc262dd800c59539f7e58134"
     },
     {
       "path": "parakit_cleanup/parakit_kick_cleanup.npz",
@@ -128,7 +140,7 @@
     },
     {
       "path": "parakit_cleanup/parakit_kick_cleanup.npz.json",
-      "sha256": "76f9ba34a368c7f416b7e5788ef0786cf3dbe88bf0b97870157fcf20b31013f9"
+      "sha256": "bfe08fdc45737655dd5264456f9341bcfd206303516462181094db81b7e6bb7a"
     },
     {
       "path": "parakit_cleanup/passes.py",
@@ -272,7 +284,7 @@
     },
     {
       "path": "practice_v2/assets/ui/manifest.json",
-      "sha256": "712cb655ec01052b2b8dd87997aa5b702adc9aa40f1f4462ee24c1a495b303b8"
+      "sha256": "09d3f1b8bec5536df1ab75cc6c07291df9199e15f7f9f49103273c5e7f800706"
     },
     {
       "path": "practice_v2/assets/ui/results/btn_back.png",
