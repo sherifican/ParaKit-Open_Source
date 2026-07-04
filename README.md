@@ -106,6 +106,19 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 *Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
 
+**v4.5.6**<br>2026-07-04
+
+Stem Splitter
+
++ "Your Songs" Library (album art + FLAC / OGG / STEMS / MIDI badges + per-row Split / Play / Open Stems)
++ Settings reorganized into horizontal cards (Input & Model / Output / Split)
++ Custom Isolation & DrumSep collapsed into "Advanced tools"
++ Library / Log split across the bottom
+
+<img src="screenshots/app-04-stem-splitter.png?v=20260704" width="900" alt="Stem Splitter (redesigned layout + Your Songs library)">
+
+---
+
 **v4.4.64-1**<br>2026-06-16
 
 YouTube ---> FLAC 
@@ -309,7 +322,7 @@ with hands-on testing on real songs, **with sources listed**, and the experiment
 <img src="screenshots/app-03-audio-to-ogg.png" width="900" alt="Audio to .ogg Converter">
 
 ### 4 · Stem Splitter
-<img src="screenshots/app-04-stem-splitter.png" width="900" alt="Stem Splitter">
+<img src="screenshots/app-04-stem-splitter.png?v=20260704" width="900" alt="Stem Splitter">
 
 ### 5 · Audio → MIDI
 <img src="screenshots/app-05-audio-to-midi.png" width="900" alt="Audio to MIDI">
