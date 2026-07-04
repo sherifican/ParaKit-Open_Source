@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.5.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.6  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,29 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.6   --   2026-07-04
+------------------------------------------------------------------------------
+  - Stem Splitter tab redesign. The settings are now a horizontal card row --
+    Input & Model, Output, and Split -- that reflows to fit narrower windows,
+    and the two optional BETA tools (Custom Isolation and DrumSep) are tucked
+    into a single collapsible "Advanced tools" section so the normal
+    Standard-Split path stays front-and-centre.
+  - NEW "Your Songs" library at the bottom of the Stem Splitter, beside the
+    activity log. It lists the songs in your YouTube output folder -- the ones
+    you've downloaded but haven't split yet -- with album art, FLAC / OGG /
+    STEMS / MIDI badges showing what already exists for each, plus search and
+    sort. Each row has Split (loads that song straight into the splitter),
+    Play (previews it), and, on songs that are already split, Open Stems (opens
+    its stems folder). Point the "Songs Folder" at your downloads and hit
+    Refresh; it stays in sync with the YouTube -> FLAC tab's output folder.
+  - In compact layout mode, the library and activity log now stretch to fill
+    the space below them instead of leaving a gap.
+  - The in-app updater's "Download update now" now also keeps this What's New
+    (CHANGELOG.txt) and the README current -- previously it synced everything
+    except those -- and a line-ending fix lets it verify a handful of text
+    files it used to skip.
 
 ------------------------------------------------------------------------------
   v4.5.5.1   --   2026-07-01

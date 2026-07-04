@@ -5401,7 +5401,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.5.1"
+    VERSION = "4.5.6"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -7400,8 +7400,13 @@ class MidiToRlrrApp:
         except Exception:
             pass
 
-    def _make_scrollable_tab(self, parent):
+    def _make_scrollable_tab(self, parent, fill_height=False):
         """Wrap a tab in a vertically-scrollable canvas + scrollbar.
+
+        fill_height=True stretches the inner frame to at least the visible
+        canvas height, so short content fills the viewport (letting an
+        expand=True child claim the empty space below) while taller content
+        keeps its natural height and scrolls.
 
         v4.4.53.5 — added to fix the 1080p compact-mode bug where the
         Stem Splitter and YouTube → FLAC tab logs got crushed
@@ -7436,11 +7441,26 @@ class MidiToRlrrApp:
         canvas.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
 
+        def _fit_fill():
+            # Stretch the inner window to at least the visible canvas height so
+            # short content fills the viewport; taller content keeps its natural
+            # height and scrolls. Guarded so re-firing with the same target can't
+            # feed back into an endless <Configure> loop.
+            if not fill_height:
+                return
+            try:
+                target = max(inner.winfo_reqheight(), canvas.winfo_height())
+                if str(canvas.itemcget(inner_window_id, "height")) != str(target):
+                    canvas.itemconfigure(inner_window_id, height=target)
+            except Exception:
+                pass
+
         def _on_inner_configure(_event):
             try:
                 canvas.configure(scrollregion=canvas.bbox("all"))
             except Exception:
                 pass
+            _fit_fill()
         inner.bind("<Configure>", _on_inner_configure)
 
         def _on_canvas_configure(event):
@@ -7448,6 +7468,7 @@ class MidiToRlrrApp:
                 canvas.itemconfigure(inner_window_id, width=event.width)
             except Exception:
                 pass
+            _fit_fill()
         canvas.bind("<Configure>", _on_canvas_configure)
 
         # v4.4.53.7 — Mouse-wheel handling NOTE:
@@ -8704,7 +8725,7 @@ class MidiToRlrrApp:
         # Roomy/auto modes on larger displays keep the original direct-pack
         # layout for unchanged behavior.
         if getattr(self, "_compact_layout", False):
-            scroll_inner = self._make_scrollable_tab(parent)
+            scroll_inner = self._make_scrollable_tab(parent, fill_height=True)
             main = ttk.Frame(scroll_inner, padding=20)
         else:
             main = ttk.Frame(parent, padding=20)
@@ -8753,9 +8774,21 @@ class MidiToRlrrApp:
                   style="Sub.TLabel", foreground="#e09a3a",
                   wraplength=860, justify=tk.LEFT).pack(anchor="w")
 
-        # ── Input file ────────────────────────────────────────────────────────
-        in_frame = ttk.LabelFrame(main, text=" Input File ", padding=10)
-        in_frame.pack(fill=tk.X, pady=(0, 6))
+        # ── Top band: horizontal card row (Input&Model | Output | Split) ──────
+        top_band = ttk.Frame(main)
+        top_band.pack(fill=tk.X, pady=(0, 8))
+        # Store card refs on self so the reflow helper (bound as a method) can
+        # reach them. State flag mirrors the YT band's _yt_band_wide guard.
+        self._stem_band_wide = None
+
+        # ── CARD: Input & Model ───────────────────────────────────────────────
+        card_in = ttk.LabelFrame(top_band, text=" Input & Model ", padding=8)
+
+        # Inner frame for the Audio File controls — keeps its OWN grid (separate
+        # master from card_in, which uses pack). Named in_frame to preserve the
+        # original in_frame.columnconfigure(1, weight=1) semantics.
+        in_frame = ttk.Frame(card_in)
+        in_frame.pack(fill=tk.X)
 
         self.stem_input_var = tk.StringVar()
         stem_lbl = ttk.Label(in_frame, text="Audio File:")
@@ -8768,8 +8801,8 @@ class MidiToRlrrApp:
         stem_btn.pack(side=tk.LEFT)
         self._make_recent_btn(stem_btn_frame, "recent_stem_audio",
                               self.stem_input_var,
-                              [("Audio","*.ogg *.mp3 *.wav *.flac"),("All","*.*")]
-                              ).pack(side=tk.LEFT, padx=(2,0))
+                              [("Audio", "*.ogg *.mp3 *.wav *.flac"), ("All", "*.*")]
+                              ).pack(side=tk.LEFT, padx=(2, 0))
         ttk.Button(stem_btn_frame, text="✕", width=2,
                    command=lambda: self.stem_input_var.set("")).pack(side=tk.LEFT, padx=(4, 0))
         in_frame.columnconfigure(1, weight=1)
@@ -8793,9 +8826,11 @@ class MidiToRlrrApp:
                   font=("Segoe UI", 9),
                   justify=tk.LEFT, wraplength=860).pack(anchor="w")
 
-        # ── Model selection ───────────────────────────────────────────────────
-        model_frame = ttk.LabelFrame(main, text=" Standard Split  -  recommended first step ", padding=10)
-        model_frame.pack(fill=tk.X, pady=(0, 10))
+        # ── Model selection (re-rooted into the SAME card) ───────────────────
+        # Original was its own LabelFrame " Standard Split ". Kept as a nested
+        # LabelFrame inside card_in so the card holds both Input and Model.
+        model_frame = ttk.LabelFrame(card_in, text=" Standard Split  -  recommended first step ", padding=8)
+        model_frame.pack(fill=tk.X, pady=(8, 0))
 
         self.stem_model_var = tk.StringVar(value="htdemucs")
 
@@ -8815,9 +8850,64 @@ class MidiToRlrrApp:
             model_frame, text="🎯  Slower, but more fine-tuned for slightly better quality  (htdemucs_ft)",
             variable=self.stem_model_var, value="htdemucs_ft")
         fine_rb.grid(row=1, column=0, sticky="w", pady=(0, 8))
+        model_frame.columnconfigure(0, weight=1)
 
-        # ── Custom Isolation Split (6-stem) ───────────────────────────────────
-        iso_frame = ttk.LabelFrame(main, text=" Optional Tool: Custom Isolation Split  [BETA] ", padding=10)
+        # ── CARD: Output ──────────────────────────────────────────────────────
+        card_out = ttk.LabelFrame(top_band, text=" Output ", padding=8)
+
+        # Inner grid frame (separate master from card_out's pack).
+        out_frame = ttk.Frame(card_out)
+        out_frame.pack(fill=tk.X)
+
+        self.stem_output_var = tk.StringVar()
+        _cfg = load_config()
+        if _cfg.get("output_folder_stem") and os.path.isdir(_cfg["output_folder_stem"]):
+            self.stem_output_var.set(_cfg["output_folder_stem"])
+
+        ttk.Label(out_frame, text="Output Folder:").grid(row=0, column=0, sticky="w", padx=(0, 5))
+        stem_out_ent = ttk.Entry(out_frame, textvariable=self.stem_output_var, width=48)
+        stem_out_ent.grid(row=0, column=1, sticky="ew", padx=(0, 5))
+        stem_out_btn = ttk.Button(out_frame, text="Browse...", command=self._stem_browse_output)
+        stem_out_btn.grid(row=0, column=2)
+        ttk.Button(out_frame, text="✕", width=2,
+                   command=lambda: self.stem_output_var.set("")).grid(row=0, column=3, padx=(4, 0))
+        for w in (stem_out_ent, stem_out_btn):
+            self._enable_folder_drop(w, self.stem_output_var)
+        out_frame.columnconfigure(1, weight=1)
+
+        self.stem_output_desc_lbl = ttk.Label(out_frame,
+                  text="Folders created:  📁 DRUMS ONLY   📁 BACKINGS   📁 LOSSLESS SPLITS (DRUMS)",
+                  style="Sub.TLabel")
+        self.stem_output_desc_lbl.grid(row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
+
+        # ── CARD: Split ───────────────────────────────────────────────────────
+        card_act = ttk.LabelFrame(top_band, text=" Split ", padding=8)
+
+        self.stem_btn = ttk.Button(card_act, text="🥁  Split Stems",
+                                   style="Convert.TButton",
+                                   command=self._stem_start)
+        self.stem_btn.pack(fill=tk.X, pady=(5, 10), ipady=8)
+        self.stem_progress = _G85AltSnareProgressBar(card_act, mode="indeterminate", width=400, height=30)
+        self.stem_progress.pack(fill=tk.X, pady=(0, 2))
+        self.stem_timer_lbl = ttk.Label(card_act, text="", style="Sub.TLabel")
+        self.stem_timer_lbl.pack(anchor="w", pady=(0, 4))
+
+        # Stash card refs for the reflow helper.
+        self._stem_card_in = card_in
+        self._stem_card_out = card_out
+        self._stem_card_act = card_act
+
+        # Bind the reflow + fire once after layout settles (mirrors YT band).
+        top_band.bind("<Configure>", self._stem_relayout_band)
+        self.root.after(60, self._stem_relayout_band)
+
+        # ── Advanced tools collapsible (BOTH BETA tools re-rooted inside) ─────
+        _, adv_content = self._make_collapsible_tips(
+            main, title="Advanced tools  -  Custom Isolation & DrumSep",
+            start_open=False, pack_kw={"pady": (0, 10)})
+
+        # ── Custom Isolation Split (6-stem) — master is now adv_content ───────
+        iso_frame = ttk.LabelFrame(adv_content, text=" Optional Tool: Custom Isolation Split  [BETA] ", padding=10)
         iso_frame.pack(fill=tk.X, pady=(0, 6))
 
         ttk.Label(iso_frame,
@@ -8886,8 +8976,8 @@ class MidiToRlrrApp:
 
         self.stem_iso_inner.pack_forget()
 
-        # ── DrumSep — Individual Drum Component Separator ─────────────────────
-        drumsep_frame = ttk.LabelFrame(main,
+        # ── DrumSep — Individual Drum Component Separator (master=adv_content) ─
+        drumsep_frame = ttk.LabelFrame(adv_content,
                                         text=" Optional Tool: DrumSep Component Separation  [BETA] ",
                                         padding=10)
         drumsep_frame.pack(fill=tk.X, pady=(0, 10))
@@ -8968,59 +9058,865 @@ class MidiToRlrrApp:
 
         self.stem_drumsep_inner.pack_forget()
 
-        # ── Output folder ─────────────────────────────────────────────────────
-        out_frame = ttk.LabelFrame(main, text=" Output ", padding=10)
-        out_frame.pack(fill=tk.X, pady=(0, 10))
+        # ── Bottom: LIBRARY (left) | LOG (right) ─────────────────────────────
+        # expand=True in BOTH modes: in compact mode the scroll wrapper was
+        # built with fill_height=True so the inner frame fills the viewport,
+        # giving this bottom section the empty space below to grow into
+        # (previously a fixed height=340 left dead space under it).
+        bottom = ttk.Frame(main)
+        bottom.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
 
-        self.stem_output_var = tk.StringVar()
-        _cfg = load_config()
-        if _cfg.get("output_folder_stem") and os.path.isdir(_cfg["output_folder_stem"]):
-            self.stem_output_var.set(_cfg["output_folder_stem"])
-
-        ttk.Label(out_frame, text="Output Folder:").grid(row=0, column=0, sticky="w", padx=(0, 5))
-        stem_out_ent = ttk.Entry(out_frame, textvariable=self.stem_output_var, width=48)
-        stem_out_ent.grid(row=0, column=1, sticky="ew", padx=(0, 5))
-        stem_out_btn = ttk.Button(out_frame, text="Browse...", command=self._stem_browse_output)
-        stem_out_btn.grid(row=0, column=2)
-        ttk.Button(out_frame, text="✕", width=2,
-                   command=lambda: self.stem_output_var.set("")).grid(row=0, column=3, padx=(4, 0))
-        for w in (stem_out_ent, stem_out_btn):
-            self._enable_folder_drop(w, self.stem_output_var)
-        out_frame.columnconfigure(1, weight=1)
-
-        self.stem_output_desc_lbl = ttk.Label(out_frame,
-                  text="Folders created:  📁 DRUMS ONLY   📁 BACKINGS   📁 LOSSLESS SPLITS (DRUMS)",
-                  style="Sub.TLabel")
-        self.stem_output_desc_lbl.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
-
-        # ── Split button ──────────────────────────────────────────────────────
-        self.stem_btn = ttk.Button(main, text="🥁  Split Stems",
-                                   style="Convert.TButton",
-                                   command=self._stem_start)
-        self.stem_btn.pack(fill=tk.X, pady=(5, 10), ipady=8)
-        self.stem_progress = _G85AltSnareProgressBar(main, mode="indeterminate", width=400, height=30)
-        self.stem_progress.pack(fill=tk.X, pady=(0, 2))
-        self.stem_timer_lbl = ttk.Label(main, text="", style="Sub.TLabel")
-        self.stem_timer_lbl.pack(anchor="w", pady=(0, 4))
-
-        # ── Log ───────────────────────────────────────────────────────────────
-        stem_log_frame = ttk.LabelFrame(main, text=" Log ", padding=5)
-        stem_log_frame.pack(fill=tk.BOTH, expand=True)
-
-        stem_log_btn_row = ttk.Frame(stem_log_frame)
-        stem_log_btn_row.pack(fill=tk.X, pady=(0, 4))
-        ttk.Button(stem_log_btn_row, text="📄  Export Log",
+        # RIGHT = the Log (rebuilt here; cannot re-parent the old widget).
+        log_col = ttk.Frame(bottom)
+        log_col.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(8, 0))
+        ttk.Label(log_col, text="ACTIVITY LOG", font=("Segoe UI", 8, "bold"),
+                  foreground="#9a9ab0").pack(anchor="w")
+        log_btn_row = ttk.Frame(log_col)
+        log_btn_row.pack(fill=tk.X, pady=(0, 4))
+        ttk.Button(log_btn_row, text="📄  Export Log",
                    command=lambda: self._export_log(
                        self.stem_log_text, "stem_splitter_log.txt", "Stem Splitter")
                    ).pack(side=tk.LEFT)
-        ttk.Button(stem_log_btn_row, text="📂  Open Output Folder",
+        ttk.Button(log_btn_row, text="📂  Open Output Folder",
                    command=self._stem_open_output).pack(side=tk.RIGHT)
-
         self.stem_log_text = scrolledtext.ScrolledText(
-            stem_log_frame, height=10, bg="#0d1117", fg="#58a6ff",
+            log_col, height=14, bg="#0d1117", fg="#58a6ff",
             font=("Consolas", 9), wrap=tk.WORD,
             insertbackground="#58a6ff", state="disabled")
         self.stem_log_text.pack(fill=tk.BOTH, expand=True)
+
+        # LEFT = the new library (built by a separate task; just CALL it).
+        lib_col = ttk.Frame(bottom)
+        lib_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._stem_library_build(lib_col)
+
+    # ------------------------------------------------------------------------
+    def _stem_relayout_band(self, _e=None):
+        """Reflow the top_band 3-card row between WIDE (one row) and NARROW
+        (2×2) layouts, mirroring the YT tab's _yt_relayout_band. Guarded on a
+        width threshold so it only re-grids on a wide/narrow crossing."""
+        top_band = self._stem_card_in.master
+        try:
+            w = top_band.winfo_width()
+        except Exception:
+            return
+        if w <= 1:
+            return
+        wide = w >= 1300
+        if self._stem_band_wide == wide:
+            return
+        self._stem_band_wide = wide
+
+        card_in = self._stem_card_in
+        card_out = self._stem_card_out
+        card_act = self._stem_card_act
+
+        # Reset column config, then forget all three before re-gridding.
+        for _c in range(3):
+            top_band.columnconfigure(_c, weight=0, minsize=0)
+        for _child in (card_in, card_out, card_act):
+            _child.grid_forget()
+
+        if wide:
+            # One row: Input&Model (widest) | Output | Split — weights 3/2/2.
+            card_in.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+            card_out.grid(row=0, column=1, sticky="nsew", padx=(0, 6))
+            card_act.grid(row=0, column=2, sticky="nsew")
+            top_band.columnconfigure(0, weight=3, minsize=420)
+            top_band.columnconfigure(1, weight=2)
+            top_band.columnconfigure(2, weight=2)
+        else:
+            # 2×2: [Input&Model | Output] on row 0, [Split spanning 2] on row 1.
+            card_in.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 6))
+            card_out.grid(row=0, column=1, sticky="nsew", pady=(0, 6))
+            card_act.grid(row=1, column=0, columnspan=2, sticky="nsew")
+            top_band.columnconfigure(0, weight=1)
+            top_band.columnconfigure(1, weight=1)
+
+# =============================================================================
+# ParaKit v4 — "YOUR SONGS" Stem-Splitter library (folder-scan edition)
+# =============================================================================
+# DRAFT — these are class methods (first param `self`). Paste them into the
+# ParaKit application class alongside the YouTube-tab library methods they
+# mirror. They add a live folder-scan "Your Songs" library to the Stem Splitter
+# tab by cloning the YouTube-tab library's structure almost verbatim, changing
+# only (1) the data source (a live folder scan of the YT output folder instead
+# of the JSON registry) and (2) a handful of labels/row chips.
+#
+# They REUSE the following existing `self.` helpers (do NOT reimplement):
+#   - self._yt_make_badge(parent, text, present, neutral=, row=)   ~24189
+#   - self._yt_fmt_duration(sec)                                    ~23126
+#   - self._yt_ellipsize(text, n)  (staticmethod)                  ~23121
+#   - self._yt_audio_duration(path)                                ~23715
+#   - self._stem_is_split(path) / self._ogg_paired(path) /
+#     self._midi_paired(path)                          ~23153 / 23207 / 23183
+#   - self._yt_preview_toggle / _yt_preview_stop / _yt_preview_update_chips
+#     / _yt_preview_ensure_mixer  (shared pygame.mixer.music preview) ~23399+
+#   - self._add_tooltip(widget, text)                              ~35574
+#   - self._add_recent_file(config_key, path, max_items=8)         ~35661
+#   - self._stem_log(msg)                                          ~9396
+#   - self._open_folder_crossplatform(folder) / self._open_stems_folder(path)
+#                                                       ~23139 / 23323
+#   - module-level batch_audio_metadata_lookup(path)              ~1515
+#   - module-level load_config() / save_config(data)             ~114 / 132
+#   - constants YT_PLAY_CHIP_BG "#7c3aed" / YT_PAUSE_CHIP_BG "#bd02c1"  ~94/95
+#
+# Wiring notes for the integrator (NOT done here — this file only defines the
+# methods, per the brief's "do not edit ParaKit v4.0.py"):
+#   * Call self._stem_library_build(parent) from wherever the Stem Splitter tab
+#     lays out its library column (mirrors the _yt_library_build call site).
+#   * The play chip rides the SHARED pygame preview. So it stops on tab-switch,
+#     add self._stem_lib_on_tab_changed_stop_preview to the existing
+#     <<NotebookTabChanged>> binding chain with add="+", exactly like
+#     self._yt_on_tab_changed_stop_preview is bound (~23110). (Alternatively,
+#     the YT stop-guard already stops the shared mixer when leaving the YouTube
+#     tab; this stem-tab guard covers leaving the STEM tab.)
+# =============================================================================
+
+    # =====================================================================
+    # "YOUR SONGS" library (Stem Splitter tab) — live folder scan
+    # =====================================================================
+
+    def _stem_library_build(self, parent):
+        """Build the "YOUR SONGS" library panel on the Stem Splitter tab.
+
+        Mirrors _yt_library_build 1:1 — a folder-picker row, a YOUR SONGS
+        header, a search + sort bar, and a Canvas+inner-frame+vertical-scrollbar
+        list — but the data source is a live folder scan (see
+        _stem_library_scan) instead of the YouTube JSON registry.
+        """
+        self._stem_lib_art_refs = getattr(self, "_stem_lib_art_refs", {})
+        self._stem_lib_rows = []
+        self._stem_lib_selected_path = None
+        self._stem_lib_show_all = False
+        self._stem_lib_refresh_after = None
+        # The play/pause chip rides the SAME shared pygame.mixer.music preview
+        # stream the YouTube library uses, via self._yt_preview_* — so we track
+        # its state through the SAME self._yt_preview_path / _yt_preview_state
+        # fields. A separate self._stem_lib_preview_path mirror is kept for
+        # callers that want to know the stem library specifically triggered it.
+        self._stem_lib_preview_path = getattr(self, "_stem_lib_preview_path", None)
+        self._yt_preview_path = getattr(self, "_yt_preview_path", None)
+        self._yt_preview_state = getattr(self, "_yt_preview_state", None)
+
+        # ── Folder-picker row (NEW, above the header) ────────────────────────
+        # A small ttk row whose Entry is bound to self.stem_lib_folder_var,
+        # which MIRRORS self.yt_out_var (the YouTube tab's output folder). Browse
+        # persists to output_folder_yt so the two stay in sync — the library
+        # scans "the same folder the YouTube tab uses".
+        default_folder = ""
+        try:
+            default_folder = self.yt_out_var.get()
+        except Exception:
+            default_folder = load_config().get("output_folder_yt") or ""
+        self.stem_lib_folder_var = getattr(
+            self, "stem_lib_folder_var", None) or tk.StringVar(value=default_folder)
+        try:
+            # Keep it seeded from the YT var each build (in case yt_out_var moved).
+            if default_folder:
+                self.stem_lib_folder_var.set(default_folder)
+        except Exception:
+            pass
+
+        folder_row = ttk.Frame(parent)
+        folder_row.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(folder_row, text="Songs Folder:",
+                  style="Sub.TLabel").pack(side=tk.LEFT, padx=(0, 4))
+        folder_entry = ttk.Entry(folder_row, textvariable=self.stem_lib_folder_var)
+        folder_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+
+        def _stem_lib_browse():
+            chosen = filedialog.askdirectory(title="Select your songs folder")
+            if not chosen:
+                return
+            self.stem_lib_folder_var.set(chosen)
+            # Sync back to the YouTube tab's var + persisted config so the two
+            # folders stay one and the same.
+            try:
+                self.yt_out_var.set(chosen)
+            except Exception:
+                pass
+            try:
+                save_config({"output_folder_yt": chosen})
+            except Exception:
+                pass
+            self._stem_library_refresh()
+
+        ttk.Button(folder_row, text="Browse…",
+                   command=_stem_lib_browse).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(folder_row, text="Refresh",
+                   command=self._stem_library_refresh).pack(side=tk.LEFT)
+
+        # ── Header ───────────────────────────────────────────────────────────
+        ttk.Label(parent, text="YOUR SONGS",
+                  font=("Segoe UI", 8, "bold"), foreground="#9a9ab0").pack(anchor="w")
+
+        # ── Search + sort bar ────────────────────────────────────────────────
+        bar = ttk.Frame(parent)
+        bar.pack(fill=tk.X, pady=(2, 4))
+        self._stem_lib_search_var = tk.StringVar()
+        search_entry = ttk.Entry(bar, textvariable=self._stem_lib_search_var)
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._stem_lib_search_var.trace_add("write", self._stem_library_refresh)
+        # Lightweight placeholder shim (ttk.Entry has no native placeholder):
+        # show a grey cue when empty+unfocused, clear it on focus. A sentinel
+        # flag distinguishes the cue from a real query so search ignores it.
+        self._stem_lib_search_placeholder = "Search songs…"
+        self._stem_lib_search_is_placeholder = True
+
+        def _stem_search_show_placeholder():
+            self._stem_lib_search_is_placeholder = True
+            search_entry.configure(foreground="#7e7e96")
+            self._stem_lib_search_var.set(self._stem_lib_search_placeholder)
+
+        def _stem_search_on_focus_in(_e):
+            if self._stem_lib_search_is_placeholder:
+                self._stem_lib_search_is_placeholder = False
+                self._stem_lib_search_var.set("")
+                search_entry.configure(foreground="#e8e8f0")
+
+        def _stem_search_on_focus_out(_e):
+            if not self._stem_lib_search_var.get().strip():
+                _stem_search_show_placeholder()
+        search_entry.bind("<FocusIn>", _stem_search_on_focus_in)
+        search_entry.bind("<FocusOut>", _stem_search_on_focus_out)
+        _stem_search_show_placeholder()
+        ttk.Label(bar, text="Sort:", style="Sub.TLabel").pack(side=tk.LEFT, padx=(6, 2))
+        self._stem_lib_sort_var = tk.StringVar(value="Newest")
+        sort_combo = ttk.Combobox(bar, textvariable=self._stem_lib_sort_var,
+                                  values=("Newest", "Title", "Not-split first"),
+                                  width=14, state="readonly")
+        sort_combo.pack(side=tk.LEFT)
+        sort_combo.bind("<<ComboboxSelected>>", self._stem_library_refresh)
+
+        # ── Canvas + inner frame + vertical scrollbar ────────────────────────
+        canvas_wrap = ttk.Frame(parent)
+        canvas_wrap.pack(fill=tk.BOTH, expand=True)
+        self._stem_lib_canvas = tk.Canvas(canvas_wrap, bg="#15152a",
+                                          highlightthickness=0, bd=0)
+        vsb = ttk.Scrollbar(canvas_wrap, orient="vertical",
+                            command=self._stem_lib_canvas.yview)
+        self._stem_lib_canvas.configure(yscrollcommand=vsb.set)
+        self._stem_lib_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._stem_lib_inner = tk.Frame(self._stem_lib_canvas, bg="#15152a")
+        self._stem_lib_inner_id = self._stem_lib_canvas.create_window(
+            (0, 0), window=self._stem_lib_inner, anchor="nw")
+
+        def _on_inner_cfg(_e):
+            try:
+                self._stem_lib_canvas.configure(
+                    scrollregion=self._stem_lib_canvas.bbox("all"))
+            except Exception:
+                pass
+        self._stem_lib_inner.bind("<Configure>", _on_inner_cfg)
+
+        def _on_canvas_cfg(e):
+            try:
+                self._stem_lib_canvas.itemconfigure(self._stem_lib_inner_id, width=e.width)
+            except Exception:
+                pass
+        self._stem_lib_canvas.bind("<Configure>", _on_canvas_cfg)
+        # No <MouseWheel> binding here on purpose: the app-level global
+        # _on_mousewheel walker (bound via bind_all at init) walks up from the
+        # event widget to the first Canvas/Text and scrolls it — so it already
+        # scrolls THIS canvas when the cursor is over a row, in both roomy and
+        # compact mode (where this canvas nests inside the tab's scroll-canvas).
+        # Adding a local canvas.bind would double-scroll against the walker;
+        # bind_all would re-introduce the v4.4.53.7 regression. One exception:
+        # the scrollbar (vsb) is a SIBLING of the canvas, so the walker would
+        # climb past it to the outer tab canvas. Bind the wheel LOCALLY on vsb
+        # (not bind_all) to forward it to this canvas.
+        def _vsb_wheel(e):
+            try:
+                self._stem_lib_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            except Exception:
+                pass
+            return "break"
+        vsb.bind("<MouseWheel>", _vsb_wheel)
+
+        self._stem_library_refresh()
+
+    def _stem_library_refresh(self, *_):
+        """Debounced entry point (search keystrokes / sort / folder change).
+
+        Mirrors _yt_library_refresh: coalesces a burst of triggers into one
+        do-refresh ~200 ms later.
+        """
+        if not hasattr(self, "_stem_lib_inner"):
+            return
+        prev = getattr(self, "_stem_lib_refresh_after", None)
+        if prev:
+            try:
+                self.root.after_cancel(prev)
+            except Exception:
+                pass
+        self._stem_lib_refresh_after = self.root.after(200, self._stem_library_do_refresh)
+
+    def _stem_library_do_refresh(self):
+        """Rebuild the row list from a live folder scan.
+
+        Mirrors _yt_library_do_refresh: clear the inner frame, reset the row
+        list, scan, filter by search, sort, cap at 60 (+ "Show all N"), render
+        each row, prune art refs, update scrollregion. Resets
+        self._yt_ogg_scan_set = None at the top so all rows share ONE bounded
+        OGG-badge walk (exactly like _yt_library_do_refresh).
+        """
+        self._stem_lib_refresh_after = None
+        self._yt_ogg_scan_set = None   # invalidate the OGG-badge project scan (rebuilt lazily, once)
+        if not hasattr(self, "_stem_lib_inner"):
+            return
+        try:
+            if not self._stem_lib_inner.winfo_exists():
+                return
+        except Exception:
+            return
+
+        for child in list(self._stem_lib_inner.winfo_children()):
+            try:
+                child.destroy()
+            except Exception:
+                pass
+        self._stem_lib_rows = []
+
+        entries = self._stem_library_scan()
+        live = []
+        for e in entries:
+            try:
+                if e.get("path") and os.path.isfile(e["path"]):
+                    live.append(e)
+            except Exception:
+                pass
+
+        # Ignore the grey placeholder cue — it is not a real query.
+        if getattr(self, "_stem_lib_search_is_placeholder", False):
+            q = ""
+        else:
+            q = (self._stem_lib_search_var.get() or "").strip().lower()
+        if q:
+            live = [e for e in live
+                    if q in (e.get("title", "") or "").lower()
+                    or q in (e.get("artist", "") or "").lower()]
+
+        sort_mode = self._stem_lib_sort_var.get()
+        if sort_mode == "Title":
+            live.sort(key=lambda e: (e.get("title", "") or "").lower())
+        elif sort_mode == "Not-split first":
+            live.sort(key=lambda e: (self._stem_is_split(e.get("path", "")),
+                                     (e.get("title", "") or "").lower()))
+        else:
+            live.sort(key=lambda e: e.get("mtime", 0), reverse=True)
+
+        if not live:
+            msg = ("No songs yet — set your YouTube output folder or download "
+                   "some songs to split." if not q else "No matches.")
+            tk.Label(self._stem_lib_inner, text=msg, bg="#15152a",
+                     fg="#7e7e96", font=("Segoe UI", 9),
+                     padx=10, pady=14).pack(anchor="w")
+        else:
+            cap = 60
+            show = live if self._stem_lib_show_all else live[:cap]
+            for i, e in enumerate(show):
+                split = self._stem_is_split(e.get("path", ""))
+                midi = self._midi_paired(e.get("path", ""))
+                self._stem_lib_row(self._stem_lib_inner, e, split, midi, i)
+            if (not self._stem_lib_show_all) and len(live) > cap:
+                more = tk.Label(self._stem_lib_inner,
+                                text=f"▾  Show all {len(live)} songs",
+                                bg="#15152a", fg="#b388ff", cursor="hand2",
+                                font=("Segoe UI", 9, "bold"), pady=6)
+                more.pack(fill=tk.X)
+
+                def _show_all(_e):
+                    self._stem_lib_show_all = True
+                    self._stem_library_do_refresh()
+                more.bind("<Button-1>", _show_all)
+
+        # Prune cached PhotoImage refs to currently-rendered rows so the dict
+        # doesn't grow unbounded across refreshes/sessions (UI-audit MINOR).
+        try:
+            rendered = {getattr(r, "_yt_path", None) for r in self._stem_lib_rows}
+            self._stem_lib_art_refs = {
+                p: v for p, v in self._stem_lib_art_refs.items() if p in rendered}
+        except Exception:
+            pass
+
+        try:
+            self._stem_lib_canvas.update_idletasks()
+            self._stem_lib_canvas.configure(
+                scrollregion=self._stem_lib_canvas.bbox("all"))
+        except Exception:
+            pass
+
+    def _stem_library_scan(self):
+        """Live, non-recursive scan of the YouTube output folder.
+
+        The data source that REPLACES the YouTube JSON registry (_yt_library_load).
+        folder = self.stem_lib_folder_var (which mirrors self.yt_out_var). Keeps
+        only audio files, and reads title/artist from the app's mutagen tag
+        helper (batch_audio_metadata_lookup) + duration from
+        self._yt_audio_duration, falling back to the file name / 0.0.
+
+        Returns a list of dicts:
+          {"path", "title", "artist", "duration_sec", "mtime"}
+        """
+        # Prefer the library's own folder var; fall back to yt_out_var / config.
+        folder = ""
+        try:
+            folder = (self.stem_lib_folder_var.get() or "").strip()
+        except Exception:
+            folder = ""
+        if not folder:
+            try:
+                folder = (self.yt_out_var.get() or "").strip()
+            except Exception:
+                folder = ""
+        if not folder or not os.path.isdir(folder):
+            return []
+
+        AUDIO_EXTS = (".flac", ".ogg", ".mp3", ".wav", ".m4a")
+        out = []
+        try:
+            names = os.listdir(folder)
+        except Exception:
+            return []
+        for name in names:
+            ext = os.path.splitext(name)[1].lower()
+            if ext not in AUDIO_EXTS:
+                continue
+            full = os.path.join(folder, name)
+            try:
+                if not os.path.isfile(full):
+                    continue
+            except Exception:
+                continue
+            path = os.path.abspath(full)
+            try:
+                mtime = os.path.getmtime(path)
+            except Exception:
+                mtime = 0.0
+
+            # (path, mtime) metadata cache: the mutagen tag read + the duration
+            # header parse are the expensive per-file cost, and every search
+            # keystroke re-scans the whole folder. Reuse cached title/artist/
+            # duration for any file whose mtime is unchanged; only (re)parse a
+            # new or modified file. (The JSON-backed YouTube library avoids this
+            # cost by reading pre-computed metadata; the folder scan caches it.)
+            _mc = getattr(self, "_stem_lib_meta_cache", None)
+            if _mc is None:
+                _mc = self._stem_lib_meta_cache = {}
+            _hit = _mc.get(path)
+            if _hit is not None and _hit[0] == mtime:
+                title, artist, duration_sec = _hit[1], _hit[2], _hit[3]
+            else:
+                # Title/artist from tags (mutagen), name as the title fallback.
+                title = ""
+                artist = ""
+                try:
+                    meta = batch_audio_metadata_lookup(path) or {}
+                    title = (meta.get("title") or "").strip()
+                    artist = (meta.get("artist") or "").strip()
+                except Exception:
+                    pass
+                if not title:
+                    title = os.path.splitext(name)[0]
+                # Duration via the shared helper (returns None on failure).
+                duration_sec = 0.0
+                try:
+                    d = self._yt_audio_duration(path)
+                    if d is not None:
+                        duration_sec = float(d)
+                except Exception:
+                    duration_sec = 0.0
+                _mc[path] = (mtime, title, artist, duration_sec)
+
+            out.append({
+                "path": path,
+                "title": title,
+                "artist": artist,
+                "duration_sec": duration_sec,
+                "mtime": mtime,
+            })
+        return out
+
+    def _stem_lib_select_path(self, path):
+        """Select one row (highlight it) and reset the rest — mirrors
+        _yt_lib_select_path."""
+        self._stem_lib_selected_path = path
+        for r in self._stem_lib_rows:
+            try:
+                r._yt_set_state("selected" if getattr(r, "_yt_path", None) == path
+                                else "rest")
+            except Exception:
+                pass
+
+    def _stem_lib_art_photo(self, path, size=40):
+        """A `size`px Tk PhotoImage of the file's EMBEDDED cover art, or None if
+        the file has no art / can't be decoded (caller caches the result)."""
+        raw = self._stem_lib_extract_art_bytes(path)
+        if not raw:
+            return None
+        try:
+            import io
+            from PIL import Image, ImageTk
+            img = Image.open(io.BytesIO(raw)).convert("RGB")
+            resample = getattr(getattr(Image, "Resampling", Image), "LANCZOS",
+                               getattr(Image, "LANCZOS", 1))
+            img = img.resize((size, size), resample)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _stem_lib_extract_art_bytes(path):
+        """Embedded cover-art bytes from an audio file via mutagen, or None.
+        Handles FLAC/Ogg pictures, ID3 APIC (mp3), MP4 'covr', and the Ogg
+        Vorbis base64 metadata_block_picture."""
+        try:
+            from mutagen import File as _MF
+            m = _MF(path)
+        except Exception:
+            return None
+        if m is None:
+            return None
+        try:
+            pics = getattr(m, "pictures", None)   # FLAC / some Ogg
+            if pics:
+                return pics[0].data
+            tags = getattr(m, "tags", None)
+            if tags:
+                for k in list(tags.keys()):       # ID3 (mp3): APIC:*
+                    if str(k).startswith("APIC"):
+                        return tags[k].data
+                if "covr" in tags and tags["covr"]:   # MP4 / m4a
+                    return bytes(tags["covr"][0])
+                mbp = tags.get("metadata_block_picture")  # Ogg Vorbis
+                if mbp:
+                    import base64
+                    from mutagen.flac import Picture as _Pic
+                    data = mbp[0] if isinstance(mbp, (list, tuple)) else mbp
+                    return _Pic(base64.b64decode(data)).data
+        except Exception:
+            return None
+        return None
+
+    def _stem_lib_row(self, parent, entry, split, midi, idx):
+        """Render one library row.
+
+        Mirrors _yt_lib_row: accent bar, art tile, title/artist (ellipsized),
+        4 constant-width badges, duration, per-row chips, hover/select recolor
+        via row._yt_set_state + _bind_recursive, alternating band. The only
+        differences are the chip set (Split / Open Stems / Play) and that badge0
+        is the file's OWN format.
+        """
+        path = entry.get("path", "")
+        rest_bg = "#181830" if (idx % 2) else "#15152a"
+        HOVER_BG, SEL_BG, ACCENT = "#22203c", "#2c2748", "#b388ff"
+
+        row = tk.Frame(parent, bg=rest_bg)
+        row.pack(fill=tk.X)
+        # Only the text column (col 2) expands, so the whole right cluster
+        # (badges · duration · Split · Open Stems · Play) is right-aligned at a
+        # consistent position. Open Stems (col 8) + Play (col 9) get a reserved
+        # minsize so a non-split row (no Open Stems) or the wider "Pause" glyph
+        # can't shift the cluster and break that alignment.
+        row.columnconfigure(2, weight=1)
+        row.columnconfigure(8, minsize=110)
+        row.columnconfigure(9, minsize=80)
+        row._yt_path = path
+        row._yt_split = split
+        row._yt_color_targets = []
+
+        accent = tk.Frame(row, bg=rest_bg, width=3)
+        accent.grid(row=0, column=0, sticky="ns")
+        row._yt_accent = accent
+
+        # Art (col 1) — never recolored on hover (it's the artwork tile). Pull
+        # the file's EMBEDDED cover art (mutagen) once per path and cache the
+        # PhotoImage in _stem_lib_art_refs (False = decoded but no art) so a
+        # refresh never re-decodes it. Falls back to the ♪ glyph when the file
+        # has no embedded art.
+        _artc = self._stem_lib_art_refs
+        if path in _artc:
+            photo = _artc[path] or None
+        else:
+            photo = self._stem_lib_art_photo(path, size=40)
+            _artc[path] = photo or False
+        if photo is not None:
+            art_lbl = tk.Label(row, image=photo, bg=rest_bg, bd=0)
+        else:
+            art_lbl = tk.Label(row, text="♪", bg="#0d0d1a", fg="#6f6f8f",
+                               font=("Segoe UI", 15), width=3, height=2)
+        art_lbl.grid(row=0, column=1, padx=(6, 8), pady=4)
+
+        textcol = tk.Frame(row, bg=rest_bg)
+        textcol.grid(row=0, column=2, sticky="ew")
+        row._yt_color_targets.append(textcol)
+        title = entry.get("title") or os.path.splitext(os.path.basename(path))[0]
+        title_lbl = tk.Label(textcol, text=self._yt_ellipsize(title, 42),
+                             bg=rest_bg, fg="#e8e8f0",
+                             font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
+        title_lbl.pack(fill=tk.X, anchor="w")
+        row._yt_color_targets.append(title_lbl)
+        artist = entry.get("artist") or ""
+        if artist:
+            art_sub = tk.Label(textcol, text=self._yt_ellipsize(artist, 42),
+                               bg=rest_bg, fg="#9a9ab0",
+                               font=("Segoe UI", 9), anchor="w", justify="left")
+            art_sub.pack(fill=tk.X, anchor="w")
+            row._yt_color_targets.append(art_sub)
+
+        # Right-side cluster (cols 5+): badges, duration, then the action chips.
+        badges = tk.Frame(row, bg=rest_bg)
+        badges.grid(row=0, column=5, padx=(6, 6))
+        row._yt_color_targets.append(badges)
+        # badge0 — the file's OWN format (ext upper), always-present cyan (neutral).
+        fmt = os.path.splitext(path)[1].lstrip(".").upper() or "?"
+        self._yt_make_badge(badges, fmt, present=True, neutral=True, row=row)
+        # badge1 OGG / badge2 STEMS / badge3 MIDI — the 3 existing detectors.
+        self._yt_make_badge(badges, "OGG", present=self._ogg_paired(path), row=row)
+        self._yt_make_badge(badges, "STEMS", present=split, row=row)
+        self._yt_make_badge(badges, "MIDI", present=midi, row=row)
+
+        dur_lbl = tk.Label(row, text=self._yt_fmt_duration(entry.get("duration_sec")),
+                           bg=rest_bg, fg="#9a9ab0", font=("Segoe UI", 9))
+        dur_lbl.grid(row=0, column=6, padx=(0, 8))
+        row._yt_color_targets.append(dur_lbl)
+
+        # Persistent bordered action chips (mirrors _yt_lib_row's _mk_chip). A
+        # bg=None chip rides the row band (tracked so the band stays continuous
+        # on hover); a filled chip (Play/Pause) passes its own bg + track=False
+        # so the row-hover recolor never repaints over its fill.
+        def _mk_chip(text, fg, cmd, col, border="#4a4a6b", bg=None, track=True):
+            chip = tk.Label(row, text=text, bg=(rest_bg if bg is None else bg), fg=fg,
+                            font=("Segoe UI", 9, "bold"), cursor="hand2",
+                            padx=8, pady=4, bd=0, highlightthickness=1,
+                            highlightbackground=border, highlightcolor=border)
+            chip.bind("<Button-1>", lambda _e, p=path: cmd(p))
+            chip.grid(row=0, column=col, padx=(0, 4), sticky="e")
+            if track:
+                row._yt_color_targets.append(chip)
+            return chip
+
+        # (a) Split — load this song into the Stem Splitter input (load-only, do
+        # NOT auto-start the split). Col 7.
+        split_chip = _mk_chip("Split", ACCENT, self._stem_lib_on_split, 7)
+        self._add_tooltip(split_chip, "Load this song into the Stem Splitter")
+
+        # (b) Open Stems — ONLY when this song is already split. Col 8.
+        if split:
+            open_chip = _mk_chip("Open Stems", "#46d18a",
+                                 self._stem_lib_on_open_stems, 8)
+            self._add_tooltip(open_chip, "Opens your folder containing your drum stems")
+
+        # (c) Play/Pause — rides the shared pygame preview (col 9). Glyph + fill
+        # reflect the live preview state so it stays correct across refreshes.
+        # Filled brand-colour chip: PURPLE "▶ Play" / PINK "⏸ Pause". White
+        # text, bg set directly (track=False) so the row-hover recolor leaves it
+        # alone.
+        _playing = (path == getattr(self, "_yt_preview_path", None)
+                    and getattr(self, "_yt_preview_state", None) == "playing")
+        _play_bg = YT_PAUSE_CHIP_BG if _playing else YT_PLAY_CHIP_BG
+        row._yt_play_chip = _mk_chip(
+            "⏸  Pause" if _playing else "▶  Play",
+            "#ffffff", self._stem_lib_on_play, 9,
+            border=_play_bg, bg=_play_bg, track=False)
+
+        sep = tk.Frame(parent, bg="#222238", height=1)
+        sep.pack(fill=tk.X)
+
+        def _set_state(state):
+            if state == "selected":
+                bg = SEL_BG
+                accent.configure(bg=ACCENT)
+            elif state == "hover":
+                bg = HOVER_BG
+                accent.configure(bg=ACCENT)
+            else:
+                bg = rest_bg
+                accent.configure(bg=rest_bg)
+            try:
+                row.configure(bg=bg)
+            except Exception:
+                pass
+            for w in row._yt_color_targets:
+                try:
+                    w.configure(bg=bg)
+                except Exception:
+                    pass
+        row._yt_set_state = _set_state
+
+        def _is_selected():
+            return self._stem_lib_selected_path == path
+
+        def _on_enter(_e):
+            _set_state("selected" if _is_selected() else "hover")
+
+        def _on_leave(_e):
+            # Child-crossing guard: a child <Enter> fires <Leave> on the parent.
+            # Only collapse if the pointer truly left the row's widget subtree.
+            try:
+                x, y = self.root.winfo_pointerxy()
+                w = row.winfo_containing(x, y)
+            except Exception:
+                w = None
+            inside = False
+            while w is not None:
+                if w is row:
+                    inside = True
+                    break
+                w = getattr(w, "master", None)
+            if inside:
+                return
+            _set_state("selected" if _is_selected() else "rest")
+
+        def _on_click(_e):
+            self._stem_lib_select_path(path)
+
+        def _on_right_click(e):
+            self._stem_lib_select_path(path)
+            self._stem_lib_context_menu(e, path)
+            return "break"
+
+        def _bind_recursive(w):
+            w.bind("<Enter>", _on_enter, add="+")
+            w.bind("<Leave>", _on_leave, add="+")
+            w.bind("<Button-1>", _on_click, add="+")
+            w.bind("<Button-3>", _on_right_click, add="+")
+            for c in w.winfo_children():
+                _bind_recursive(c)
+        _bind_recursive(row)
+
+        self._stem_lib_rows.append(row)
+        _set_state("selected" if _is_selected() else "rest")
+
+    # ── Row right-click menu ─────────────────────────────────────────────────
+    def _stem_lib_context_menu(self, event, path):
+        """Windows-style right-click menu for a library row."""
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Split this song",
+                         command=lambda: self._stem_lib_on_split(path))
+        menu.add_command(label="Open file location",
+                         command=lambda: self._stem_lib_open_location(path))
+        if self._stem_is_split(path):
+            menu.add_separator()
+            menu.add_command(label="Open stems folder",
+                             command=lambda: self._stem_lib_on_open_stems(path))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _stem_lib_open_location(self, path):
+        """Open the song's folder, selecting the file where the OS supports it."""
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning(
+                "File not found",
+                "That song is no longer on disk:\n" + str(path))
+            return
+        import subprocess, platform
+        try:
+            if platform.system() == "Windows":
+                subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", "-R", path])
+            else:
+                subprocess.Popen(["xdg-open", os.path.dirname(path)])
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open the file location:\n{e}")
+
+    # ── Row chip actions ─────────────────────────────────────────────────────
+    def _stem_lib_on_split(self, path):
+        """Split chip / context menu — LOAD this song into the Stem Splitter
+        input (load-only; does NOT auto-start the split)."""
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning(
+                "File not found",
+                "That song is no longer on disk:\n" + str(path))
+            return
+        try:
+            self.stem_input_var.set(path)   # no trace → inert, just sets text
+        except Exception:
+            pass
+        try:
+            self._add_recent_file("recent_stem_audio", path)
+        except Exception:
+            pass
+        try:
+            self._stem_log(f"Loaded from Your Songs: {os.path.basename(path)}")
+        except Exception:
+            pass
+
+    def _stem_lib_on_open_stems(self, path):
+        """Open Stems chip — open the folder that actually holds this song's
+        drum stems. Reuses the app's _open_stems_folder (which probes the
+        DRUMS ONLY / DRUMS folders under stem_output_var / stem_iso_output_var
+        and falls back to a real existing stem base)."""
+        try:
+            self._open_stems_folder(path)
+        except Exception:
+            # Last-ditch fallback: open the song's own directory.
+            try:
+                d = os.path.dirname(path)
+                if d and os.path.isdir(d):
+                    self._open_folder_crossplatform(d)
+            except Exception:
+                pass
+
+    def _stem_lib_on_play(self, path):
+        """Play/Pause chip — toggle the SHARED single-stream pygame preview
+        (self._yt_preview_toggle drives self._yt_preview_path/_state + the audio),
+        then flip OUR rows' chips via the scoped self._stem_lib_update_chips. The
+        stem rows are deliberately NOT unioned into the YouTube library's row
+        list: the two libraries share the audio stream + preview state, but each
+        keeps its OWN row chip-updater, so neither reaches into the other's
+        internals (which the YT refresh would clobber anyway)."""
+        self._stem_lib_preview_path = path
+        try:
+            self._yt_preview_toggle(path)
+        except Exception:
+            pass
+        try:
+            self._stem_lib_update_chips()
+        except Exception:
+            pass
+
+    def _stem_lib_update_chips(self):
+        """Flip the Play/Pause chip glyph + fill on OUR rows to match the shared
+        preview state. Mirrors _yt_preview_update_chips but scoped to
+        self._stem_lib_rows (the stem library's own rows only)."""
+        cur = getattr(self, "_yt_preview_path", None)
+        state = getattr(self, "_yt_preview_state", None)
+        for r in getattr(self, "_stem_lib_rows", []):
+            chip = getattr(r, "_yt_play_chip", None)
+            if chip is None:
+                continue
+            try:
+                playing = (getattr(r, "_yt_path", None) == cur and state == "playing")
+                _bg = YT_PAUSE_CHIP_BG if playing else YT_PLAY_CHIP_BG
+                chip.configure(text="⏸  Pause" if playing else "▶  Play",
+                               bg=_bg, highlightbackground=_bg, highlightcolor=_bg)
+            except Exception:
+                pass
+
+    def _stem_lib_on_tab_changed_stop_preview(self, _e=None):
+        """Stop the preview whenever the user leaves the Stem Splitter tab.
+
+        Mirrors _yt_on_tab_changed_stop_preview. Bind this to the notebook's
+        <<NotebookTabChanged>> with add="+" (see the wiring note at the top of
+        this file). Uses the shared _yt_preview_stop so it never yanks the mixer
+        out from under another tab."""
+        try:
+            # Only act when we're LEAVING the stem tab. _yt_preview_stop is
+            # idempotent + self-guarded (it no-ops unless a preview is live and
+            # only stops the shared stream), so this never yanks the mixer from
+            # under the YouTube tab; the YT tab has its own leave-guard too.
+            if self.notebook.index("current") != self._tab_indexes.get("stem"):
+                if getattr(self, "_yt_preview_path", None) is not None:
+                    self._yt_preview_stop()
+                self._stem_lib_update_chips()
+        except Exception:
+            pass
 
     # ── Stem splitter helpers ─────────────────────────────────────────────────
     def _stem_iso_toggle(self):
@@ -23109,6 +24005,10 @@ demucs.separate.main()
         # doesn't clobber the existing tab-change handlers).
         self.notebook.bind("<<NotebookTabChanged>>",
                            self._yt_on_tab_changed_stop_preview, add="+")
+        # The Stem Splitter "Your Songs" library shares the same preview stream,
+        # so it gets its own leave-the-stem-tab stop guard (add="+").
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           self._stem_lib_on_tab_changed_stop_preview, add="+")
 
     # =====================================================================
     # v4.4.61-1 — YouTube → FLAC: Send-to-Stem + Downloaded-Songs Library
@@ -23521,6 +24421,14 @@ demucs.separate.main()
                                bg=_bg, highlightbackground=_bg, highlightcolor=_bg)
             except Exception:
                 pass
+        # The Stem Splitter "Your Songs" library shares this single preview
+        # stream, so refresh ITS Play/Pause chips from the same central point
+        # (covers natural song-end + leaving the YouTube tab). No-op if that
+        # library was never built (scoped to its own _stem_lib_rows).
+        try:
+            self._stem_lib_update_chips()
+        except Exception:
+            pass
 
     def _yt_on_tab_changed_stop_preview(self, _e=None):
         """Stop the preview whenever the user leaves the YouTube tab."""
