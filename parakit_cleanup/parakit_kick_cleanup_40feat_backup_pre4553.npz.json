@@ -1,0 +1,17 @@
+{
+  "classes": [
+    "phantom",
+    "real"
+  ],
+  "exported_utc": "2026-06-18T12:12:23.188114Z",
+  "format": "numpy_rf_v1",
+  "n_features": 40,
+  "n_trees": 400,
+  "note": "dependency-free; numpy-only inference; bit-exact to sklearn (max prob diff 0.0, 0 decision flips on full cached corpus)",
+  "npz_file": "parakit_kick_cleanup.npz",
+  "numpy_version": "2.4.4",
+  "phantom_label": 0,
+  "recommended_gate": 0.9,
+  "sklearn_version": "1.8.0",
+  "source_joblib": "kick_fp_remover_prod.joblib"
+}

@@ -5401,7 +5401,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.6"
+    VERSION = "4.5.6.1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -13049,12 +13049,22 @@ demucs.separate.main()
             command=lambda: cancel_flag.__setitem__("cancelled", True))
         cancel_btn.pack(side=tk.RIGHT, padx=12, pady=(0, 12))
 
+        # v4.5.6.1 hotfix: the old cancel raised RuntimeError here, but
+        # model_resolver.download_with_progress wraps every progress_cb call
+        # in "except Exception: pass" (its read-loop progress guard), which
+        # SWALLOWED the raise — so Cancel silently did nothing and the
+        # download always ran to completion. A BaseException-derived sentinel
+        # escapes that guard (and the resolver's DownloadError wrapper)
+        # without touching the resolver itself.
+        class _SepDownloadCancelled(BaseException):
+            pass
+
         def _progress_cb(done, total):
             # Always called on worker thread — marshal back to Tk main loop
             if cancel_flag["cancelled"]:
-                # Cooperative cancel: by raising here we abort the urlopen
-                # read loop in download_with_progress
-                raise RuntimeError("Cancelled by user")
+                # Cooperative cancel: the sentinel aborts the urlopen read
+                # loop in download_with_progress (see class note above).
+                raise _SepDownloadCancelled()
             def _apply():
                 pct = (100.0 * done / total) if total else 0.0
                 try:
@@ -13082,6 +13092,12 @@ demucs.separate.main()
             last_err = None
             try:
                 for idx, src in enumerate(sources):
+                    # v4.5.6.1: a cancel racing a primary-source FAILURE must
+                    # not advance to the mirror (the progress callback only
+                    # runs while bytes flow).
+                    if cancel_flag["cancelled"]:
+                        last_err = "Cancelled by user"
+                        break
                     if idx > 0:
                         self.root.after(0, lambda: prog_status_var.set(
                             "Primary source failed — trying fallback mirror..."))
@@ -13099,8 +13115,16 @@ demucs.separate.main()
                     except model_resolver.DownloadError as e:
                         last_err = str(e)
                         continue
-                    except RuntimeError:
-                        # Cancellation — do not fall through to the mirror
+                    except _SepDownloadCancelled:
+                        # Cancellation — do not fall through to the mirror.
+                        # The resolver's unwind/cleanup never runs for a
+                        # BaseException, so remove the orphaned .part here.
+                        try:
+                            _part = str(dest_path) + ".part"
+                            if os.path.isfile(_part):
+                                os.remove(_part)
+                        except OSError:
+                            pass
                         last_err = "Cancelled by user"
                         break
                     except Exception as e:

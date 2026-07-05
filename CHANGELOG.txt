@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.6  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.6.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,17 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.6.1   --   2026-07-05
+------------------------------------------------------------------------------
+  - Fixed the Cancel button on the Neural Stem Isolation model download
+    (Audio -> MIDI tab). It has been silently broken since the feature
+    shipped: clicking Cancel appeared to do nothing and the ~417 MB download
+    always ran to completion in the background. Cancel now aborts the
+    download within a moment, never falls through to the fallback mirror,
+    and cleans up the partially-downloaded file. (Found while byte-auditing
+    the ParaKit v5 rebuild's port of this dialog against v4.)
 
 ------------------------------------------------------------------------------
   v4.5.6   --   2026-07-04
