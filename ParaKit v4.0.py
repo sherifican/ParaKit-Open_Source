@@ -8,6 +8,7 @@ Requirements:
     pip install mido librosa soundfile numpy
 """
 
+import gc
 import json
 import os
 import queue
@@ -93,6 +94,18 @@ YT_LIBRARY_LOCK     = _threading.Lock()
 # matches the magenta in the ParaKit logo wordmark (sampled #bd02c1).
 YT_PLAY_CHIP_BG  = "#7c3aed"   # ▶ Play  — app purple
 YT_PAUSE_CHIP_BG = "#bd02c1"   # ⏸ Pause — logo magenta/pink
+
+# v4.5.6.2 — pygame mixer output-buffer size (samples), shared by EVERY
+# pygame.mixer.init() call in this file so the singleton mixer can't inherit a
+# smaller buffer from whichever tab initialised it last. pygame's default (512 ≈
+# 11 ms @ 44.1 kHz) is notoriously underrun-prone: a brief main-thread CPU spike
+# (e.g. the MIDI-Editor's periodic auto-scroll piano-roll rebuild, or a Python GC
+# pause) can starve SDL's audio callback and produce a ~1-2 s burst of crunchy
+# static + a playback stutter. 4096 (~93 ms) gives the audio thread enough slack
+# to ride through those spikes. The added output latency is fully compensated:
+# _me_estimate_audio_latency() derives the MIDI-Editor playhead-sync offset from
+# THIS constant, so the playhead stays aligned with what you hear.
+PARAKIT_MIXER_BUFFER = 4096
 
 
 def _read_config_file(path):
@@ -1633,7 +1646,8 @@ def batch_format_folder_name(pattern, ctx):
 
 
 def build_rlrr(midi_notes, ticks_per_beat, bpm, offset, title, artist, creator,
-               song_tracks, drum_tracks, cover_image, complexity, difficulty):
+               song_tracks, drum_tracks, cover_image, complexity, difficulty,
+               description=""):
     tempo_us = int(60_000_000 / bpm)
     midi_to_name = {n: CLASS_TO_NAME[c] for n, c in MIDI_MAP.items() if c in CLASS_TO_NAME}
 
@@ -1664,7 +1678,7 @@ def build_rlrr(midi_notes, ticks_per_beat, bpm, offset, title, artist, creator,
     return {
         "version": 0.7,
         "recordingMetadata": {
-            "title": title, "description": "", "coverImagePath": cover_image,
+            "title": title, "description": description or "", "coverImagePath": cover_image,
             "artist": artist, "creator": creator, "length": last_time + 5.0,
             "complexity": complexity
         },
@@ -5401,7 +5415,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.6.1"
+    VERSION = "4.5.7"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -7975,8 +7989,25 @@ class MidiToRlrrApp:
         self._text_row(info_frame, "Artist *", self.artist_var, 1)
         self._text_row(info_frame, "Creator",  self.creator_var, 2)
 
+        # v4.5.6.2 — Description embedded into the .rlrr's recordingMetadata.
+        # ParaDB reads the description straight from the uploaded .rlrr (there is
+        # no website form for it) and renders it as HTML, so on save each newline
+        # is written as a <br>. Optional; blank keeps the old empty-description.
+        ttk.Label(info_frame, text="Description:").grid(
+            row=3, column=0, sticky="nw", padx=(0, 5), pady=2)
+        self.description_text = tk.Text(info_frame, height=3, width=45, wrap="word",
+                                        bg="#0d1117", fg="#e0e0e0",
+                                        insertbackground="#e0e0e0",
+                                        selectbackground="#2a1235",
+                                        relief="flat", bd=1, padx=6, pady=4)
+        self.description_text.grid(row=3, column=1, columnspan=2, sticky="ew", pady=2)
+        self._add_tooltip(self.description_text,
+                          "Optional. Shown on the song's ParaDB page — it is embedded\n"
+                          "in the .rlrr file itself, not added on the website. Line breaks\n"
+                          "are saved as <br> for ParaDB's HTML rendering.")
+
         opts_row = ttk.Frame(info_frame)
-        opts_row.grid(row=3, column=0, columnspan=3, sticky="w", pady=2)
+        opts_row.grid(row=4, column=0, columnspan=3, sticky="w", pady=2)
 
         ttk.Label(opts_row, text="Difficulty:").pack(side=tk.LEFT, padx=(0, 5))
         self.difficulty_var = tk.StringVar(value="Expert")
@@ -7998,7 +8029,7 @@ class MidiToRlrrApp:
         ttk.Checkbutton(info_frame, text="Enable difficulty-based note reduction",
                         variable=self.reduce_difficulty_var,
                         command=self._toggle_difficulty_reduction
-                        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 0))
+                        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         self.difficulty_warning_label = ttk.Label(
             info_frame,
@@ -14336,6 +14367,8 @@ demucs.separate.main()
             "title":      self.title_var.get(),
             "artist":     self.artist_var.get(),
             "creator":    self.creator_var.get(),
+            "description": (self.description_text.get("1.0", "end-1c")
+                            if hasattr(self, "description_text") else ""),
             "difficulty": self.difficulty_var.get(),
             "complexity": self.complexity_var.get(),
             "output":     self.output_var.get(),
@@ -14376,6 +14409,9 @@ demucs.separate.main()
         self.title_var.set(      project.get("title",       ""))
         self.artist_var.set(     project.get("artist",      ""))
         self.creator_var.set(    project.get("creator",     "ParaKit"))
+        if hasattr(self, "description_text"):
+            self.description_text.delete("1.0", "end")
+            self.description_text.insert("1.0", project.get("description", "") or "")
         self.difficulty_var.set( project.get("difficulty",  "medium"))
         self.complexity_var.set( project.get("complexity",  "medium"))
         self.output_var.set(     project.get("output",      ""))
@@ -14435,6 +14471,8 @@ demucs.separate.main()
             var.set("")
         self.title_var.set("")
         self.artist_var.set("")
+        if hasattr(self, "description_text"):
+            self.description_text.delete("1.0", "end")
         self.difficulty_var.set("Expert")
         self.complexity_var.set(3)
         # v4.4.50 — match the flipped defaults from line ~5298.
@@ -17306,8 +17344,10 @@ demucs.separate.main()
                 freq = 44100
         except Exception:
             freq = 44100
-        # Matches the buffer= argument used at every pygame.mixer.init call in this file.
-        buffer_ms = (512 / max(freq, 1)) * 1000.0
+        # Matches PARAKIT_MIXER_BUFFER — the buffer= argument used at every
+        # pygame.mixer.init call in this file (kept in sync via the shared constant),
+        # so the playhead-sync offset tracks the real output latency of the buffer.
+        buffer_ms = (PARAKIT_MIXER_BUFFER / max(freq, 1)) * 1000.0
         if sys.platform.startswith("win"):
             os_baseline_ms = 30.0   # WASAPI shared mode typical
         elif sys.platform == "darwin":
@@ -21208,13 +21248,13 @@ demucs.separate.main()
 
             channels = pcm_i16.shape[1] if pcm_i16.ndim > 1 else 1
             if not pygame.mixer.get_init():
-                pygame.mixer.init(frequency=rate, size=-16, channels=channels, buffer=512)
+                pygame.mixer.init(frequency=rate, size=-16, channels=channels, buffer=PARAKIT_MIXER_BUFFER)
             else:
                 # Reinit if sample rate changed
                 cur = pygame.mixer.get_init()
                 if cur[0] != rate or cur[2] != channels:
                     pygame.mixer.quit()
-                    pygame.mixer.init(frequency=rate, size=-16, channels=channels, buffer=512)
+                    pygame.mixer.init(frequency=rate, size=-16, channels=channels, buffer=PARAKIT_MIXER_BUFFER)
 
             sound = pygame.sndarray.make_sound(pcm_i16)
 
@@ -21326,7 +21366,7 @@ demucs.separate.main()
             pass
 
         if not pygame.mixer.get_init():
-            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=PARAKIT_MIXER_BUFFER)
 
         try:
             if layered:
@@ -21412,11 +21452,11 @@ demucs.separate.main()
                     _cur = pygame.mixer.get_init()
                     if not _cur:
                         pygame.mixer.init(frequency=_file_sr, size=-16,
-                                          channels=2, buffer=512)
+                                          channels=2, buffer=PARAKIT_MIXER_BUFFER)
                     elif _cur[0] != _file_sr:
                         pygame.mixer.quit()
                         pygame.mixer.init(frequency=_file_sr, size=-16,
-                                          channels=2, buffer=512)
+                                          channels=2, buffer=PARAKIT_MIXER_BUFFER)
                 pygame.mixer.music.load(audio_path)
                 try:
                     idx = int(self.me_audio_track_var.get())
@@ -21451,6 +21491,16 @@ demucs.separate.main()
                     self._me_sound_channel = None
 
             self._me_playing = True
+            # v4.5.6.2 — pause Python's cyclic garbage collector for the duration
+            # of playback. A gen-2 GC pass over this large object graph can stall
+            # the Tk main thread for tens of ms; combined with the tiny audio
+            # buffer that was enough to underrun SDL's callback (crunchy static).
+            # Re-enabled in _me_pause and _me_stop — the only playback-halt paths
+            # (the _me_tick loop-restart re-enters _me_play, which re-disables).
+            try:
+                gc.disable()
+            except Exception:
+                pass
             self.me_play_btn.configure(text="⏸  Pause")
             # Refresh stem indicators to show active/layered state
             if hasattr(self, 'me_stem_indicators'):
@@ -21466,6 +21516,18 @@ demucs.separate.main()
             self._me_tick()
 
         except Exception as e:
+            # If we already flipped into the playing state (and paused GC) before
+            # the failure, undo both so GC can't get stuck disabled and the play
+            # button can't get stuck showing "Pause".
+            self._me_playing = False
+            try:
+                gc.enable()
+            except Exception:
+                pass
+            try:
+                self.me_play_btn.configure(text="▶  Play")
+            except Exception:
+                pass
             messagebox.showerror("Playback error", str(e))
 
     def _me_pause(self):
@@ -21492,6 +21554,11 @@ demucs.separate.main()
         except Exception:
             self._me_play_offset = self._me_actual_play_pos()
         self._me_playing = False
+        # v4.5.6.2 — re-enable the cyclic GC that _me_play paused during playback.
+        try:
+            gc.enable()
+        except Exception:
+            pass
         self.me_play_btn.configure(text="▶  Play")
         self._me_live_play_pos = self._me_play_offset
         if self._me_tick_id:
@@ -21522,6 +21589,13 @@ demucs.separate.main()
         except Exception:
             pass
         self._me_playing = False
+        # v4.5.6.2 — re-enable + run the cyclic GC that _me_play paused during
+        # playback, reclaiming anything that accumulated while it was off.
+        try:
+            gc.enable()
+            gc.collect()
+        except Exception:
+            pass
         self._me_play_offset = 0.0
         self._me_live_play_pos = 0.0
         self.me_play_btn.configure(text="▶  Play")
@@ -24323,7 +24397,7 @@ demucs.separate.main()
     def _yt_preview_ensure_mixer(self):
         import pygame
         if not pygame.mixer.get_init():
-            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=PARAKIT_MIXER_BUFFER)
 
     def _yt_preview_toggle(self, path):
         if not path or not os.path.isfile(path):
@@ -30603,7 +30677,7 @@ demucs.separate.main()
 
             if not pygame.mixer.get_init():
                 pygame.mixer.init(frequency=44100, size=-16, channels=2,
-                                  buffer=512)
+                                  buffer=PARAKIT_MIXER_BUFFER)
             mixer = pygame.mixer.get_init()
             sample_rate = mixer[0] if mixer else 44100
             channels = mixer[2] if len(mixer) >= 3 else 2
@@ -30695,7 +30769,7 @@ demucs.separate.main()
             import pygame
             if not pygame.mixer.get_init():
                 pygame.mixer.init(frequency=44100, size=-16, channels=2,
-                                  buffer=512)
+                                  buffer=PARAKIT_MIXER_BUFFER)
             path = self._midi_metronome_asset_path(sound_name)
             if path and os.path.exists(path):
                 sound = pygame.mixer.Sound(path)
@@ -33384,7 +33458,7 @@ demucs.separate.main()
 
         try:
             if not pygame.mixer.get_init():
-                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
+                pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=PARAKIT_MIXER_BUFFER)
             pygame.mixer.music.load(play_audio_path)
 
             # Convert MIDI-time offset to stretched-audio offset
@@ -33396,6 +33470,15 @@ demucs.separate.main()
             self._viz_audio_start_offset = self._viz_play_offset_secs  # kept for legacy/pause use
             self._viz_audio_start_offset_stretch = start_in_audio
             self._viz_playing = True
+            # v4.5.6.2 — pause cyclic GC during playback (same fix as _me_play).
+            # This tab redraws the whole falling-notes frame every ~16 ms, churning
+            # a lot of canvas objects, so a periodic gen-2 GC pass was a prime
+            # underrun trigger — the crunchy-static-every-few-seconds symptom.
+            # Re-enabled in _viz_pause / _viz_stop (the playback-halt paths).
+            try:
+                gc.disable()
+            except Exception:
+                pass
             self.viz_play_btn.configure(text="⏸  Pause")
             if self._viz_practice_active():
                 try:
@@ -33405,6 +33488,13 @@ demucs.separate.main()
             self._viz_tick()
 
         except Exception as e:
+            # Undo the playing/GC state if we failed after arming playback so GC
+            # can't get stuck disabled and the button can't get stuck on "Pause".
+            self._viz_playing = False
+            try:
+                gc.enable()
+            except Exception:
+                pass
             self.viz_play_btn.configure(text="▶  Play")
             messagebox.showerror("Playback error", str(e))
 
@@ -33425,6 +33515,11 @@ demucs.separate.main()
         except Exception:
             pass
         self._viz_playing = False
+        # v4.5.6.2 — re-enable the cyclic GC that _viz_play paused.
+        try:
+            gc.enable()
+        except Exception:
+            pass
         self.viz_play_btn.configure(text="▶  Play")
         if self._viz_tick_id:
             self.root.after_cancel(self._viz_tick_id)
@@ -33437,6 +33532,12 @@ demucs.separate.main()
         except Exception:
             pass
         self._viz_playing = False
+        # v4.5.6.2 — re-enable + run the cyclic GC that _viz_play paused.
+        try:
+            gc.enable()
+            gc.collect()
+        except Exception:
+            pass
         self._viz_play_offset_secs = 0.0
         self.viz_play_btn.configure(text="▶  Play")
         if self._viz_tick_id:
@@ -35398,7 +35499,109 @@ demucs.separate.main()
         ttk.Label(bpm_row, text="Offset (s):").pack(side=tk.LEFT, padx=(0,5))
         offset_entry.pack(side=tk.LEFT)
 
+        # v4.5.6.2 — parity with the Single Song Creator: per-slot Auto Fetch
+        # Audio + Album Art preview + Description. Appended at the bottom (rows
+        # 10-11) so the existing slot grid above is untouched.
+        extras = ttk.Frame(frame)
+        extras.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(6, 2))
+        af_border = tk.Frame(extras, bg="#00e5ff", bd=0)   # cyan outline, app style
+        af_border.pack(side=tk.LEFT, padx=(0, 12), anchor="n")
+        ttk.Button(af_border, text="🎵  Auto Fetch Audio", width=21,
+                   command=lambda s=slot: self._batch_auto_fetch_audio(s)
+                   ).pack(padx=1, pady=1)
+
+        art_box = tk.Frame(extras, width=80, height=80, bg="#17172d",
+                           highlightthickness=1, highlightbackground="#2a2a44")
+        art_box.pack_propagate(False)
+        art_box.pack(side=tk.LEFT, padx=(0, 8))
+        slot["cover_preview_label"] = tk.Label(art_box, bg="#17172d", fg="#555",
+                                               text="No art")
+        slot["cover_preview_label"].pack(expand=True)
+        slot["cover_imgref"] = None
+        slot["cover_caption_var"] = tk.StringVar(value="No art selected")
+        ttk.Label(extras, textvariable=slot["cover_caption_var"],
+                  style="Sub.TLabel").pack(side=tk.LEFT, anchor="s", pady=(0, 4))
+        slot["cover_var"].trace_add(
+            "write", lambda *_a, s=slot: self._batch_update_cover_preview(s))
+
+        ttk.Label(frame, text="Description:").grid(
+            row=11, column=0, sticky="nw", padx=(0, 5), pady=2)
+        slot["desc_text"] = tk.Text(frame, height=2, width=42, wrap="word",
+                                    bg="#0d1117", fg="#e0e0e0",
+                                    insertbackground="#e0e0e0",
+                                    selectbackground="#2a1235",
+                                    relief="flat", bd=1, padx=6, pady=4)
+        slot["desc_text"].grid(row=11, column=1, columnspan=2, sticky="ew", pady=2)
+        self._add_tooltip(slot["desc_text"],
+                          "Optional. Embedded in this song's .rlrr and shown on its\n"
+                          "ParaDB page. Line breaks are saved as <br>.")
+
     # ── Batch helpers ─────────────────────────────────────────────────────────
+    def _batch_auto_fetch_audio(self, slot):
+        """Auto Fetch Audio for one batch slot — mirrors the Single Song Creator:
+        from the slot's MIDI file name, fill Song Audio with the BACKING (no-drums)
+        stem and Drum Audio with the drums stem, both preferring the .ogg copy (a
+        full mix would double the drums in the compiled pack)."""
+        midi_path = slot["midi_var"].get().strip()
+        if not midi_path:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Pick this song's MIDI File first — Auto Fetch uses its file name "
+                "to find the matching Song Audio and Drum Audio.")
+            return
+        drums, mix, used_recursive, song = self._find_song_audio_from_midi(
+            midi_path, prefer_ogg=True, song_is_backing=True)
+        if not song:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Couldn't read a song name from the MIDI file name.")
+            return
+        found = []
+        if drums:
+            slot["drum_var"].set(drums)
+            self._add_recent_file("recent_drum_audio", drums)
+            found.append("Drum Audio: " + os.path.basename(drums))
+        if mix:
+            slot["audio_var"].set(mix)
+            self._add_recent_file("recent_audio", mix)
+            found.append("Song Audio: " + os.path.basename(mix))
+        self._auto_fetch_show_result(song, drums, mix, used_recursive, found,
+                                     mix_label="Backing track",
+                                     mix_pattern=f"{song}_backing.<ext>")
+
+    def _batch_update_cover_preview(self, slot):
+        """Per-slot album-art thumbnail (mirror of _update_cover_preview). Renders
+        slot['cover_var'] into slot['cover_preview_label'] with a size caption."""
+        label = slot.get("cover_preview_label")
+        if label is None:
+            return
+        px = 80
+        path = (slot["cover_var"].get() or "").strip()
+        if path and os.path.isfile(path):
+            try:
+                from PIL import Image, ImageTk
+                img = Image.open(path)
+                w, h = img.size
+                thumb = img.copy()
+                if thumb.mode not in ("RGB", "RGBA"):
+                    thumb = thumb.convert("RGB")
+                thumb.thumbnail((px, px), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(thumb)
+                label.configure(image=photo, text="")
+                slot["cover_imgref"] = photo  # keep ref (Tk GC quirk)
+                cap = f"{w}×{h}"
+                if w != h:
+                    cap += "  ·  not square"
+                slot["cover_caption_var"].set(cap)
+            except Exception:
+                slot["cover_imgref"] = None
+                label.configure(image="", text="(can't\npreview)")
+                slot["cover_caption_var"].set(os.path.basename(path)[:24])
+        else:
+            slot["cover_imgref"] = None
+            label.configure(image="", text="No art")
+            slot["cover_caption_var"].set("No art selected")
+
     def _batch_slot_browse(self, var, filetypes, slot):
         path = filedialog.askopenfilename(filetypes=filetypes)
         if path:
@@ -36096,6 +36299,11 @@ demucs.separate.main()
                     messagebox.showerror("Invalid BPM",
                         f"Song {i} has an invalid manual BPM value.")
                     return
+            # v4.5.6.2 — capture the per-slot description on the MAIN thread (Text
+            # widgets must not be read from the conversion worker) for the .rlrr embed.
+            slot["_desc_captured"] = (
+                slot["desc_text"].get("1.0", "end-1c").strip().replace("\n", "<br>")
+                if slot.get("desc_text") else "")
             queue.append((i, slot))
 
         if not queue:
@@ -36262,7 +36470,8 @@ demucs.separate.main()
                     title=title, artist=artist, creator=creator,
                     song_tracks=[os.path.basename(slot["audio_var"].get())] + _extra_song_stems,
                     drum_tracks=drum_tracks, cover_image=cover_name,
-                    complexity=int(slot["comp_var"].get()), difficulty=diff
+                    complexity=int(slot["comp_var"].get()), difficulty=diff,
+                    description=slot.get("_desc_captured", "")
                 )
 
                 if slot["reduce_var"].get() and diff != "Expert":
@@ -36536,7 +36745,7 @@ demucs.separate.main()
 
     def _toggle_difficulty_reduction(self):
         if self.reduce_difficulty_var.get():
-            self.difficulty_warning_label.grid(row=5, column=0, columnspan=3, sticky="w", pady=(2, 2))
+            self.difficulty_warning_label.grid(row=6, column=0, columnspan=3, sticky="w", pady=(2, 2))
         else:
             self.difficulty_warning_label.grid_forget()
 
@@ -37332,6 +37541,10 @@ demucs.separate.main()
         title = self.title_var.get() or "Untitled"
         artist = self.artist_var.get() or "Unknown"
         creator = self.creator_var.get() or "ParaKit"
+        # v4.5.6.2 — embed the optional description into the .rlrr. ParaDB renders
+        # it as HTML, so the user's line breaks become <br>. Empty -> "" (unchanged).
+        description = (self.description_text.get("1.0", "end-1c").strip().replace("\n", "<br>")
+                       if hasattr(self, "description_text") else "")
         difficulty = self.difficulty_var.get()
         complexity = int(self.complexity_var.get())
 
@@ -37428,7 +37641,8 @@ demucs.separate.main()
                 midi_notes=drum_notes, ticks_per_beat=ticks_per_beat,
                 bpm=bpm, offset=offset, title=title, artist=artist,
                 creator=creator, song_tracks=song_tracks, drum_tracks=drum_tracks,
-                cover_image=cover_name, complexity=complexity, difficulty=difficulty
+                cover_image=cover_name, complexity=complexity, difficulty=difficulty,
+                description=description
             )
 
             if self.reduce_difficulty_var.get() and difficulty != "Expert":

@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.6.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.7  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,22 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.7   --   2026-07-05
+------------------------------------------------------------------------------
+  - Song descriptions. The Single Song Creator AND Create Multiple Songs now
+    have a Description field. Paradiddle/ParaDB reads the description straight
+    from the song's .rlrr file (there is no website form for it) and shows it
+    on the ParaDB song page; line breaks are saved as <br> for its HTML
+    rendering. Leaving it blank keeps the description empty (unchanged).
+  - Create Multiple Songs -- parity with the Single Song Creator. Each song
+    slot now has its own "Auto Fetch Audio" button (fills Song Audio + Drum
+    Audio from the MIDI's file name) and a live album-art preview.
+  - Steadier playback. The MIDI Editor and Preview/Practice Track now use a
+    larger audio buffer and pause Python's garbage collection during playback,
+    so brief CPU spikes are much less likely to cause a moment of audio crackle
+    or a playhead stutter.
 
 ------------------------------------------------------------------------------
   v4.5.6.1   --   2026-07-05
