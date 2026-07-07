@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.5.7`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.7.1`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -148,7 +148,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.5.7`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.7.1`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -545,6 +545,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.5.7.1**<br>2026-07-05 | <ul><li>**Steadier audio playback, especially in the song libraries.** The Downloaded-Songs and Stem-Splitter library previews now decode the whole track into memory and play it from RAM instead of streaming it off disk, and the shared audio buffer was enlarged — greatly reducing the brief periodic stutters/crackle some machines produced during playback (biggest benefit on busier or slower systems).</li></ul> |
 | **v4.5.7**<br>2026-07-05 | <ul><li>**Song descriptions.** The Single Song Creator *and* Create Multiple Songs now have a **Description** field. Paradiddle/ParaDB reads the description straight from the song's `.rlrr` file (there's no website form for it) and shows it on the song's ParaDB page — line breaks are saved as `<br>` for its HTML rendering. Leave it blank and nothing changes.</li><li>**Create Multiple Songs — parity with the Single Song Creator.** Each song slot now has its own **🎵 Auto Fetch Audio** button (fills Song Audio + Drum Audio from the MIDI's file name) and a live **album-art preview** (with a "not square" flag).</li><li>**Steadier playback.** The MIDI Editor and Preview/Practice Track now use a larger audio buffer and pause Python's garbage collection during playback, so brief CPU spikes are much less likely to cause a moment of audio crackle or a playhead stutter.</li></ul> |
 | **v4.5.6.1**<br>2026-07-05 | <ul><li>**Audio → MIDI — HOTFIX:** the Cancel button on the Neural Stem Isolation model download was a silent no-op since the feature shipped — the ~417 MB download always ran to completion. Cancel now aborts within a moment, never falls through to the fallback mirror, and cleans up the partial file. (Found while byte-auditing the ParaKit v5 rebuild's port of this dialog.)</li></ul> |
 | **v4.5.6**<br>2026-07-04 | <ul><li>**Stem Splitter tab redesign + a new "Your Songs" library.** The settings are now a horizontal card row — **Input & Model**, **Output**, **Split** — that reflows for narrower windows, and the two optional BETA tools (**Custom Isolation** and **DrumSep**) are tucked into a single collapsible **"Advanced tools"** section so the normal Standard-Split path stays front-and-centre. A new **"Your Songs"** library sits at the bottom beside the activity log: it lists the songs in your YouTube output folder — the ones you've downloaded but haven't split yet — with **album art**, **FLAC / OGG / STEMS / MIDI** badges showing what already exists for each, plus search and sort. Each row has **Split** (loads it straight into the splitter), **Play** (preview), and, on already-split songs, **Open Stems**. Point the *Songs Folder* at your downloads and hit Refresh; it stays in sync with the YouTube → FLAC output folder.</li><li>**Compact layout:** the library and activity log now stretch to fill the space below them instead of leaving a gap.</li><li>**Updater:** "Download update now" now also keeps this *What's New* (`CHANGELOG.txt`) and the README current — it previously synced everything except those — plus a line-ending fix so it can verify a handful of text files it used to skip.</li></ul> |

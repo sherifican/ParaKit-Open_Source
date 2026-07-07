@@ -4,7 +4,7 @@
   with Clone Hero (.chart) support.
 ==============================================================================
 
-  Version in this release: 4.5.7
+  Version in this release: 4.5.7.1
   Runtime:                 Python 3.12 (required)
 
   This is the plain-text companion to README.md. It has the same information

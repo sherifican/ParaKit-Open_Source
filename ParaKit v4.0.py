@@ -101,11 +101,12 @@ YT_PAUSE_CHIP_BG = "#bd02c1"   # ⏸ Pause — logo magenta/pink
 # 11 ms @ 44.1 kHz) is notoriously underrun-prone: a brief main-thread CPU spike
 # (e.g. the MIDI-Editor's periodic auto-scroll piano-roll rebuild, or a Python GC
 # pause) can starve SDL's audio callback and produce a ~1-2 s burst of crunchy
-# static + a playback stutter. 4096 (~93 ms) gives the audio thread enough slack
-# to ride through those spikes. The added output latency is fully compensated:
+# static + a playback stutter. 8192 (~186 ms) gives the audio thread enough slack
+# to ride through those spikes (the library preview also decodes to RAM up front,
+# so playback never streams from disk). The added output latency is fully compensated:
 # _me_estimate_audio_latency() derives the MIDI-Editor playhead-sync offset from
 # THIS constant, so the playhead stays aligned with what you hear.
-PARAKIT_MIXER_BUFFER = 4096
+PARAKIT_MIXER_BUFFER = 8192
 
 
 def _read_config_file(path):
@@ -5415,7 +5416,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.7"
+    VERSION = "4.5.7.1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -24420,26 +24421,41 @@ demucs.separate.main()
         cur = getattr(self, "_yt_preview_path", None)
         state = getattr(self, "_yt_preview_state", None)
         if cur == path and state == "playing":
-            try:
-                pygame.mixer.music.pause()
-            except Exception:
-                pass
-            self._yt_preview_state = "paused"
+            self._yt_preview_set_pause(True)
         elif cur == path and state == "paused":
-            try:
-                pygame.mixer.music.unpause()
-            except Exception:
-                pass
-            self._yt_preview_state = "playing"
+            self._yt_preview_set_pause(False)
             self._yt_preview_schedule_poll()
         else:
+            # Preview robustness (in-RAM playback): decode the WHOLE file into RAM
+            # and play it from memory (a pygame.mixer.Sound on a channel) instead
+            # of STREAMING it off disk with mixer.music. Streaming re-reads +
+            # re-decodes continuously during playback, so any disk / IO / decode
+            # hitch turned into an audible dropout — worst on the library's long
+            # full-song FLACs. Playing from RAM removes that failure mode. Falls
+            # back to the old streaming path if a file can't be decoded to a Sound,
+            # so playback never just fails. (In-RAM also drops the file handle, so a
+            # previewed song can be deleted without the old unload() dance.)
+            self._yt_preview_halt()
+            snd = None
             try:
-                pygame.mixer.music.stop()
-                pygame.mixer.music.load(path)
-                pygame.mixer.music.play()   # whole song, no length cap
+                snd = pygame.mixer.Sound(path)   # decode entire file -> RAM
+            except Exception:
+                snd = None
+            try:
+                if snd is not None:
+                    self._yt_preview_channel = snd.play()
+                    self._yt_preview_sound = snd   # keep ref so it isn't GC'd
+                else:
+                    pygame.mixer.music.stop()
+                    pygame.mixer.music.load(path)
+                    pygame.mixer.music.play()      # streaming fallback
+                    self._yt_preview_channel = None
+                    self._yt_preview_sound = None
             except Exception as e:
                 self._yt_preview_path = None
                 self._yt_preview_state = None
+                self._yt_preview_channel = None
+                self._yt_preview_sound = None
                 self._yt_preview_update_chips()
                 messagebox.showerror("Preview failed", f"Could not play this file:\n{e}")
                 return
@@ -24448,25 +24464,48 @@ demucs.separate.main()
             self._yt_preview_schedule_poll()
         self._yt_preview_update_chips()
 
+    def _yt_preview_set_pause(self, pause):
+        """Pause/resume the active preview — handles both the in-RAM channel path
+        and the streaming-music fallback."""
+        try:
+            import pygame
+            ch = getattr(self, "_yt_preview_channel", None)
+            if ch is not None:
+                ch.pause() if pause else ch.unpause()
+            else:
+                pygame.mixer.music.pause() if pause else pygame.mixer.music.unpause()
+        except Exception:
+            pass
+        self._yt_preview_state = "paused" if pause else "playing"
+
+    def _yt_preview_halt(self):
+        """Stop whatever the preview is playing (in-RAM channel or streamed music)
+        and drop the Sound so its memory is freed. Does NOT reset path/state —
+        callers needing a full reset use _yt_preview_stop."""
+        try:
+            import pygame
+            ch = getattr(self, "_yt_preview_channel", None)
+            if ch is not None:
+                try: ch.stop()
+                except Exception: pass
+            elif pygame.mixer.get_init():
+                try:
+                    pygame.mixer.music.stop()
+                    pygame.mixer.music.unload()   # release the streamed file handle
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self._yt_preview_channel = None
+        self._yt_preview_sound = None
+
     def _yt_preview_stop(self):
         """Stop the preview — but only if OUR preview is what's playing, so we
         never yank the shared mixer out from under another tab."""
         if (getattr(self, "_yt_preview_state", None) is None
                 and getattr(self, "_yt_preview_path", None) is None):
             return
-        try:
-            import pygame
-            if pygame.mixer.get_init():
-                pygame.mixer.music.stop()
-                try:
-                    # Release the file handle (pygame 2.0+) so a delete-from-disk
-                    # of the just-previewed song isn't blocked by an open handle
-                    # on Windows.
-                    pygame.mixer.music.unload()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        self._yt_preview_halt()
         self._yt_preview_path = None
         self._yt_preview_state = None
         self._yt_preview_update_chips()
@@ -24489,14 +24528,16 @@ demucs.separate.main()
             return
         try:
             import pygame
-            if pygame.mixer.get_init() and not pygame.mixer.music.get_busy():
-                try:
-                    # Release the file handle on natural end too (not only in
-                    # _yt_preview_stop) so a song that played to completion does
-                    # not leave the file locked against a later art re-embed.
-                    pygame.mixer.music.unload()
-                except Exception:
-                    pass
+            ch = getattr(self, "_yt_preview_channel", None)
+            if ch is not None:
+                ended = not ch.get_busy()
+            else:
+                ended = pygame.mixer.get_init() and not pygame.mixer.music.get_busy()
+            if ended:
+                # Release channel/Sound (or the streamed file handle) on natural end
+                # too — a completed song shouldn't leave anything locked against a
+                # later art re-embed.
+                self._yt_preview_halt()
                 self._yt_preview_path = None
                 self._yt_preview_state = None
                 self._yt_preview_update_chips()
