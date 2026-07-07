@@ -5446,7 +5446,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.8.3"
+    VERSION = "4.5.8.4"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -7981,10 +7981,11 @@ class MidiToRlrrApp:
         self.root.after(60, self._update_cover_preview)
 
         # ── "Use album art from audio metadata" toggle ─────────────────────────
-        # When ON: locks the Cover Image row, extracts embedded art from the
-        # current Song Audio (FLAC/MP3/OGG/M4A), center-crops to 512×512, saves
-        # to a temp JPG, and points cover_var at it. The build pipeline at
-        # _convert() then copies that temp file into the .rlrr output folder
+        # When ON: locks the Cover Image row, extracts embedded art (FLAC/MP3/
+        # OGG/M4A) from the Song Audio, else the Drum Audio, else the full mix
+        # located from the MIDI name, center-crops to 512×512, saves to a temp
+        # PNG, and points cover_var at it. The build pipeline at _convert() then
+        # copies that temp file into the .rlrr output folder as album.png,
         # exactly like a manually-chosen cover image — no build-side changes.
         self.use_metadata_art_var = tk.BooleanVar(
             value=load_config().get("use_metadata_art", False))
@@ -8003,8 +8004,17 @@ class MidiToRlrrApp:
         self.use_metadata_art_var.trace_add(
             "write",
             lambda *_: save_config({"use_metadata_art": self.use_metadata_art_var.get()}))
-        # Re-extract whenever the user changes Song Audio while toggle is on
+        # Re-extract whenever the user changes Song Audio, Drum Audio, or the
+        # MIDI File while the toggle is on — the Drum Audio and MIDI feed the
+        # fallback (Drum Audio as a source, the MIDI name to locate the full mix),
+        # so a change to any of them can newly satisfy "use art from metadata".
         self.audio_var.trace_add(
+            "write",
+            lambda *_: self._refresh_metadata_art_if_active())
+        self.drum_audio_var.trace_add(
+            "write",
+            lambda *_: self._refresh_metadata_art_if_active())
+        self.midi_var.trace_add(
             "write",
             lambda *_: self._refresh_metadata_art_if_active())
         # Apply initial lock state (deferred — audio_var is empty at construction)
@@ -8585,23 +8595,51 @@ class MidiToRlrrApp:
             # Slight defer so the audio_var trace settles before we read it
             self.root.after(10, self._apply_metadata_art)
 
+    def _first_audio_with_art(self, paths):
+        """Return (image_bytes, path) for the FIRST path whose audio metadata
+        carries embedded art, else (None, None). Skips empty / duplicate /
+        missing paths and swallows per-file read errors. UI-free — unit-testable
+        and shared by _apply_metadata_art's source-priority loop."""
+        seen = set()
+        for p in paths:
+            if not p or p in seen or not os.path.isfile(p):
+                continue
+            seen.add(p)
+            try:
+                b, _mime = self._extract_album_art_from_audio(p)
+            except Exception:
+                b = None
+            if b:
+                return b, p
+        return None, None
+
     def _apply_metadata_art(self):
-        """Extract embedded art from the current Song Audio file, center-crop
-        to 512×512, save as a temp JPG, and point cover_var at it.
+        """Extract embedded album art from a loaded audio file, center-crop to
+        512×512, save it as a temp PNG, and point cover_var at it — which drives
+        BOTH the live Album Art Preview and the export (_convert copies the file
+        into the .rlrr / .chart output folder as album.png).
+
+        Source priority (owner 2026-07-07): Song Audio, then Drum Audio, then —
+        if NEITHER carries art — the FULL MIX located from the MIDI file name via
+        _find_song_audio_from_midi. In the common stems workflow the Song Audio
+        is the backing track and the Drum Audio is a separated stem, so neither
+        has embedded art; the full mix (e.g. a YouTube-tab download) does, so it
+        is the fallback the user actually wants.
 
         Returns True on success (cover_var was updated), False otherwise.
         """
-        try:
-            audio_path = self.audio_var.get().strip()
-        except Exception:
-            return False
+        def _v(name):
+            try:
+                return getattr(self, name).get().strip()
+            except Exception:
+                return ""
 
-        if not audio_path:
-            try: self.metadata_art_status_var.set("⚠  Load a Song Audio file to extract its album art")
-            except Exception: pass
-            return False
-        if not os.path.isfile(audio_path):
-            try: self.metadata_art_status_var.set("⚠  Song Audio file not found")
+        song_audio = _v("audio_var")
+        drum_audio = _v("drum_audio_var")
+
+        if not song_audio and not drum_audio:
+            try: self.metadata_art_status_var.set(
+                "⚠  Load a Song Audio or Drum Audio file to extract album art")
             except Exception: pass
             return False
 
@@ -8609,8 +8647,7 @@ class MidiToRlrrApp:
         except Exception: pass
 
         # Snapshot old temp path before extraction so we can clear stale art if
-        # the new audio file has no embedded picture (don't carry the previous
-        # song's cover into the build).
+        # no source has a picture (don't carry the previous song's cover in).
         old_tmp = getattr(self, "_metadata_art_temp_path", None)
 
         def _clear_stale_temp():
@@ -8622,22 +8659,41 @@ class MidiToRlrrApp:
                 except Exception: pass
             self._metadata_art_temp_path = None
 
-        try:
-            img_bytes, _mime = self._extract_album_art_from_audio(audio_path)
-        except Exception as exc:
-            _clear_stale_temp()
-            try: self.metadata_art_status_var.set(f"⚠  Read error: {str(exc)[:70]}")
-            except Exception: pass
-            return False
+        # 1-2) the two loaded fields, in order.
+        img_bytes, src_path = self._first_audio_with_art([song_audio, drum_audio])
+        if src_path == song_audio and song_audio:
+            src_label = "Song Audio"
+        elif src_path:
+            src_label = "Drum Audio"
+        else:
+            src_label = None
+
+        # 3) fallback: neither loaded file had art — locate the FULL MIX from the
+        # MIDI file name and read its embedded cover (the reliable YouTube-tab art).
+        # Default finder args return the full mix (song_is_backing=False); it does a
+        # bounded folder search and touches no UI. Only runs when 1-2 come up empty.
+        if not img_bytes:
+            midi_path = _v("midi_var")
+            if midi_path:
+                try:
+                    _drums, mix, _rec, _song = self._find_song_audio_from_midi(midi_path)
+                except Exception:
+                    mix = None
+                if mix and mix not in (song_audio, drum_audio):
+                    img_bytes, src_path = self._first_audio_with_art([mix])
+                    if img_bytes:
+                        src_label = "full mix"
 
         if not img_bytes:
             _clear_stale_temp()
             try: self.metadata_art_status_var.set(
-                "⚠  No album art embedded in this audio file's metadata")
+                "⚠  No album art embedded in the Song Audio, Drum Audio, "
+                "or the located full mix")
             except Exception: pass
             return False
 
-        # Crop to square + resize, mirroring Asset Manager's _am_crop_art at line 16295
+        # Crop to square + resize, then save as PNG (album.png in the export —
+        # matches the Clone Hero + iTunes-fetch art convention).
         try:
             from PIL import Image
             import io, tempfile, re as _re
@@ -8651,12 +8707,12 @@ class MidiToRlrrApp:
             img  = img.crop((left, top, left + side, top + side))
             img  = img.resize((512, 512), Image.LANCZOS)
 
-            # Build a stable, recognisable temp filename based on the audio stem
-            audio_stem = os.path.splitext(os.path.basename(audio_path))[0]
+            # Stable, recognisable temp filename based on the SOURCE audio stem.
+            audio_stem = os.path.splitext(os.path.basename(src_path))[0]
             safe_stem  = _re.sub(r'[<>:"/\\|?*]', '_', audio_stem)[:80] or "metadata_art"
             tmp_path   = os.path.join(tempfile.gettempdir(),
-                                       f"{safe_stem}.parakit-cover.jpg")
-            img.save(tmp_path, format="JPEG", quality=92)
+                                       f"{safe_stem}.parakit-cover.png")
+            img.save(tmp_path, format="PNG")
 
             # Cleanup previous temp if it was a different file
             old = getattr(self, "_metadata_art_temp_path", None)
@@ -8671,7 +8727,8 @@ class MidiToRlrrApp:
             self.cover_var.set(tmp_path)
 
             try: self.metadata_art_status_var.set(
-                f"✓  Extracted from {os.path.basename(audio_path)} — cropped to 512×512")
+                f"✓  Album art from {src_label} ({os.path.basename(src_path)}) "
+                f"— cropped to 512×512")
             except Exception: pass
             return True
 
