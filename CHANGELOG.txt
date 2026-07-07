@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.7.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.8.3  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,53 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.8.3   --   2026-07-07
+------------------------------------------------------------------------------
+  - MIDI Editor -- Delete and bulk edits no longer hit the WRONG notes. After
+    a drag, insert, or quantize re-sorted the notes, the selection could
+    silently end up pointing at different notes than the ones you had
+    highlighted, so Delete / bulk-edit could remove the wrong ones. Fixed.
+  - MIDI Editor -- reclassifying a note (click-to-pick-a-lane or drag up/down)
+    now counts as an unsaved change. Before, those edits didn't trigger the
+    save prompt on quit (work silently lost) and Send to Song Creator could
+    hand off a stale file missing them.
+  - Auto-detect BPM actually detects now. The audio BPM search had quietly
+    broken and returned roughly the same ~79.5 BPM for nearly every song.
+    Your charts still played in sync (the sync offset was always correct),
+    but the BPM written into the song -- the measure lines in Clone Hero and
+    the difficulty-reduction beat grid -- was wrong. Detection is rebuilt and
+    validated; "Use BPM from MIDI file" (the recommended default) was never
+    affected.
+  - Song titles with characters Windows doesn't allow in file names no longer
+    break exports -- a ":" aborted the conversion and a "/" silently created
+    nested folders. Folder and file names are now sanitized; the title shown
+    in-game stays exactly as you typed it.
+  - Create Multiple Songs (folder batch): the template's "skip" / "rename"
+    overwrite setting is honored again -- existing song folders were being
+    silently overwritten on re-runs.
+  - Sheet Music MIDI export no longer drifts out of time by the end of long
+    songs (a tiny per-chord timing error used to accumulate).
+  - Extractor tool (rlrr -> MIDI) hardening: the batch tab reliably runs a
+    batch after mixed single/batch use, one malformed .rlrr no longer hangs
+    the window or aborts the whole batch, a preview crash was fixed, and
+    same-named batch outputs get unique names instead of overwriting each
+    other.
+  - Neural Stem Isolation no longer silently falls back to normal detection
+    for file names containing "_(" (e.g. "Song_(Live).flac"), and skipped
+    stems are now reported in the log. Also fixed: running the separator no
+    longer clobbers another file's saved Audio -> MIDI settings.
+  - Temp-folder cleanup: ParaKit now tidies up its temporary detection /
+    separation folders, which could quietly pile up 100+ MB per run.
+  - Practice minigame: remapped keys that aren't letters (digits, punctuation,
+    F-keys, numpad) now work instead of leaving a lane silently unplayable.
+  - Misc crash guards: a BPM typed as "0" is rejected with a clear message
+    instead of erroring mid-conversion; a corrupt saved detection-threshold
+    value is corrected instead of crashing detection; a missing-dependency
+    error no longer leaves the progress bar spinning forever; and a
+    conversion's settings are locked in when it starts, so flipping toggles
+    mid-run can't corrupt the run.
 
 ------------------------------------------------------------------------------
   v4.5.7.1   --   2026-07-05

@@ -127,6 +127,7 @@ class App(tk.Tk):
 
         # ---- Notebook ----
         nb = ttk.Notebook(self)
+        self._nb = nb
         nb.pack(fill="x", padx=8, pady=(8, 4))
 
         self._tab_single = ttk.Frame(nb)
@@ -308,16 +309,22 @@ class App(tk.Tk):
         self._meta_artist.set(meta.get("artist", ""))
         self._meta_creator.set(meta.get("creator", ""))
 
-        duration = meta.get("length", 0.0)
-        mins, secs = divmod(int(duration), 60)
-        from collections import Counter
-        note_to_lane = {v[1]: v[2] for v in CLASS_TO_MIDI.values()}
-        lane_counts = Counter(note_to_lane.get(note, "?") for _, note, _ in notes)
-        lane_str = "  ".join(
-            f"{ln}:{lane_counts[ln]}" for ln in LANE_NAMES if lane_counts.get(ln))
-        bpm = meta.get("bpm", "?")
-        self._preview_var.set(
-            f"{len(notes)} notes  |  {mins}:{secs:02d}  |  BPM ~{bpm}\n{lane_str}")
+        try:
+            try:
+                duration = float(meta.get("length", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                duration = 0.0
+            mins, secs = divmod(int(duration), 60)
+            from collections import Counter
+            note_to_lane = {v[1]: v[2] for v in CLASS_TO_MIDI.values()}
+            lane_counts = Counter(note_to_lane.get(note, "?") for _, note, _ in notes)
+            lane_str = "  ".join(
+                f"{ln}:{lane_counts[ln]}" for ln in LANE_NAMES if lane_counts.get(ln))
+            bpm = meta.get("bpm", "?")
+            self._preview_var.set(
+                f"{len(notes)} notes  |  {mins}:{secs:02d}  |  BPM ~{bpm}\n{lane_str}")
+        except Exception as exc:
+            self._preview_var.set(f"Preview error: {exc}")
 
     def _refresh_batch_count(self):
         if not self._folder_path:
@@ -355,15 +362,18 @@ class App(tk.Tk):
         self._set_running(True)
 
         # Determine active tab: 0 = single, 1 = batch
-        if self._single_path and not self._folder_path:
-            t = threading.Thread(target=self._run_single, daemon=True)
-        elif self._folder_path and not self._single_path:
+        try:
+            on_batch_tab = self._nb.index(self._nb.select()) == 1
+        except Exception:
+            on_batch_tab = bool(self._folder_path and not self._single_path)
+        if on_batch_tab and self._folder_path:
             rlrrs = self._filtered_rlrrs()
             t = threading.Thread(target=self._run_batch, args=(rlrrs,), daemon=True)
-        elif self._single_path:
+        elif not on_batch_tab and self._single_path:
             t = threading.Thread(target=self._run_single, daemon=True)
         else:
             self._set_running(False)
+            self._status_var.set("Pick a file (Single tab) or folder (Batch tab) first.")
             return
         t.start()
 
@@ -383,37 +393,43 @@ class App(tk.Tk):
         artist  = self._meta_artist.get().strip()
         notes   = self._single_notes  # already parsed in _load_preview
 
-        if not notes:
-            notes, _, err = extract_notes_from_rlrr(path)
-            if err:
-                self.after(0, lambda: self._log_write(f"ERR {err}\n", "err"))
+        try:
+            if not notes:
+                notes, _, err = extract_notes_from_rlrr(path)
+                if err:
+                    self.after(0, lambda: self._log_write(f"ERR {err}\n", "err"))
+                    self.after(0, self._on_done)
+                    return
+
+            stem     = _safe_stem(title) if title else path.stem
+            out_name = stem + ".mid"
+            dest_dir = self._output_dir or path.parent
+            out_path = dest_dir / out_name
+
+            try:
+                tmp = out_path.with_suffix(".mid.tmp")
+                write_mid_with_metadata(notes, tmp, title=title, artist=artist)
+                tmp.replace(out_path)
+            except Exception as exc:
+                msg = f"Write failed: {exc}"
+                self.after(0, lambda: self._log_write(f"ERR {msg}\n", "err"))
                 self.after(0, self._on_done)
                 return
 
-        stem     = _safe_stem(title) if title else path.stem
-        out_name = stem + ".mid"
-        dest_dir = self._output_dir or path.parent
-        out_path = dest_dir / out_name
-
-        try:
-            tmp = out_path.with_suffix(".mid.tmp")
-            write_mid_with_metadata(notes, tmp, title=title, artist=artist)
-            tmp.replace(out_path)
-        except Exception as exc:
-            msg = f"Write failed: {exc}"
-            self.after(0, lambda: self._log_write(f"ERR {msg}\n", "err"))
+            label = f"{title} - {artist}".strip(" -") if artist else (title or path.stem)
+            self.after(0, lambda: self._log_write(
+                f"OK  {label} -> {out_path.name} ({len(notes)} notes)\n", "ok"))
             self.after(0, self._on_done)
-            return
-
-        label = f"{title} - {artist}".strip(" -") if artist else (title or path.stem)
-        self.after(0, lambda: self._log_write(
-            f"OK  {label} -> {out_path.name} ({len(notes)} notes)\n", "ok"))
-        self.after(0, self._on_done)
+        except Exception as exc:
+            msg = f"Unexpected error: {exc}"
+            self.after(0, lambda m=msg: self._log_write(f"ERR {m}\n", "err"))
+            self.after(0, self._on_done)
 
     def _run_batch(self, rlrr_files: list[Path]):
         total = len(rlrr_files)
         self.after(0, lambda: self._progress.config(maximum=max(total, 1), value=0))
         ok_count = err_count = skip_count = 0
+        self._produced_outputs: set[Path] = set()  # per-run collision guard
 
         for i, rlrr_path in enumerate(rlrr_files, 1):
             if self._stop_event.is_set():
@@ -422,8 +438,11 @@ class App(tk.Tk):
                     f"Stopped after {s}/{total} files.\n", "warn"))
                 break
 
-            out_path = self._resolve_output(rlrr_path)
-            ok, msg = self._extract_one_batch(rlrr_path, out_path)
+            try:
+                out_path = self._resolve_output(rlrr_path)
+                ok, msg = self._extract_one_batch(rlrr_path, out_path)
+            except Exception as exc:
+                ok, msg = False, f"{rlrr_path.name}: unexpected error — {exc}"
             tag  = "ok" if ok else "err"
             pfx  = "OK " if ok else "ERR"
             line = f"{pfx} [{i}/{total}] {msg}\n"
@@ -463,7 +482,23 @@ class App(tk.Tk):
 
     def _resolve_output(self, rlrr_path: Path) -> Path:
         dest_dir = self._output_dir if self._output_dir else rlrr_path.parent
-        return dest_dir / rlrr_path.with_suffix(".mid").name
+        out_path = dest_dir / rlrr_path.with_suffix(".mid").name
+        if self._output_dir is not None:
+            # Flattened mode: two same-named charts from different subfolders
+            # would collide — uniquify against names already produced this run.
+            seen = getattr(self, "_produced_outputs", None)
+            if seen is not None:
+                base = out_path
+                n = 2
+                while out_path in seen:
+                    out_path = base.with_name(f"{base.stem} ({n}).mid")
+                    n += 1
+                if out_path != base:
+                    self.after(0, lambda b=base.name, o=out_path.name: self._log_write(
+                        f"warn: {b} already written this run — using {o} instead\n",
+                        "warn"))
+                seen.add(out_path)
+        return out_path
 
     # ------------------------------------------------------------------
     # State helpers (main thread)

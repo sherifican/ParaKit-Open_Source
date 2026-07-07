@@ -1,10 +1,10 @@
 {
-  "version": "4.5.7.1",
+  "version": "4.5.8.3",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "4a383dd8d772ff7a69aa55a163721f7852f885d1f41733dd58e1f83b8fd6ccea"
+      "sha256": "8665e4053d7dcc2962454051d7be7065abe7c7e3aabc6afc318858eb34801069"
     },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
@@ -52,11 +52,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "901f704eb8d171364302c89ca59ca7414f1b61755bd0c0fc4015b400e17b331e"
+      "sha256": "97ff3f4888ae1c1b8f3e35e45f5dcbfd84b78c6370756f8d30679b2e04daabb2"
     },
     {
       "path": "README.txt",
-      "sha256": "a7d95cde3ca3996ff5235d102929fd9ff9435e22e3f45183a9bd0b0d2959e68c"
+      "sha256": "9ba7d48e8c56b6c434f58577155e4001ff5445ac033c38d7023804b349921c03"
     },
     {
       "path": "Run ParaKit v4.0.bat",
@@ -96,11 +96,11 @@
     },
     {
       "path": "extractor/rlrr_extract_gui.py",
-      "sha256": "74078d9304cbc9b1d62a92c0c9637b384a748afca581f49b236f8867c5bd4f80"
+      "sha256": "c63a4c40d3e2dc50593932fc4d38032894234b33e1e6747be57fa05686961b15"
     },
     {
       "path": "extractor/rlrr_parse.py",
-      "sha256": "677121f22147806c5215486f00acea9326aefe0be7a5e017ccd6c99bd2c29ad6"
+      "sha256": "070a1910c446f630c3269d812acd1145db739716b80f021111349074a128bba7"
     },
     {
       "path": "parakit.ico",
@@ -164,11 +164,11 @@
     },
     {
       "path": "parakit_separators/composite.py",
-      "sha256": "947380db7f96e21f867029cc8ae7d15fff963aada8e85bf79a3f7590e65528ce"
+      "sha256": "8facec91cb0d86ff218a27393f220deadb0c0316adb8fa52a68db92941c5c35b"
     },
     {
       "path": "parakit_separators/jarredou_mdx23c.py",
-      "sha256": "9d02c2375c30de24e8d0f765f57d889878624e5a864199439f5f7eeb78a58804"
+      "sha256": "16b7a54d9d80d0accfb4f7193f9e89e19d3b37132c893bd1b47fde8c373e6307"
     },
     {
       "path": "parakit_separators/model_resolver.py",
@@ -180,7 +180,7 @@
     },
     {
       "path": "practice_minigame/main.py",
-      "sha256": "7e46bff0a2664430d2129f0033ea9199907223866959e5b26b93479245657ad4"
+      "sha256": "84da9fafab056d0cbea44e48e7d3308ecabeb0c6ef5f1b3c4fd29288e02e2745"
     },
     {
       "path": "practice_v2/README.md",
@@ -420,7 +420,7 @@
     },
     {
       "path": "rlrr_parse.py",
-      "sha256": "677121f22147806c5215486f00acea9326aefe0be7a5e017ccd6c99bd2c29ad6"
+      "sha256": "070a1910c446f630c3269d812acd1145db739716b80f021111349074a128bba7"
     }
   ]
 }

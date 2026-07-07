@@ -841,7 +841,12 @@ def detect_bpm_and_offset(audio_path, midi_notes, ticks_per_beat, log_fn=print):
     for bpm_10x in range(800, 2000, 5):
         test_bpm = bpm_10x / 10.0
         test_tempo = int(60_000_000 / test_bpm)
-        test_times = [(n[3] if len(n)==4 else mido.tick2second(n[0], ticks_per_beat, test_tempo)) for n in midi_notes[:num_check]]
+        # F6 Option A (owner-approved 2026-07-07): times must DEPEND on the
+        # tested BPM or the search is a no-op. parse_midi always emits 4-tuples,
+        # so the old `n[3] if len(n)==4` shortcut made every BPM score identical
+        # and the first candidate (~79.5) always won. Tick-based times restore
+        # the fit (validated: tools/bpm_fix_validation.py).
+        test_times = [mido.tick2second(n[0], ticks_per_beat, test_tempo) for n in midi_notes[:num_check]]
 
         for offset_ms in range(-3000, 3000, 25):
             offset = offset_ms / 1000.0
@@ -857,7 +862,8 @@ def detect_bpm_and_offset(audio_path, midi_notes, ticks_per_beat, log_fn=print):
     for bpm_100x in range(int(best_bpm * 100) - 50, int(best_bpm * 100) + 51, 1):
         test_bpm = bpm_100x / 100.0
         test_tempo = int(60_000_000 / test_bpm)
-        test_times = [(n[3] if len(n)==4 else mido.tick2second(n[0], ticks_per_beat, test_tempo)) for n in midi_notes[:num_check]]
+        # F6 Option A: tick-based times (see the coarse loop's note above).
+        test_times = [mido.tick2second(n[0], ticks_per_beat, test_tempo) for n in midi_notes[:num_check]]
         for offset_ms in range(int(best_offset * 1000) - 100, int(best_offset * 1000) + 101, 5):
             offset = offset_ms / 1000.0
             shifted = [t + offset for t in test_times]
@@ -1646,6 +1652,22 @@ def batch_format_folder_name(pattern, ctx):
     return cleaned or "Untitled"
 
 
+def sanitize_fs_component(name, fallback="Untitled"):
+    """Make a single path component safe on Windows. Filesystem names ONLY —
+    never applied to metadata (titles inside .rlrr / notes.chart / song.ini
+    stay verbatim; Paradiddle and ParaDB read display names from inside the
+    files, not from the filename). Same char set as batch_format_folder_name."""
+    bad = '<>:"/\\|?*\x00\r\n\t'
+    cleaned = "".join("_" if c in bad else c for c in str(name))
+    cleaned = cleaned.strip().rstrip(". ")           # Win32 strips trailing dots/spaces
+    root = cleaned.split(".")[0].upper()
+    if root in {"CON", "PRN", "AUX", "NUL",
+                *(f"COM{i}" for i in range(1, 10)),
+                *(f"LPT{i}" for i in range(1, 10))}:
+        cleaned = "_" + cleaned                       # reserved device names
+    return cleaned or fallback
+
+
 def build_rlrr(midi_notes, ticks_per_beat, bpm, offset, title, artist, creator,
                song_tracks, drum_tracks, cover_image, complexity, difficulty,
                description=""):
@@ -1657,9 +1679,10 @@ def build_rlrr(midi_notes, ticks_per_beat, bpm, offset, title, artist, creator,
         # Support both old 3-tuple (tick, note, vel) and new 4-tuple with pre-computed seconds
         if len(note_data) == 4:
             tick, note, velocity, precomputed_sec = note_data
-            # Use pre-computed time (handles tempo maps) but apply BPM scaling + offset
-            # If MIDI has a single static tempo, scale the precomputed time to the
-            # detected BPM and apply offset. For multi-tempo MIDIs, use as-is + offset.
+            # Pre-computed tempo-map seconds + offset. NO BPM scaling happens
+            # here (an older comment claimed it did — it never existed): bpm
+            # only feeds tempo_us (3-tuple fallback) and the bpmEvents metadata.
+            # "BPM doesn't move notes — offset does."
             time_sec = precomputed_sec + offset
         else:
             tick, note, velocity = note_data
@@ -3603,91 +3626,98 @@ def _a2m_invoke_alt_detector(detector_script_path, audio_path, detector_config):
     request_path = tmp_base / "request.json"
     response_path = tmp_base / "response.json"
 
-    # Build request per F-DET-005 §1
-    request = {
-        "schema_version": A2M_ALT_DETECTOR_SCHEMA_VERSION,
-        "request_id": request_id,
-        "audio": {
-            "path": str(audio_path),
-            "format_hint": "auto",
-            "sample_rate": None,
-            "is_drum_stem": True,
-        },
-        "detector": {
-            "name": detector_name,
-            "config_overrides": config_overrides,
-        },
-        "taxonomy": {
-            "target_classes": A2M_ALT_DETECTOR_TAXONOMY,
-            "class_aliases": {
-                "open_hihat": "hihat",
-                "pedal_hihat": "hihat",
-                "splash": "crash",
-                "china": "crash",
-                "cowbell": "unknown",
+    # The response is fully parsed into `parsed` before return — no path under
+    # tmp_base escapes this function, so the per-run dir can be removed in the
+    # finally on every exit (success, error, or raise). Without it, one
+    # request/response dir leaked into %TEMP% per enhanced-detection run.
+    try:
+        # Build request per F-DET-005 §1
+        request = {
+            "schema_version": A2M_ALT_DETECTOR_SCHEMA_VERSION,
+            "request_id": request_id,
+            "audio": {
+                "path": str(audio_path),
+                "format_hint": "auto",
+                "sample_rate": None,
+                "is_drum_stem": True,
             },
-            "unknown_class_policy": "drop",
-        },
-        "output": {
-            "path": str(response_path),
-            "include_per_class_calibration": False,
-        },
-        "limits": {
-            "max_runtime_seconds": max_runtime,
-            "max_output_size_mb": max_output_mb,
-        },
-    }
+            "detector": {
+                "name": detector_name,
+                "config_overrides": config_overrides,
+            },
+            "taxonomy": {
+                "target_classes": A2M_ALT_DETECTOR_TAXONOMY,
+                "class_aliases": {
+                    "open_hihat": "hihat",
+                    "pedal_hihat": "hihat",
+                    "splash": "crash",
+                    "china": "crash",
+                    "cowbell": "unknown",
+                },
+                "unknown_class_policy": "drop",
+            },
+            "output": {
+                "path": str(response_path),
+                "include_per_class_calibration": False,
+            },
+            "limits": {
+                "max_runtime_seconds": max_runtime,
+                "max_output_size_mb": max_output_mb,
+            },
+        }
 
-    request_path.write_text(_json.dumps(request), encoding="utf-8")
+        request_path.write_text(_json.dumps(request), encoding="utf-8")
 
-    try:
-        proc = subprocess.run(
-            [python_interpreter, str(detector_script_path), str(request_path)],
-            cwd=str(tmp_base),
-            capture_output=True,
-            text=True,
-            timeout=max_runtime,
-        )
-    except FileNotFoundError as exc:
-        raise AltDetectorError(
-            f"Alt-detector interpreter not found: {python_interpreter}"
-        ) from exc
-    except OSError as exc:
-        raise AltDetectorError(
-            f"Alt-detector spawn failed: {exc}"
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise AltDetectorError(
-            f"Alt-detector timed out after {max_runtime}s"
-        ) from exc
+        try:
+            proc = subprocess.run(
+                [python_interpreter, str(detector_script_path), str(request_path)],
+                cwd=str(tmp_base),
+                capture_output=True,
+                text=True,
+                timeout=max_runtime,
+            )
+        except FileNotFoundError as exc:
+            raise AltDetectorError(
+                f"Alt-detector interpreter not found: {python_interpreter}"
+            ) from exc
+        except OSError as exc:
+            raise AltDetectorError(
+                f"Alt-detector spawn failed: {exc}"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise AltDetectorError(
+                f"Alt-detector timed out after {max_runtime}s"
+            ) from exc
 
-    if proc.returncode != 0:
-        stderr_tail = proc.stderr.strip().splitlines()[-10:]
-        stderr_text = "\n".join(stderr_tail)
-        raise AltDetectorError(
-            f"Alt-detector exited with code {proc.returncode}. Stderr tail:\n{stderr_text}"
-        )
+        if proc.returncode != 0:
+            stderr_tail = proc.stderr.strip().splitlines()[-10:]
+            stderr_text = "\n".join(stderr_tail)
+            raise AltDetectorError(
+                f"Alt-detector exited with code {proc.returncode}. Stderr tail:\n{stderr_text}"
+            )
 
-    if not response_path.exists():
-        raise AltDetectorError("Alt-detector produced no output file")
+        if not response_path.exists():
+            raise AltDetectorError("Alt-detector produced no output file")
 
-    output_size_mb = response_path.stat().st_size / (1024 * 1024)
-    if output_size_mb > max_output_mb:
-        raise AltDetectorError(
-            f"Alt-detector output {output_size_mb:.1f} MB exceeds limit {max_output_mb} MB"
-        )
+        output_size_mb = response_path.stat().st_size / (1024 * 1024)
+        if output_size_mb > max_output_mb:
+            raise AltDetectorError(
+                f"Alt-detector output {output_size_mb:.1f} MB exceeds limit {max_output_mb} MB"
+            )
 
-    try:
-        raw_text = response_path.read_text(encoding="utf-8")
-        parsed = _json.loads(raw_text)
-    except _json.JSONDecodeError as exc:
-        preview = raw_text[:200].replace("\n", " ")
-        raise AltDetectorError(
-            f"Alt-detector returned invalid JSON. Preview: {preview}"
-        ) from exc
+        try:
+            raw_text = response_path.read_text(encoding="utf-8")
+            parsed = _json.loads(raw_text)
+        except _json.JSONDecodeError as exc:
+            preview = raw_text[:200].replace("\n", " ")
+            raise AltDetectorError(
+                f"Alt-detector returned invalid JSON. Preview: {preview}"
+            ) from exc
 
-    _a2m_validate_alt_detector_output(parsed)
-    return parsed
+        _a2m_validate_alt_detector_output(parsed)
+        return parsed
+    finally:
+        shutil.rmtree(tmp_base, ignore_errors=True)
 
 
 def _a2m_hybrid_merge(adtof_onsets, alt_onsets, merge_mode="hybrid"):
@@ -5416,7 +5446,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.7.1"
+    VERSION = "4.5.8.3"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -5770,6 +5800,12 @@ class MidiToRlrrApp:
         # files. Explain it once + offer a one-click in-place resync. Shown once
         # (config-flagged); source installs only.
         self.root.after(1500, self._maybe_show_dep_sync_notice)
+        # v4.5.7.x audit fix — sweep stale A2M temp artifacts from PREVIOUS
+        # sessions (alt-detector request dirs, Neural-Isolation stem WAV dirs,
+        # orphaned larsnet runtime YAMLs). Age-guarded 24h so a concurrently
+        # running instance (or this session's own separator workdir, which the
+        # MIDI-Editor source-audio hand-off still references) is never touched.
+        threading.Thread(target=self._sweep_stale_a2m_temp, daemon=True).start()
 
         # Force header label colors after ttkbootstrap finishes touching them
         def _fix_header_labels():
@@ -6662,6 +6698,37 @@ class MidiToRlrrApp:
                     foreground="#00884a")
             except Exception:
                 pass
+
+    def _sweep_stale_a2m_temp(self, max_age_h=24):
+        """Delete leftover A2M temp artifacts from PREVIOUS sessions:
+        %TEMP%/parakit_alt_detector/<uuid>/ (request/response dirs — normally
+        removed per-run, this is the crash/kill safety net),
+        %TEMP%/parakit_sep_v4_4_*/ (Neural Stem Isolation mkdtemp dirs — 100+ MB
+        of stem WAVs per run, never cleaned in-run), and
+        %TEMP%/larsnet_runtime_*.yaml (orphaned when the alt-detector child is
+        timeout-killed before its own finally runs).
+
+        Age-guarded: only items older than max_age_h are removed, so a second
+        running instance — or THIS session's separator workdir, which
+        _a2m_source_file may still reference for the MIDI-Editor hand-off — is
+        never raced. Runs on a daemon thread; touches no Tk objects."""
+        import glob, time, tempfile
+        cutoff = time.time() - max_age_h * 3600
+        tmp = tempfile.gettempdir()
+        pats = [os.path.join(tmp, "parakit_alt_detector", "*"),
+                os.path.join(tmp, "parakit_sep_v4_4_*"),
+                os.path.join(tmp, "larsnet_runtime_*.yaml")]
+        for pat in pats:
+            for p in glob.glob(pat):
+                try:
+                    if os.path.getmtime(p) >= cutoff:
+                        continue
+                    if os.path.isdir(p):
+                        shutil.rmtree(p, ignore_errors=True)
+                    else:
+                        os.remove(p)
+                except Exception:
+                    pass
 
     def _check_for_update(self):
         """Check GitHub for a newer version and prompt user if available (silent on fail)."""
@@ -11086,7 +11153,14 @@ demucs.separate.main()
             saved = cfg.get("a2m_genre_settings", {})
             if genre in saved:
                 s = saved[genre]
-                self.a2m_onset_var.set(s.get("onset", 0.5))
+                # F10: clamp to the slider's 0.1-0.9 range — an out-of-range
+                # persisted value made delta = 1.0 - onset negative, which
+                # crashes librosa's peak_pick inside detect_onsets.
+                try:
+                    _onset_r = float(s.get("onset", 0.5))
+                except (TypeError, ValueError):
+                    _onset_r = 0.5
+                self.a2m_onset_var.set(min(0.9, max(0.1, _onset_r)))
                 self.a2m_frame_var.set(s.get("frame", 0.3))
                 self.a2m_mode_var.set(s.get("mode", "auto"))
                 # Restore engine if saved — triggers dedup auto-sync via _a2m_update_engine_ui
@@ -12873,6 +12947,22 @@ demucs.separate.main()
         if hasattr(self, "a2m_tom_sensitivity_var"):
             _apply_tom_sensitivity_preset(self.a2m_tom_sensitivity_var.get())
 
+        # F2 (owner-approved 2026-07-07): snapshot the remaining run toggles on
+        # the MAIN thread before the worker spawns. _a2m_do_convert previously
+        # read these Tk vars mid-run from the worker (a thread-affinity
+        # violation — one site even constructed a tk.BooleanVar off-thread),
+        # which also meant flipping a checkbox mid-conversion changed the run
+        # already in progress. Capture-at-start matches every other setting.
+        self._a2m_run_flags = {
+            "post_classify": bool(self.a2m_post_classify_cymbals_var.get()),
+            "cymbal_resolver": bool(
+                getattr(self, "a2m_cymbal_resolver_var", None) is not None
+                and self.a2m_cymbal_resolver_var.get()),
+            "enhanced_mode": (self.a2m_enhanced_detection_mode_var.get()
+                              if getattr(self, "a2m_enhanced_detection_mode_var", None)
+                              else "off"),
+        }
+
         thread = threading.Thread(
             target=self._a2m_do_convert,
             args=(input_path, output_dir, onset, frame, ride_detect, mode,
@@ -13244,6 +13334,11 @@ demucs.separate.main()
                           ["kick","snare","hihat","crash","ride","floor_tom","tom"]}
             dedup_gaps["hihat"] = 0.020
             dedup_gaps["kick"] = 0.040
+        # F1 (owner-approved 2026-07-07): the separator wrap below rebinds
+        # input_path to the temp drums_composite.wav, so per-file settings and
+        # _a2m_source_file must key off the USER's file, captured here —
+        # otherwise every separator run saves under md5("drums_composite").
+        _orig_input_path = input_path
         try:
             import librosa
             import numpy as np
@@ -13255,6 +13350,12 @@ demucs.separate.main()
             self.root.after(0, lambda: self.a2m_btn.configure(
                 state="normal", text="🎹  Convert Audio to MIDI"))
             self.root.after(0, lambda: self._a2m_set_controls_locked(False))
+            # F4 (owner-approved 2026-07-07): this early return bypasses the
+            # main try's finally — mirror its progress/timer cleanup here so a
+            # broken install doesn't leave the bar spinning + timer counting.
+            self.root.after(0, self.a2m_progress.stop)
+            self.root.after(0, lambda: self._timer_stop(self.a2m_timer_lbl))
+            self._a2m_start_time = None
             return
 
         try:
@@ -13271,9 +13372,9 @@ demucs.separate.main()
             self._a2m_log(f"Detection engine:  {detection_engine.upper()}"
                           + (f"  (model: {os.path.basename(onnx_model_path)})"
                              if detection_engine in ("ml","hybrid") and onnx_model_path else ""))
-            self._a2m_log(f"Post-classify:     {'ON' if self.a2m_post_classify_cymbals_var.get() else 'OFF'}")
+            self._a2m_log(f"Post-classify:     {'ON' if self._a2m_run_flags['post_classify'] else 'OFF'}")
             self._a2m_log(f"Flam removal:      {'ON' if remove_flams else 'OFF'}")
-            self._a2m_log(f"Cymbal resolver:   {'ON' if self.a2m_cymbal_resolver_var.get() else 'OFF'}")
+            self._a2m_log(f"Cymbal resolver:   {'ON' if self._a2m_run_flags['cymbal_resolver'] else 'OFF'}")
 
             # ── F-INT-001 v4.4.4: separator-slot pre-detection wrap ───────────
             # Default OFF. When the user opts in via the "Neural Stem Isolation"
@@ -13952,9 +14053,8 @@ demucs.separate.main()
                 self._a2m_log(f"  Trigger align applied: {trigger_align_ms:+.0f}ms")
 
             # ── Alt-detector merge (F-DET-005 Phase 1B) ────────────────────────
-            _enhanced_mode = "off"
-            if getattr(self, 'a2m_enhanced_detection_mode_var', None):
-                _enhanced_mode = self.a2m_enhanced_detection_mode_var.get()
+            # F2: snapshotted at _a2m_start (main thread) — no Tk reads on the worker.
+            _enhanced_mode = self._a2m_run_flags["enhanced_mode"]
             _enhanced_crash_enabled = _enhanced_mode in ("crash", "both")
             _enhanced_tom_enabled = _enhanced_mode in ("toms", "both")
             if _enhanced_crash_enabled or _enhanced_tom_enabled:
@@ -14157,7 +14257,7 @@ demucs.separate.main()
             # 36 = Kick, 38 = Snare, 41 = Floor Tom,
             # 42 = Closed Hi-Hat, 45 = Low Tom, 48 = Mid Tom,
             # 49 = Crash, 51 = Ride
-            if self.a2m_post_classify_cymbals_var.get():
+            if self._a2m_run_flags["post_classify"]:
                 _post_h0, _post_c0 = hihat_times.copy(), crash_times.copy()
                 hihat_times, crash_times, ride_times = _a2m_post_classify_cymbals(hihat_times, crash_times, ride_times, bpm)
                 _, _, _post_hdrop = _a2m_count_cymbal_post_moves(_post_h0, _post_c0, hihat_times, crash_times)
@@ -14174,7 +14274,7 @@ demucs.separate.main()
                     f"crash {_stack_stats['crash']})")
 
             # Event Cleanup Resolver (Phase 1.7) — spectral-only, stem tiebreaker reserved
-            if getattr(self, "a2m_cymbal_resolver_var", tk.BooleanVar(value=False)).get():
+            if self._a2m_run_flags["cymbal_resolver"]:
                 _res_h0, _res_c0, _res_r0 = hihat_times.copy(), crash_times.copy(), ride_times.copy()
                 hihat_times, crash_times, ride_times, _res_stats = _a2m_cymbal_resolver(
                     hihat_times, crash_times, ride_times, D_full, freqs, sr, bpm=bpm,
@@ -14276,9 +14376,10 @@ demucs.separate.main()
             self._last_midi_path     = midi_path
             self._a2m_last_midi      = midi_path
             self._a2m_conf_lookup    = conf_lookup
-            self._a2m_source_file    = input_path
-            # Save settings for this specific file
-            self.root.after(0, lambda: self._a2m_save_file_settings(input_path))
+            self._a2m_source_file    = _orig_input_path
+            # Save settings for this specific file (the USER's file — input_path
+            # may point at the separator's temp composite; see F1 note above)
+            self.root.after(0, lambda p=_orig_input_path: self._a2m_save_file_settings(p))
             # Enable preview button
             self.root.after(0, lambda: self.a2m_preview_btn.configure(state="normal"))
             # Auto-load into MIDI Editor
@@ -14545,7 +14646,9 @@ demucs.separate.main()
         title    = self.title_var.get().strip() or "Untitled"
         diff     = self.difficulty_var.get()
         out_base = self.output_var.get() or os.getcwd()
-        rlrr_candidate = os.path.join(out_base, title, f"{title}_{diff}.rlrr")
+        # Match _convert's writer: filesystem names go through sanitize_fs_component.
+        fs_title = sanitize_fs_component(title)
+        rlrr_candidate = os.path.join(out_base, fs_title, f"{fs_title}_{diff}.rlrr")
         if os.path.exists(rlrr_candidate):
             self.tester_rlrr_var.set(rlrr_candidate)
 
@@ -16356,7 +16459,9 @@ demucs.separate.main()
                 "lane_idx": lane_idx,
                 "vel":      100,
             })
+            _sel = self._me_capture_selection()
             self.me_notes.sort(key=lambda n: n["time"])
+            self._me_restore_selection(_sel)
             if t > self.me_duration:
                 self.me_duration = t + 1.0
             self._me_redraw()
@@ -18442,7 +18547,9 @@ demucs.separate.main()
 
         # Release marker drag
         if getattr(self, '_me_drag_marker', None) is not None:
+            _sel = self._me_capture_selection()
             self.me_markers.sort(key=lambda m: m["time"])
+            self._me_restore_selection(_sel)
             self._me_drag_marker = None
             self.me_drag_start   = None
             self._me_redraw()
@@ -18493,7 +18600,9 @@ demucs.separate.main()
                             "vel": 100, "lane_idx": lane_idx}
                 self._me_push_undo()
                 self.me_notes.append(new_note)
+                _sel = self._me_capture_selection()
                 self.me_notes.sort(key=lambda n: n["time"])
+                self._me_restore_selection(_sel)
                 self.me_duration = max(self.me_duration, t + 0.5)
                 self.me_note_info_var.set(
                     f"📍  {lane['name']}  @  {self._me_fmt_time(t)}  (added)")
@@ -18526,6 +18635,10 @@ demucs.separate.main()
                         if len(self.me_undo_stack) > 50:
                             self.me_undo_stack.pop(0)
                         self.me_redo_stack.clear()
+                    # Lanes were mutated live during the drag — mark the session
+                    # dirty even though this path bypasses _me_push_undo, so the
+                    # quit guard and Send-to-Creator see the reclassify edit.
+                    self._me_mark_edit_started()
                     note = self.me_notes[ni]
                     lane = self.MIDI_EDITOR_LANES[note["lane_idx"]]
                     n_changed = (len(self._me_selected_notes)
@@ -18540,7 +18653,9 @@ demucs.separate.main()
             lane = self.MIDI_EDITOR_LANES[note["lane_idx"]]
             self.me_note_info_var.set(
                 f"📍  {lane['name']}  @  {self._me_fmt_time(note['time'])}")
+            _sel = self._me_capture_selection()
             self.me_notes.sort(key=lambda n: n["time"])
+            self._me_restore_selection(_sel)
             self.me_drag_note  = None
             self.me_drag_start = None
             self._me_redraw()
@@ -18747,6 +18862,47 @@ demucs.separate.main()
         else:
             self.me_notes = state
         self._me_last_clicked_note = -1
+
+    def _me_capture_selection(self):
+        """Snapshot selected note/marker OBJECTS (not indices) before a list
+        mutation + sort. Pair with _me_restore_selection after the sort —
+        positional indices go stale the moment me_notes/me_markers reorder,
+        and Delete/bulk ops would then hit the wrong notes."""
+        notes = getattr(self, "me_notes", None) or []
+        marks = getattr(self, "me_markers", None) or []
+        sel_n = [notes[i] for i in getattr(self, "_me_selected_notes", set())
+                 if 0 <= i < len(notes)]
+        sel_m = [marks[i] for i in getattr(self, "_me_selected_markers", set())
+                 if 0 <= i < len(marks)]
+        lci = getattr(self, "_me_last_clicked_note", -1)
+        last = notes[lci] if 0 <= lci < len(notes) else None
+        return (sel_n, sel_m, last)
+
+    def _me_restore_selection(self, snap):
+        """Rebuild positional selection indices from the objects captured by
+        _me_capture_selection. Identity-based (id()) on purpose: note dicts can
+        be exact value-duplicates, and sort() reorders the SAME objects — the
+        captured refs keep them alive, so id reuse cannot occur."""
+        sel_n, sel_m, last = snap
+        note_pos = {id(n): i for i, n in enumerate(self.me_notes)}
+        mark_pos = {id(m): i for i, m in enumerate(self.me_markers)}
+        self._me_selected_notes   = {note_pos[id(n)] for n in sel_n if id(n) in note_pos}
+        self._me_selected_markers = {mark_pos[id(m)] for m in sel_m if id(m) in mark_pos}
+        self._me_last_clicked_note = note_pos.get(id(last), -1)
+
+    def _me_mark_edit_started(self):
+        """Set the dirty flag + lock the in-place/copy mode radios on first edit.
+
+        Mirrors _me_push_undo's first-call side effect for mutation paths that
+        manage their own undo snapshot (reclassify-by-drag appends its pre-drag
+        snapshot directly and never calls _me_push_undo, so the unsaved-changes
+        quit guard and Send-to-Creator never saw those edits). Idempotent with
+        _me_push_undo in either order via the me_edit_started guard."""
+        if not self.me_edit_started:
+            self.me_edit_started = True
+            self.me_mode_inplace_rb.configure(state="disabled")
+            self.me_mode_copy_rb.configure(state="disabled")
+            self.me_mode_lock_lbl.pack(side=tk.LEFT)
 
     def _me_push_undo(self):
         """Save current state to undo stack and lock edit mode on first edit."""
@@ -19518,7 +19674,9 @@ demucs.separate.main()
         # a no-op rollback would silently wipe the redo stack.
         self._me_push_undo()
         self.me_notes.extend(new_notes)
+        _sel = self._me_capture_selection()
         self.me_notes.sort(key=lambda n: n["time"])
+        self._me_restore_selection(_sel)
         self._me_redraw()
         self._me_update_info()
         self.me_status_var.set(
@@ -19538,7 +19696,9 @@ demucs.separate.main()
         for i in targets:
             t = self.me_notes[i]["time"]
             self.me_notes[i]["time"] = round(t / sub) * sub
+        _sel = self._me_capture_selection()
         self.me_notes.sort(key=lambda n: n["time"])
+        self._me_restore_selection(_sel)
         self._me_redraw()
         self._me_update_info()
         count = len(targets)
@@ -20014,7 +20174,9 @@ demucs.separate.main()
                 if abs(t - near) <= window_sec:
                     self.me_notes[i]["time"] = near
                     moved += 1
+            _sel = self._me_capture_selection()
             self.me_notes.sort(key=lambda n: n["time"])
+            self._me_restore_selection(_sel)
             self._me_redraw()
             self._me_update_info()
             self.me_status_var.set(
@@ -20547,7 +20709,12 @@ demucs.separate.main()
         s   = load_config().get(key)
         if not s:
             return False
-        self.a2m_onset_var.set(s.get("onset", 0.5))
+        # F10: clamp to the slider's 0.1-0.9 range (see the genre-restore note).
+        try:
+            _onset_r = float(s.get("onset", 0.5))
+        except (TypeError, ValueError):
+            _onset_r = 0.5
+        self.a2m_onset_var.set(min(0.9, max(0.1, _onset_r)))
         self.a2m_frame_var.set(s.get("frame", 0.3))
         self.a2m_mode_var.set(s.get("mode", "auto"))
         if "genre" in s:
@@ -22972,7 +23139,12 @@ demucs.separate.main()
                     # Note off 1 tick later
                     data += encode_varlen(1)
                     data += bytes([0x89, note, 0])
-                    prev_tick = scaled_tick + 1
+                    # prev_tick = the ACTUAL track position (tick of the note_off
+                    # just written). When delta clamped to 0 (same-tick chord
+                    # note), the off lands at prev_tick+1, not scaled_tick+1 —
+                    # tracking scaled_tick+1 here understated the position by 1
+                    # per clamped note and drifted every later event.
+                    prev_tick = max(scaled_tick, prev_tick) + 1
                 # End of track
                 data += encode_varlen(0)
                 data += b'\xFF\x2F\x00'
@@ -36335,10 +36507,12 @@ demucs.separate.main()
                 return
             if not slot["auto_bpm_var"].get():
                 try:
-                    float(slot["bpm_var"].get())
+                    # F5: reject 0/negative too (build_rlrr divides by bpm).
+                    if float(slot["bpm_var"].get()) <= 0:
+                        raise ValueError
                 except ValueError:
                     messagebox.showerror("Invalid BPM",
-                        f"Song {i} has an invalid manual BPM value.")
+                        f"Song {i} has an invalid manual BPM value (must be greater than 0).")
                     return
             # v4.5.6.2 — capture the per-slot description on the MAIN thread (Text
             # widgets must not be read from the conversion worker) for the .rlrr embed.
@@ -36444,8 +36618,12 @@ demucs.separate.main()
         title  = slot["title_var"].get().strip()  or "Untitled"
         artist = slot["artist_var"].get().strip() or "Unknown"
         diff   = slot["diff_var"].get()
+        # Filesystem names only — metadata keeps the raw title. When the folder
+        # path passes an explicit folder_title it already came through
+        # batch_format_folder_name; don't re-derive it from the title here.
+        fs_title = sanitize_fs_component(title)
         if folder_title is None:
-            folder_title = f"{title}{slot_num}"
+            folder_title = f"{fs_title}{slot_num}"
 
         self._batch_log(f"[Song {slot_num}] {title} - {artist} [{diff}]")
         self._batch_log(f"  Output folder: {folder_title}")
@@ -36482,11 +36660,12 @@ demucs.separate.main()
                         drum_tracks.append(os.path.basename(_p))
             out_dir = os.path.join(output_base, folder_title)
 
-            # Phase 2 — overwrite policy. Only honored for the folder/template
-            # path; the slot path passes overwrite_policy=None and falls
-            # through to legacy behavior (overwrite). Stored on slot under
-            # the optional `_overwrite_policy` key.
-            policy = slot.get("_overwrite_policy") if isinstance(slot, dict) else None
+            # Phase 2 — overwrite policy. Honored when the slot carries
+            # `_overwrite_policy` (the folder/template path's shim); slot-UI
+            # dict slots carry no such key and keep legacy behavior (overwrite).
+            # Both slot shapes support .get() — dict AND _BatchFolderSlotShim,
+            # which is NOT a dict subclass, so don't gate this on isinstance.
+            policy = slot.get("_overwrite_policy") if hasattr(slot, "get") else None
             if policy and os.path.isdir(out_dir):
                 if policy == "skip":
                     self._batch_log(f"  ? Output exists — skipping per template overwrite_policy='skip'.\n")
@@ -36519,7 +36698,7 @@ demucs.separate.main()
                     rlrr["events"] = reduce_notes_for_difficulty(rlrr["events"], bpm, diff)
 
                 os.makedirs(out_dir, exist_ok=True)
-                rlrr_path = os.path.join(out_dir, f"{title}_{diff}.rlrr")
+                rlrr_path = os.path.join(out_dir, f"{fs_title}_{diff}.rlrr")
                 with open(rlrr_path, "w", newline="\r\n") as f:
                     json.dump(rlrr, f, indent=4)
 
@@ -36538,7 +36717,7 @@ demucs.separate.main()
 
             if fmt in ("clonehero", "both"):
                 ch_base = ch_base_cfg or os.path.join(output_base, "Clone Hero Songs")
-                ch_dir = os.path.join(ch_base, title)
+                ch_dir = os.path.join(ch_base, fs_title)
                 os.makedirs(ch_dir, exist_ok=True)
 
                 ch_events = midi_notes_to_ch(drum_notes, tpb, bpm, offset)
@@ -37505,9 +37684,12 @@ demucs.separate.main()
 
         if not self.auto_bpm_var.get() and not self.use_midi_bpm_var.get():
             try:
-                float(self.bpm_var.get())
+                # F5: reject 0/negative too — build_rlrr divides by bpm, so a
+                # "0" typo previously crashed the worker with a raw traceback.
+                if float(self.bpm_var.get()) <= 0:
+                    raise ValueError
             except ValueError:
-                messagebox.showerror("Invalid BPM", "Please enter a valid BPM number.")
+                messagebox.showerror("Invalid BPM", "Please enter a valid BPM number (greater than 0).")
                 return
 
         # ── Pre-flight validator (Phase 1) ────────────────────────────
@@ -37674,6 +37856,8 @@ demucs.separate.main()
         ch_events = []
         ch_dir = None
         alignment_ok = True
+        # Filesystem names only — metadata (.rlrr/.chart/song.ini) keeps the raw title.
+        fs_title = sanitize_fs_component(title)
 
         # Paradiddle export
         if fmt in ("paradiddle", "both"):
@@ -37693,9 +37877,10 @@ demucs.separate.main()
                 reduced_count = len(rlrr["events"])
                 self.log(f"  Notes before reduction: {original_count}")
                 self.log(f"  Notes after reduction:  {reduced_count}")
-                self.log(
-                    f"  Notes removed: {original_count - reduced_count} "
-                    f"({(original_count - reduced_count) / original_count * 100:.1f}%)")
+                if original_count > 0:   # F5: zero events crashed here before
+                    self.log(            # the friendly "No events" check below
+                        f"  Notes removed: {original_count - reduced_count} "
+                        f"({(original_count - reduced_count) / original_count * 100:.1f}%)")
 
             total_events = len(rlrr["events"])
             if total_events == 0:
@@ -37719,9 +37904,9 @@ demucs.separate.main()
                 event_times = [float(e["time"]) for e in rlrr["events"]]
                 alignment_ok = validate_alignment(event_times, audio_onsets, audio_duration, self.log)
 
-            output_dir = os.path.join(output_base, title)
+            output_dir = os.path.join(output_base, fs_title)
             os.makedirs(output_dir, exist_ok=True)
-            rlrr_filename = f"{title}_{difficulty}.rlrr"
+            rlrr_filename = f"{fs_title}_{difficulty}.rlrr"
             rlrr_path = os.path.join(output_dir, rlrr_filename)
             with open(rlrr_path, 'w', newline='\r\n') as f:
                 json.dump(rlrr, f, indent=4)
@@ -37748,7 +37933,7 @@ demucs.separate.main()
             ch_base = (self.sc_ch_out_var.get().strip()
                        or os.path.join(output_base, "Clone Hero Songs"))
             save_config({"ch_output_folder": self.sc_ch_out_var.get().strip()})
-            ch_dir = os.path.join(ch_base, title)
+            ch_dir = os.path.join(ch_base, fs_title)
             os.makedirs(ch_dir, exist_ok=True)
 
             ch_events = midi_notes_to_ch(drum_notes, ticks_per_beat, bpm, offset)

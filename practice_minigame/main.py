@@ -228,21 +228,30 @@ def _write_results(config: dict[str, Any], results: dict[str, Any]) -> None:
 # ── Keybind parsing ─────────────────────────────────────────────────────
 def _keysym_to_pygame(keysym: str) -> int:
     keysym = keysym.lower().strip()
-    if len(keysym) == 1 and keysym.isalpha():
+    if len(keysym) == 1 and (keysym.isalpha() or keysym.isdigit()):
         return getattr(pygame, f"K_{keysym}", pygame.K_UNKNOWN)
+    # f1..f15 function keys
+    if len(keysym) in (2, 3) and keysym[0] == "f" and keysym[1:].isdigit():
+        return getattr(pygame, f"K_F{int(keysym[1:])}", pygame.K_UNKNOWN)
     mapping = {
-        "space": pygame.K_SPACE,
-        "return": pygame.K_RETURN,
-        "enter": pygame.K_RETURN,
-        "tab": pygame.K_TAB,
-        "escape": pygame.K_ESCAPE,
-        "up": pygame.K_UP,
-        "down": pygame.K_DOWN,
-        "left": pygame.K_LEFT,
-        "right": pygame.K_RIGHT,
-        "shift": pygame.K_LSHIFT,
-        "ctrl": pygame.K_LCTRL,
-        "alt": pygame.K_LALT,
+        "space": pygame.K_SPACE, "return": pygame.K_RETURN, "enter": pygame.K_RETURN,
+        "tab": pygame.K_TAB, "escape": pygame.K_ESCAPE,
+        "up": pygame.K_UP, "down": pygame.K_DOWN, "left": pygame.K_LEFT, "right": pygame.K_RIGHT,
+        "shift": pygame.K_LSHIFT, "ctrl": pygame.K_LCTRL, "alt": pygame.K_LALT,
+        # Tk keysym names for punctuation (what the remap dialog stores):
+        "comma": pygame.K_COMMA, "period": pygame.K_PERIOD,
+        "semicolon": pygame.K_SEMICOLON, "apostrophe": pygame.K_QUOTE,
+        "slash": pygame.K_SLASH, "backslash": pygame.K_BACKSLASH,
+        "minus": pygame.K_MINUS, "equal": pygame.K_EQUALS,
+        "bracketleft": pygame.K_LEFTBRACKET, "bracketright": pygame.K_RIGHTBRACKET,
+        "grave": pygame.K_BACKQUOTE, "backspace": pygame.K_BACKSPACE,
+        "capslock": pygame.K_CAPSLOCK,
+        "shift_l": pygame.K_LSHIFT, "shift_r": pygame.K_RSHIFT,
+        "control_l": pygame.K_LCTRL, "control_r": pygame.K_RCTRL,
+        "alt_l": pygame.K_LALT, "alt_r": pygame.K_RALT,
+        # numpad (Tk: kp_0..kp_9, kp_enter):
+        **{f"kp_{d}": getattr(pygame, f"K_KP{d}") for d in range(10)},
+        "kp_enter": pygame.K_KP_ENTER,
     }
     return mapping.get(keysym, pygame.K_UNKNOWN)
 
@@ -259,6 +268,10 @@ def _parse_keybinds(raw: Any) -> dict[int, int]:
         key = _keysym_to_pygame(keysym)
         if key != pygame.K_UNKNOWN:
             result[key] = lane_idx
+        else:
+            print(f"[practice_minigame] WARNING: unsupported keybind "
+                  f"'{keysym}' for lane {lane_idx} — lane has no keyboard key",
+                  file=sys.stderr)
     return result
 
 

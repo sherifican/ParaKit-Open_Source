@@ -164,7 +164,10 @@ class JarredouMDX23C(StemSeparator):
         # Walk the produced files, normalize their names, build the result
         # dict. python-audio-separator names files like
         # "<input_stem>_(<class>)_<model_id>.wav", so we extract the class
-        # token between the first "_(" and the next ")_".
+        # token from the LAST "_(" group (rsplit): the input stem itself may
+        # contain "_(" (e.g. "My Song_(Live).flac"), and the model-id suffix
+        # (MDX23C-DrumSep-aufr33-jarredou) contains none. NOTE: if a future
+        # model-id ever contained "_(", this rsplit would break.
         result: Dict[str, Path] = {}
         for fname in produced:
             src = output_dir / fname
@@ -173,7 +176,7 @@ class JarredouMDX23C(StemSeparator):
             # Defensive parse — skip anything that doesn't match the pattern
             if "_(" not in fname or ")_" not in fname:
                 continue
-            upstream_class = fname.split("_(", 1)[1].split(")_", 1)[0]
+            upstream_class = fname.rsplit("_(", 1)[1].split(")_", 1)[0]
             canonical = STEM_MAP_UPSTREAM_TO_CANONICAL.get(upstream_class)
             if canonical is None:
                 continue

@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.5.7.1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.8.3`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -148,7 +148,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.5.7.1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.8.3`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -545,6 +545,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.5.8.3**<br>2026-07-07 | <ul><li>**MIDI Editor — Delete and bulk edits no longer hit the wrong notes.** After a drag, insert, or quantize re-sorted the notes, the selection could silently point at different notes than the ones you had highlighted. Fixed.</li><li>**MIDI Editor — reclassifying a note now counts as an unsaved change**, so it triggers the save-on-quit prompt and Send to Song Creator hands off the edited file (before, those edits could be silently lost).</li><li>**Auto-detect BPM actually detects now.** The audio BPM search had quietly broken and returned ~79.5 BPM for nearly every song — charts still played in sync (the offset was always correct), but the written BPM (Clone Hero measure lines, the difficulty-reduction grid) was wrong. Rebuilt and validated. "Use BPM from MIDI file" was never affected.</li><li>**Song titles with characters Windows forbids in filenames no longer break exports** (a `:` aborted the conversion, a `/` nested folders). Names are sanitized; the in-game title stays exactly as typed.</li><li>**Create Multiple Songs (folder batch): the "skip"/"rename" overwrite setting is honored again** — existing song folders were being silently overwritten on re-runs.</li><li>**Sheet Music MIDI export no longer drifts out of time** by the end of long songs.</li><li>**Extractor tool hardening** — the batch tab runs reliably after mixed use, one malformed `.rlrr` no longer hangs the window or aborts the batch, a preview crash is fixed, and same-named outputs get unique names.</li><li>**Neural Stem Isolation** no longer silently falls back for filenames containing `_(`, reports skipped stems, and no longer clobbers another file's saved Audio → MIDI settings.</li><li>**Practice minigame:** remapped keys that aren't letters (digits, punctuation, F-keys, numpad) now work.</li><li>Misc crash guards (BPM typed as `0`, corrupt saved settings, a stuck progress bar) and temp-folder cleanup.</li></ul> |
 | **v4.5.7.1**<br>2026-07-05 | <ul><li>**Steadier audio playback, especially in the song libraries.** The Downloaded-Songs and Stem-Splitter library previews now decode the whole track into memory and play it from RAM instead of streaming it off disk, and the shared audio buffer was enlarged — greatly reducing the brief periodic stutters/crackle some machines produced during playback (biggest benefit on busier or slower systems).</li></ul> |
 | **v4.5.7**<br>2026-07-05 | <ul><li>**Song descriptions.** The Single Song Creator *and* Create Multiple Songs now have a **Description** field. Paradiddle/ParaDB reads the description straight from the song's `.rlrr` file (there's no website form for it) and shows it on the song's ParaDB page — line breaks are saved as `<br>` for its HTML rendering. Leave it blank and nothing changes.</li><li>**Create Multiple Songs — parity with the Single Song Creator.** Each song slot now has its own **🎵 Auto Fetch Audio** button (fills Song Audio + Drum Audio from the MIDI's file name) and a live **album-art preview** (with a "not square" flag).</li><li>**Steadier playback.** The MIDI Editor and Preview/Practice Track now use a larger audio buffer and pause Python's garbage collection during playback, so brief CPU spikes are much less likely to cause a moment of audio crackle or a playhead stutter.</li></ul> |
 | **v4.5.6.1**<br>2026-07-05 | <ul><li>**Audio → MIDI — HOTFIX:** the Cancel button on the Neural Stem Isolation model download was a silent no-op since the feature shipped — the ~417 MB download always ran to completion. Cancel now aborts within a moment, never falls through to the fallback mirror, and cleans up the partial file. (Found while byte-auditing the ParaKit v5 rebuild's port of this dialog.)</li></ul> |

@@ -39,7 +39,11 @@ def compose(stem_paths: Dict[str, Path],
         output_path on success.
 
     Raises:
-        ValueError if no stems matched classes_to_mix.
+        ValueError if no stems matched classes_to_mix, OR if unreadable
+        stems reduce the composite to a single stem (the skipped classes
+        are named in the message — this is how the skip reaches the A2M
+        log: _a2m_do_convert's F-INT-001 wrap logs the exception text and
+        falls back to default detection).
         OSError on read/write failure (caller decides whether to fall
         back to default hybrid path).
     """
@@ -73,11 +77,14 @@ def compose(stem_paths: Dict[str, Path],
     # Sum the rest. Mismatched lengths get truncated to the shortest stem
     # — they SHOULD all be the same length (separator output for one input)
     # but defensive truncation prevents a runtime crash if not.
+    skipped: list[str] = []
     for cls, path in selected[1:]:
         try:
             audio, sr = sf.read(str(path), dtype="float32", always_2d=False)
-        except Exception:
-            # Skip an unreadable stem rather than failing the whole compose
+        except Exception as exc:
+            # Skip an unreadable stem rather than failing the whole compose —
+            # but RECORD it; a silent skip degrades detection invisibly.
+            skipped.append(f"{cls} ({exc.__class__.__name__})")
             continue
         if sr != target_sr:
             audio = _resample_if_needed(audio, sr, target_sr)
@@ -92,6 +99,24 @@ def compose(stem_paths: Dict[str, Path],
         # Truncate to shortest
         n = min(len(summed), len(audio))
         summed = summed[:n] + audio[:n]
+
+    if skipped:
+        # Best-effort console trace only (dev runs / frozen exe swallows it).
+        # VERIFIED 2026-07-06: _a2m_do_convert's F-INT-001 separator wrap does
+        # NOT capture stdout — everything reaches the A2M log via explicit
+        # self._a2m_log(...) calls or the except-block's exception text. So
+        # the load-bearing reporting channel is the raise below, not this.
+        print(f"[parakit_separators.compose] WARNING: unreadable stems "
+              f"skipped: {', '.join(skipped)}", flush=True)
+        if len(skipped) >= len(selected) - 1:
+            # The composite has been reduced to a single stem — almost
+            # certainly wrong. Raise so the caller's except logs the skipped
+            # classes to the A2M log and falls back to default detection on
+            # the original audio (the safe path).
+            raise ValueError(
+                f"compose(): composite reduced to a single stem "
+                f"('{first_cls}') — unreadable stems skipped: "
+                f"{', '.join(skipped)}.")
 
     # Peak-normalize protection: if the sum exceeds [-1, 1], scale down so
     # the max abs sample is 0.99. Detection is invariant to overall gain

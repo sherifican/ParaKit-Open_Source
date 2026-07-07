@@ -28,8 +28,10 @@ IMPORTANT: run this against the repo whose files will be ON GITHUB (the PUBLIC
 ParaKit-Open_Source repo), AFTER all release files are in place -- the hashes must
 match what the updater downloads.
 
-  py -3.12 tools/gen_update_manifest.py [REPO_ROOT]     # default: current dir
-Writes <REPO_ROOT>/update_manifest.json.
+  py -3.12 tools/gen_update_manifest.py [REPO_ROOT] [--allow-missing]   # default root: current dir
+Writes <REPO_ROOT>/update_manifest.json. If any whitelisted ROOT_FILES entry or
+CONTENT_DIRS dir (or the VERSION constant) is missing, the tool prints the list
+and exits 2 WITHOUT writing; pass --allow-missing to write anyway.
 """
 import hashlib
 import json
@@ -96,25 +98,33 @@ def _skip(name):
 
 
 def main():
-    root = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else ".")
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    root = os.path.abspath(args[0] if args else ".")
+    missing = []
     ver = "?"
     try:
-        src = open(os.path.join(root, "ParaKit v4.0.py"), encoding="utf-8").read()
+        with open(os.path.join(root, "ParaKit v4.0.py"), encoding="utf-8") as f:
+            src = f.read()
         m = re.search(r'VERSION\s*=\s*"([\d.]+)"', src)
         if m:
             ver = m.group(1)
     except Exception:
         pass
+    if ver == "?":
+        missing.append("VERSION constant (ParaKit v4.0.py unreadable or pattern mismatch)")
 
     files = []
     for rel in ROOT_FILES:
         p = os.path.join(root, rel)
         if os.path.isfile(p) and not _skip(rel):
             files.append((rel.replace("\\", "/"), _sha256(p)))
+        else:
+            missing.append(f"root file: {rel}")
 
     for d in CONTENT_DIRS:
         base = os.path.join(root, d)
         if not os.path.isdir(base):
+            missing.append(f"content dir: {d}/")
             continue
         for dirpath, dirnames, filenames in os.walk(base):
             dirnames[:] = [x for x in dirnames if x not in EXCLUDE_DIRNAMES]
@@ -126,6 +136,18 @@ def main():
                 files.append((rel, _sha256(full)))
 
     files.sort()
+
+    allow = "--allow-missing" in sys.argv
+    if missing:
+        print("!! MANIFEST INCOMPLETE — the following whitelist entries were NOT found:")
+        for m in missing:
+            print("   -", m)
+        if not allow:
+            print("!! Refusing to write update_manifest.json. Fix the release tree,")
+            print("!! or re-run with --allow-missing if the omission is intentional.")
+            return 2
+        print("!! --allow-missing given: writing the manifest WITHOUT them.")
+
     manifest = {
         "version": ver,
         "note": ("Runtime files the in-app updater keeps current. The main "

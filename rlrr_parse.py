@@ -229,12 +229,15 @@ def extract_notes_from_rlrr(rlrr_path: Path) -> tuple[list, dict, str]:
         return [], {}, str(exc)
 
     notes = []
-    for e in events:
-        cls = event_to_class(e, instruments)
-        mapping = CLASS_TO_MIDI.get(cls)
-        if mapping:
-            vel = min(127, max(1, int(round(event_velocity(e) * 127))))
-            notes.append((event_time(e), mapping[1], vel))
+    try:
+        for e in events:
+            cls = event_to_class(e, instruments)
+            mapping = CLASS_TO_MIDI.get(cls)
+            if mapping:
+                vel = min(127, max(1, int(round(event_velocity(e) * 127))))
+                notes.append((event_time(e), mapping[1], vel))
+    except Exception as exc:
+        return [], {}, f"malformed event data: {exc.__class__.__name__}: {exc}"
 
     if not notes:
         return [], meta, "No mappable drum notes found in this .rlrr"
