@@ -8613,21 +8613,63 @@ class MidiToRlrrApp:
                 return b, p
         return None, None
 
+    def _pick_metadata_art_source(self, song_audio, drum_audio, midi_path):
+        """UI-free: return (image_bytes, source_label, source_path) for the first
+        embedded album art among Song Audio, then Drum Audio, then — if NEITHER
+        carries art — the FULL MIX located from midi_path via
+        _find_song_audio_from_midi (bounded folder search, touches no UI).
+        (None, None, None) if nothing is found. Shared by the Single Song Creator
+        (_apply_metadata_art) and the Create Multiple Songs slots
+        (_batch_apply_metadata_art) so both use identical priority + fallback."""
+        img_bytes, src_path = self._first_audio_with_art([song_audio, drum_audio])
+        if img_bytes:
+            label = "Song Audio" if (src_path == song_audio and song_audio) else "Drum Audio"
+            return img_bytes, label, src_path
+        # Fallback: locate the full mix from the MIDI name and read its cover (the
+        # reliable YouTube-tab art). Default finder args return the full mix
+        # (song_is_backing=False). Only runs when the two loaded files come up empty.
+        if midi_path:
+            try:
+                _drums, mix, _rec, _song = self._find_song_audio_from_midi(midi_path)
+            except Exception:
+                mix = None
+            if mix and mix not in (song_audio, drum_audio):
+                img_bytes, src_path = self._first_audio_with_art([mix])
+                if img_bytes:
+                    return img_bytes, "full mix", src_path
+        return None, None, None
+
+    def _save_metadata_art_png(self, img_bytes, src_path):
+        """UI-free: center-crop the embedded art to 512×512 and save it as a temp
+        PNG named from src_path's stem; return the temp path (becomes album.png in
+        the export — matches the Clone Hero + iTunes-fetch art convention). Raises
+        ImportError if Pillow is missing, or on any image error; the caller turns
+        that into a status message. Shared by the single + batch apply paths."""
+        from PIL import Image
+        import io, tempfile, re as _re
+        img = Image.open(io.BytesIO(img_bytes))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        iw, ih = img.size
+        side = min(iw, ih)
+        left = (iw - side) // 2
+        top  = (ih - side) // 2
+        img  = img.crop((left, top, left + side, top + side))
+        img  = img.resize((512, 512), Image.LANCZOS)
+        audio_stem = os.path.splitext(os.path.basename(src_path))[0]
+        safe_stem  = _re.sub(r'[<>:"/\\|?*]', '_', audio_stem)[:80] or "metadata_art"
+        tmp_path   = os.path.join(tempfile.gettempdir(), f"{safe_stem}.parakit-cover.png")
+        img.save(tmp_path, format="PNG")
+        return tmp_path
+
     def _apply_metadata_art(self):
-        """Extract embedded album art from a loaded audio file, center-crop to
-        512×512, save it as a temp PNG, and point cover_var at it — which drives
-        BOTH the live Album Art Preview and the export (_convert copies the file
-        into the .rlrr / .chart output folder as album.png).
-
-        Source priority (owner 2026-07-07): Song Audio, then Drum Audio, then —
-        if NEITHER carries art — the FULL MIX located from the MIDI file name via
-        _find_song_audio_from_midi. In the common stems workflow the Song Audio
-        is the backing track and the Drum Audio is a separated stem, so neither
-        has embedded art; the full mix (e.g. a YouTube-tab download) does, so it
-        is the fallback the user actually wants.
-
-        Returns True on success (cover_var was updated), False otherwise.
-        """
+        """Single Song Creator: extract embedded album art (Song Audio → Drum
+        Audio → the full mix located from the MIDI name), crop to 512×512, save a
+        temp PNG, and point cover_var at it — which drives BOTH the live Album Art
+        Preview and the export (_convert writes album.png into the output folder).
+        In the common stems workflow the Song Audio is the backing track and the
+        Drum Audio a separated stem (no embedded art), so the full mix is the
+        fallback the user wants. Returns True on success, else False."""
         def _v(name):
             try:
                 return getattr(self, name).get().strip()
@@ -8636,7 +8678,6 @@ class MidiToRlrrApp:
 
         song_audio = _v("audio_var")
         drum_audio = _v("drum_audio_var")
-
         if not song_audio and not drum_audio:
             try: self.metadata_art_status_var.set(
                 "⚠  Load a Song Audio or Drum Audio file to extract album art")
@@ -8646,8 +8687,6 @@ class MidiToRlrrApp:
         try: self.metadata_art_status_var.set("🔍  Extracting album art from audio metadata…")
         except Exception: pass
 
-        # Snapshot old temp path before extraction so we can clear stale art if
-        # no source has a picture (don't carry the previous song's cover in).
         old_tmp = getattr(self, "_metadata_art_temp_path", None)
 
         def _clear_stale_temp():
@@ -8659,30 +8698,8 @@ class MidiToRlrrApp:
                 except Exception: pass
             self._metadata_art_temp_path = None
 
-        # 1-2) the two loaded fields, in order.
-        img_bytes, src_path = self._first_audio_with_art([song_audio, drum_audio])
-        if src_path == song_audio and song_audio:
-            src_label = "Song Audio"
-        elif src_path:
-            src_label = "Drum Audio"
-        else:
-            src_label = None
-
-        # 3) fallback: neither loaded file had art — locate the FULL MIX from the
-        # MIDI file name and read its embedded cover (the reliable YouTube-tab art).
-        # Default finder args return the full mix (song_is_backing=False); it does a
-        # bounded folder search and touches no UI. Only runs when 1-2 come up empty.
-        if not img_bytes:
-            midi_path = _v("midi_var")
-            if midi_path:
-                try:
-                    _drums, mix, _rec, _song = self._find_song_audio_from_midi(midi_path)
-                except Exception:
-                    mix = None
-                if mix and mix not in (song_audio, drum_audio):
-                    img_bytes, src_path = self._first_audio_with_art([mix])
-                    if img_bytes:
-                        src_label = "full mix"
+        img_bytes, src_label, src_path = self._pick_metadata_art_source(
+            song_audio, drum_audio, _v("midi_var"))
 
         if not img_bytes:
             _clear_stale_temp()
@@ -8692,46 +8709,8 @@ class MidiToRlrrApp:
             except Exception: pass
             return False
 
-        # Crop to square + resize, then save as PNG (album.png in the export —
-        # matches the Clone Hero + iTunes-fetch art convention).
         try:
-            from PIL import Image
-            import io, tempfile, re as _re
-            img = Image.open(io.BytesIO(img_bytes))
-            if img.mode != "RGB":
-                img = img.convert("RGB")
-            iw, ih = img.size
-            side = min(iw, ih)
-            left = (iw - side) // 2
-            top  = (ih - side) // 2
-            img  = img.crop((left, top, left + side, top + side))
-            img  = img.resize((512, 512), Image.LANCZOS)
-
-            # Stable, recognisable temp filename based on the SOURCE audio stem.
-            audio_stem = os.path.splitext(os.path.basename(src_path))[0]
-            safe_stem  = _re.sub(r'[<>:"/\\|?*]', '_', audio_stem)[:80] or "metadata_art"
-            tmp_path   = os.path.join(tempfile.gettempdir(),
-                                       f"{safe_stem}.parakit-cover.png")
-            img.save(tmp_path, format="PNG")
-
-            # Cleanup previous temp if it was a different file
-            old = getattr(self, "_metadata_art_temp_path", None)
-            if old and old != tmp_path and os.path.exists(old):
-                try: os.unlink(old)
-                except Exception: pass
-            self._metadata_art_temp_path = tmp_path
-
-            # Point cover_var at the temp file. This triggers the existing
-            # _on_cover_manual_change callback, which only clears the AM
-            # auto-art indicator — it does not affect our toggle state.
-            self.cover_var.set(tmp_path)
-
-            try: self.metadata_art_status_var.set(
-                f"✓  Album art from {src_label} ({os.path.basename(src_path)}) "
-                f"— cropped to 512×512")
-            except Exception: pass
-            return True
-
+            tmp_path = self._save_metadata_art_png(img_bytes, src_path)
         except ImportError:
             try: self.metadata_art_status_var.set(
                 "⚠  Pillow (PIL) is not installed — cannot crop album art")
@@ -8741,6 +8720,21 @@ class MidiToRlrrApp:
             try: self.metadata_art_status_var.set(f"⚠  Image error: {str(exc)[:70]}")
             except Exception: pass
             return False
+
+        old = getattr(self, "_metadata_art_temp_path", None)
+        if old and old != tmp_path and os.path.exists(old):
+            try: os.unlink(old)
+            except Exception: pass
+        self._metadata_art_temp_path = tmp_path
+
+        # Point cover_var at the temp file — triggers _on_cover_manual_change
+        # (only clears the AM auto-art indicator; doesn't affect our toggle).
+        self.cover_var.set(tmp_path)
+        try: self.metadata_art_status_var.set(
+            f"✓  Album art from {src_label} ({os.path.basename(src_path)}) "
+            f"— cropped to 512×512")
+        except Exception: pass
+        return True
 
     def _extract_album_art_from_audio(self, audio_path):
         """Return (image_bytes, mime_str) from the embedded album art of an
@@ -35642,6 +35636,9 @@ demucs.separate.main()
             "offset_var":   tk.StringVar(),
             "reduce_var":   tk.BooleanVar(value=False),
             "enabled_var":  tk.BooleanVar(value=(slot_num == 1)),
+            "use_metadata_art_var": tk.BooleanVar(value=False),
+            "meta_art_status_var":  tk.StringVar(value=""),
+            "_metadata_art_temp_path": None,
         }
         self._batch_slots.append(slot)
 
@@ -35806,6 +35803,24 @@ demucs.separate.main()
                           "Optional. Embedded in this song's .rlrr and shown on its\n"
                           "ParaDB page. Line breaks are saved as <br>.")
 
+        # Per-slot "use album art from metadata" (parity with the Single Song
+        # Creator). Uses the embedded art in Song Audio, else Drum Audio, else
+        # the full mix located from this slot's MIDI name; writes album.png.
+        ma_row = ttk.Frame(frame)
+        ma_row.grid(row=12, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(
+            ma_row, text="🎨  Use album art from metadata",
+            variable=slot["use_metadata_art_var"],
+            command=lambda s=slot: self._batch_metadata_art_toggle(s)).pack(side=tk.LEFT)
+        ttk.Label(ma_row, textvariable=slot["meta_art_status_var"],
+                  style="Sub.TLabel", foreground="#888888",
+                  wraplength=420).pack(side=tk.LEFT, padx=(8, 0))
+        # Re-extract when this slot's audio/MIDI changes while the toggle is on.
+        for _mk in ("audio_var", "drum_var", "midi_var"):
+            slot[_mk].trace_add(
+                "write",
+                lambda *_a, s=slot: self._batch_refresh_metadata_art_if_active(s))
+
     # ── Batch helpers ─────────────────────────────────────────────────────────
     def _batch_auto_fetch_audio(self, slot):
         """Auto Fetch Audio for one batch slot — mirrors the Single Song Creator:
@@ -35838,6 +35853,93 @@ demucs.separate.main()
         self._auto_fetch_show_result(song, drums, mix, used_recursive, found,
                                      mix_label="Backing track",
                                      mix_pattern=f"{song}_backing.<ext>")
+
+    # ── Per-slot "Use album art from metadata" (parity with the Single Song
+    #    Creator; shares _pick_metadata_art_source + _save_metadata_art_png) ─────
+    def _batch_metadata_art_toggle(self, slot):
+        """Slot checkbox handler: extract on turn-ON; on turn-OFF blank the status
+        and drop our temp cover if slot['cover_var'] still points at it."""
+        v = slot.get("use_metadata_art_var")
+        if v is None:
+            return
+        if v.get():
+            self._batch_apply_metadata_art(slot)
+        else:
+            st = slot.get("meta_art_status_var")
+            if st is not None:
+                try: st.set("")
+                except Exception: pass
+            tmp = slot.get("_metadata_art_temp_path")
+            if tmp and slot["cover_var"].get().strip() == tmp:
+                slot["cover_var"].set("")
+            if tmp and os.path.exists(tmp):
+                try: os.unlink(tmp)
+                except Exception: pass
+            slot["_metadata_art_temp_path"] = None
+
+    def _batch_refresh_metadata_art_if_active(self, slot):
+        """Re-run a slot's extraction when its Song/Drum Audio or MIDI changes
+        while that slot's metadata-art toggle is on (deferred so the var settles)."""
+        v = slot.get("use_metadata_art_var")
+        if v is not None and v.get():
+            self.root.after(10, lambda s=slot: self._batch_apply_metadata_art(s))
+
+    def _batch_apply_metadata_art(self, slot):
+        """Create-Multiple-Songs equivalent of _apply_metadata_art, per slot:
+        Song Audio → Drum Audio → the full mix located from the slot's MIDI name;
+        crop to 512×512, save a temp PNG, point THIS slot's cover_var at it (which
+        drives the slot's art preview + writes album.png in the export). The batch
+        slot key for the drums field is 'drum_var'. Returns True/False."""
+        def _v(key):
+            try:
+                return slot[key].get().strip()
+            except Exception:
+                return ""
+
+        status = slot.get("meta_art_status_var")
+        def _set(msg):
+            if status is not None:
+                try: status.set(msg)
+                except Exception: pass
+
+        song_audio = _v("audio_var")
+        drum_audio = _v("drum_var")
+        if not song_audio and not drum_audio:
+            _set("⚠  Load a Song Audio or Drum Audio file first")
+            return False
+
+        _set("🔍  Extracting album art from audio metadata…")
+        old_tmp = slot.get("_metadata_art_temp_path")
+
+        img_bytes, src_label, src_path = self._pick_metadata_art_source(
+            song_audio, drum_audio, _v("midi_var"))
+
+        if not img_bytes:
+            if old_tmp and slot["cover_var"].get().strip() == old_tmp:
+                slot["cover_var"].set("")
+            if old_tmp and os.path.exists(old_tmp):
+                try: os.unlink(old_tmp)
+                except Exception: pass
+            slot["_metadata_art_temp_path"] = None
+            _set("⚠  No album art in the Song Audio, Drum Audio, or the located full mix")
+            return False
+
+        try:
+            tmp_path = self._save_metadata_art_png(img_bytes, src_path)
+        except ImportError:
+            _set("⚠  Pillow (PIL) is not installed — cannot crop album art")
+            return False
+        except Exception as exc:
+            _set(f"⚠  Image error: {str(exc)[:60]}")
+            return False
+
+        if old_tmp and old_tmp != tmp_path and os.path.exists(old_tmp):
+            try: os.unlink(old_tmp)
+            except Exception: pass
+        slot["_metadata_art_temp_path"] = tmp_path
+        slot["cover_var"].set(tmp_path)
+        _set(f"✓  Album art from {src_label} ({os.path.basename(src_path)})")
+        return True
 
     def _batch_update_cover_preview(self, slot):
         """Per-slot album-art thumbnail (mirror of _update_cover_preview). Renders

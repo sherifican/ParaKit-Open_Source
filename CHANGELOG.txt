@@ -29,12 +29,13 @@
 ------------------------------------------------------------------------------
   v4.5.8.4   --   2026-07-07
 ------------------------------------------------------------------------------
-  - Single Song Creator -- "Use album art from audio file metadata" now falls
-    back to the full mix. If the loaded Song Audio and Drum Audio have no
-    embedded cover art (common when they are separated stems / a backing track),
-    ParaKit finds the song's full mix from the MIDI file name and uses the album
-    art embedded in it (for example, a cover added on the YouTube tab). The art
-    shows in the live Album Art Preview and is written into the export folder as
+  - "Use album art from audio file metadata" now falls back to the full mix,
+    on BOTH the Single Song Creator and the Create Multiple Songs tab (a per-song
+    toggle on each slot). If the loaded Song Audio and Drum Audio have no embedded
+    cover art (common when they are separated stems / a backing track), ParaKit
+    finds the song's full mix from the MIDI file name and uses the album art
+    embedded in it (for example, a cover added on the YouTube tab). The art shows
+    in the live Album Art Preview and is written into the export folder as
     album.png alongside the .rlrr and audio files. (Metadata art is now saved as
     PNG for all sources, matching the Clone Hero / iTunes-fetch art.)
 
