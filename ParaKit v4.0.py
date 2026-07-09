@@ -4304,7 +4304,14 @@ def load_changelog_entries(max_entries=None):
             lines = f.read().split("\n")
     except Exception:
         return []
+    return parse_changelog_lines(lines, max_entries)
 
+
+def parse_changelog_lines(lines, max_entries=None):
+    """Core CHANGELOG.txt parser: a list of text *lines* -> newest-first
+    [(header, body)]. Split out from load_changelog_entries so the same format
+    can be parsed from a remote string (the update popup fetches the repo's
+    CHANGELOG.txt to preview what a not-yet-installed version changes)."""
     def _is_sep(s):
         t = s.strip()
         return t.startswith("---") and len(t) >= 10
@@ -5450,7 +5457,10 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.9.1"
+    VERSION = "4.5.9.2"
+    # Default song description prefilled in the Single Song Creator until the user
+    # edits it (embedded into the .rlrr's recordingMetadata.description on save).
+    DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -6830,8 +6840,13 @@ class MidiToRlrrApp:
             # Newer version available.
             self.root.after(0, lambda: self._update_status_lbl.configure(
                 text=f"v{latest_version} available", foreground="#e09a3a"))
+            # Fetch the repo's CHANGELOG.txt (best-effort) so the popup can preview
+            # exactly what this not-yet-installed version changes. Still on this
+            # background thread; failure just omits the preview, never blocks.
+            changelog = self._fetch_remote_changelog_since(
+                self.VERSION, latest_version)
             self.root.after(0, lambda: self._prompt_update(
-                latest_version, release_url))
+                latest_version, release_url, changelog))
 
         except Exception as e:
             if not silent:
@@ -6843,23 +6858,77 @@ class MidiToRlrrApp:
                     f"Check your internet connection or visit the repo "
                     f"manually:\n{release_url}"))
 
-    def _prompt_update(self, new_ver, repo_url):
+    def _fetch_remote_changelog_since(self, cur_ver, latest_ver, cap=8):
+        """Best-effort: fetch the repo's CHANGELOG.txt and return the newest-first
+        [(header, body)] entries for every version NEWER than the installed one
+        (so a user who skipped several releases previews all the changes they'd
+        get, not just the newest). Returns [] on any network/parse failure — the
+        update popup then simply shows no preview."""
+        import urllib.request, re
+
+        def _ver(s):
+            m = re.match(r"^v?(\d+(?:\.\d+){1,3})(?:-(\d+))?$", str(s).strip())
+            if not m:
+                return None
+            return (tuple(int(x) for x in m.group(1).split("."))
+                    + (int(m.group(2) or 0),))
+
+        try:
+            req = urllib.request.Request(
+                self.PARAKIT_RAW_BASE + "CHANGELOG.txt",
+                headers={"User-Agent": "ParaKit-update-check",
+                         "Accept": "text/plain,*/*;q=0.8"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                text = resp.read().decode("utf-8", errors="ignore")
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+        except Exception:
+            return []
+
+        cur = _ver(cur_ver)
+        if cur is None:
+            return []
+        out = []
+        # Entries are newest-first; a header like "v4.5.9.1 -- ...". Pull the
+        # leading version token, keep it while it outranks the installed version,
+        # and stop as soon as we drop to/below it (everything after is older).
+        for header, body in parse_changelog_lines(text.split("\n")):
+            m = re.match(r"v?(\d+\.\d+(?:\.\d+){0,2}(?:-\d+)?)", header.strip())
+            if not m:
+                continue
+            hv = _ver(m.group(1))
+            if hv is None:
+                continue
+            if hv <= cur:
+                break
+            out.append((header, body))
+            if len(out) >= cap:
+                break
+        return out
+
+    def _prompt_update(self, new_ver, repo_url, changelog_entries=None):
         """Update dialog: open GitHub to download just the one file, and (when
-        running from source) a one-click single-file self-update."""
+        running from source) a one-click single-file self-update. When
+        *changelog_entries* is a non-empty [(header, body)] list, a scrollable
+        'What's new in this update' preview is shown so the user can see what the
+        update changes without opening GitHub or downloading first."""
         import webbrowser
         is_frozen = bool(getattr(sys, "frozen", False))
         # v4.5.5.1: keep the "supporting files may be stale" reminder up for a few
         # versions (source installs only), then auto-retire at DEP_SYNC_NOTICE_UNTIL.
         show_dep_note = (not is_frozen) and self._dep_note_active()
 
+        has_changelog = bool(changelog_entries)
         dlg = tk.Toplevel(self.root)
         dlg.title("Update Available")
         dlg.configure(bg="#222222")
-        dlg.resizable(False, False)
+        # Resizable only when the changelog preview is shown, so users can enlarge
+        # to read a long entry; the plain popup stays fixed as before.
+        dlg.resizable(has_changelog, has_changelog)
         dlg.transient(self.root)
         dlg.grab_set()
         try:
-            pw, ph = 480, (320 if show_dep_note else 230)
+            pw = 520 if has_changelog else 480
+            ph = (320 if show_dep_note else 230) + (240 if has_changelog else 0)
             px = self.root.winfo_x() + (self.root.winfo_width() - pw) // 2
             py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
             dlg.geometry(f"{pw}x{ph}+{px}+{py}")
@@ -6894,11 +6963,44 @@ class MidiToRlrrApp:
             ttk.Label(frame, text=note, foreground="#e09a3a",
                       wraplength=440, justify=tk.LEFT).pack(anchor="w", pady=(10, 0))
 
+        # "What's new in this update" preview — the repo's CHANGELOG.txt entries
+        # for every version newer than the one running, so the user can see what
+        # the update fixes/changes without opening GitHub or downloading first.
+        if has_changelog:
+            cl_wrap = ttk.Frame(frame)
+            cl_wrap.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
+            ttk.Label(cl_wrap, text="What's new in this update:",
+                      font=("Segoe UI", 9, "bold"),
+                      foreground="#b388ff").pack(anchor="w", pady=(0, 4))
+            txt_row = ttk.Frame(cl_wrap)
+            txt_row.pack(fill=tk.BOTH, expand=True)
+            cl_txt = tk.Text(txt_row, wrap="word", height=9,
+                             bg="#1a1a1a", fg="#e6e6e6", bd=0, relief="flat",
+                             font=("Segoe UI", 9), padx=8, pady=6,
+                             highlightthickness=1, highlightbackground="#3a2a4a",
+                             cursor="arrow")
+            cl_sb = ttk.Scrollbar(txt_row, orient="vertical",
+                                  command=cl_txt.yview)
+            cl_txt.configure(yscrollcommand=cl_sb.set)
+            cl_sb.pack(side=tk.RIGHT, fill=tk.Y)
+            cl_txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            cl_txt.tag_configure("hdr", font=("Segoe UI", 10, "bold"),
+                                 foreground="#b388ff", spacing1=6, spacing3=3)
+            cl_txt.tag_configure("bdy", foreground="#d6d6d6", spacing3=2)
+            for _idx, (_hdr, _body) in enumerate(changelog_entries):
+                if _idx:
+                    cl_txt.insert("end", "\n")
+                cl_txt.insert("end", _hdr + "\n", "hdr")
+                if _body.strip():
+                    cl_txt.insert("end", _body.strip() + "\n", "bdy")
+            cl_txt.configure(state="disabled")
+
         btn_row = ttk.Frame(frame)
         btn_row.pack(anchor="e", pady=(16, 0))
 
         def _open_github():
-            target = repo_url if is_frozen else self.PARAKIT_RELEASE_FILE_URL
+            # Always open the repo's main page (not the raw .py blob view).
+            target = repo_url
             try:
                 webbrowser.open(target)
             except Exception as e:
@@ -8083,6 +8185,8 @@ class MidiToRlrrApp:
                                         selectbackground="#2a1235",
                                         relief="flat", bd=1, padx=6, pady=4)
         self.description_text.grid(row=3, column=1, columnspan=2, sticky="ew", pady=2)
+        # Prefill the default description (stays until the user edits it).
+        self.description_text.insert("1.0", self.DEFAULT_SONG_DESCRIPTION)
         self._add_tooltip(self.description_text,
                           "Optional. Shown on the song's ParaDB page — it is embedded\n"
                           "in the .rlrr file itself, not added on the website. Line breaks\n"
@@ -14698,6 +14802,7 @@ demucs.separate.main()
         self.artist_var.set("")
         if hasattr(self, "description_text"):
             self.description_text.delete("1.0", "end")
+            self.description_text.insert("1.0", self.DEFAULT_SONG_DESCRIPTION)
         self.difficulty_var.set("Expert")
         self.complexity_var.set(3)
         # v4.4.50 — match the flipped defaults from line ~5298.

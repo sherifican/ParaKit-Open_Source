@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.9.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.9.2  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,17 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.9.2   --   2026-07-08
+------------------------------------------------------------------------------
+  - The "Update Available" popup now shows what's new. When a newer version is
+    found, it previews that version's changelog entries right in the popup, so
+    you can see what the update fixes and changes without opening GitHub or
+    downloading first. If you've skipped a few versions, it lists every change
+    since the one you're running.
+  - Fixed the "Open GitHub" button on the update popup -- it now opens the repo's
+    main page instead of the raw code view of the app file.
 
 ------------------------------------------------------------------------------
   v4.5.9.1   --   2026-07-07
