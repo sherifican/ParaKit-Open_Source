@@ -185,6 +185,22 @@ PRETTY_LOG_WARNING = "#ffb347"
 PRETTY_LOG_SUCCESS = "#00d4d4"
 PRETTY_LOG_INFO = "#7dd3fc"
 
+# App-wide theme colours (v4.5.9.x purple theming). APP_BG replaces the old flat
+# gray (#222222) EVERYWHERE the app background is drawn; LOG_BG is the single
+# unified console/log background. Both are one constant each, so the exact shade
+# is a one-line tweak (and a purple↔black switch for logs is just LOG_BG).
+# Two theme modes (owner 2026-07-09): "dark" = the purple theme, "light" = the
+# app's ORIGINAL gray. APP_BG / LOG_BG are the ACTIVE colours (module globals so
+# every `bg=APP_BG` / `bg=LOG_BG` widget picks them up); the App reassigns them
+# from the saved config at startup and on the header Dark/Light toggle, then
+# re-themes the running UI live. See _toggle_theme / _recolor_tk_tree.
+THEME_PALETTES = {
+    "dark":  {"app_bg": "#231b40", "log_bg": "#1b1338"},   # purple (default)
+    "light": {"app_bg": "#222222", "log_bg": "#0d1117"},   # original gray / black
+}
+APP_BG = THEME_PALETTES["dark"]["app_bg"]   # active main background
+LOG_BG = THEME_PALETTES["dark"]["log_bg"]   # active log / console background
+
 
 def _pretty_log_segments(text):
     """Split log text into themed token groups for Tk Text tags."""
@@ -2488,6 +2504,7 @@ class _PdToChConverterWindow(tk.Toplevel):
         log_frame.pack(fill=tk.BOTH, expand=False, pady=(8, 0))
         self._log_widget = scrolledtext.ScrolledText(
             log_frame, height=8, state="disabled", wrap=tk.WORD,
+            bg=LOG_BG, fg="#58a6ff", insertbackground="#58a6ff",
             font=("Consolas", 9))
         self._log_widget.pack(fill=tk.BOTH, expand=True)
 
@@ -4342,7 +4359,7 @@ def parse_changelog_lines(lines, max_entries=None):
     return entries
 
 
-def _tick_strip(parent, length, tick_px=10, bg="#222222"):
+def _tick_strip(parent, length, tick_px=10, bg=APP_BG):
     """Pack a faint tick-mark canvas below a slider inside *parent*.
 
     Call immediately after the Scale is packed inside *parent* (which should
@@ -4361,7 +4378,7 @@ def _tick_strip(parent, length, tick_px=10, bg="#222222"):
 def _parakit_theme_tokens():
     """Central dark-theme tokens for small global polish passes."""
     return {
-        "bg": "#222222",
+        "bg": APP_BG,
         "entry_bg": "#0d1117",
         "log_fg": "#58a6ff",
         "primary_bg": "#e94560",
@@ -4400,7 +4417,7 @@ def _neon_should_show_comet(mode, is_running):
 
 
 _NEON_ASSET_DIR = _neon_resource_path("assets", "progressbar")
-_NEON_DEFAULT_BG = "#222222"
+_NEON_DEFAULT_BG = APP_BG
 _NEON_VISUAL = _neon_visual_defaults()
 
 _TROUGH_FILL = (18, 10, 28, 255)
@@ -5457,7 +5474,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.9.3"
+    VERSION = "4.5.9.4"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -5476,6 +5493,19 @@ class MidiToRlrrApp:
         self.root.title(f"ParaKit  v{self.VERSION}")
         self.root.resizable(True, True)
         self.root.minsize(640, 760)
+
+        # Theme mode (owner 2026-07-09): "dark" = purple, "light" = original gray.
+        # Load the saved choice and point the ACTIVE globals APP_BG / LOG_BG at
+        # that palette BEFORE any widget is built, so the whole UI is created in
+        # the right colours. The header toggle flips this live (_toggle_theme).
+        global APP_BG, LOG_BG
+        try:
+            _tm = load_config().get("theme_mode", "dark")
+        except Exception:
+            _tm = "dark"
+        self._theme_mode = _tm if _tm in THEME_PALETTES else "dark"
+        APP_BG = THEME_PALETTES[self._theme_mode]["app_bg"]
+        LOG_BG = THEME_PALETTES[self._theme_mode]["log_bg"]
 
         # MIDI input (Phase 1): RtMidi callback thread -> queue -> Tk main thread.
         self.midi_queue = queue.Queue()
@@ -5551,7 +5581,7 @@ class MidiToRlrrApp:
         self._dark_mode = True
 
         try:
-            self.root.configure(bg="#222222")
+            self.root.configure(bg=APP_BG)
         except Exception:
             pass
 
@@ -5576,16 +5606,16 @@ class MidiToRlrrApp:
             style.theme_use("clam")
 
         # Force ttkbootstrap's focus/highlight colors to match background
-        self.root.option_add("*Label.Background",        "#222222")
+        self.root.option_add("*Label.Background",        APP_BG)
         self.root.option_add("*Label.Foreground",        "#e0e0e0")
-        self.root.option_add("*Label.highlightColor",    "#222222")
-        self.root.option_add("*Label.highlightBackground", "#222222")
-        self.root.option_add("*highlightColor",          "#222222")
-        self.root.option_add("*highlightBackground",     "#222222")
+        self.root.option_add("*Label.highlightColor",    APP_BG)
+        self.root.option_add("*Label.highlightBackground", APP_BG)
+        self.root.option_add("*highlightColor",          APP_BG)
+        self.root.option_add("*highlightBackground",     APP_BG)
 
         self._apply_theme()
 
-        BG     = "#222222"
+        BG     = APP_BG
         PURPLE = "#b388ff"
         compact = getattr(self, "_compact_layout", False)
 
@@ -5607,6 +5637,13 @@ class MidiToRlrrApp:
         update_btn = ttk.Button(update_btn_frame, text="🔄  Check for Updates",
                                 command=self._check_for_update_manual)
         update_btn.pack(side=tk.RIGHT)
+        # Dark / Light theme toggle — sits just left of Check for Updates.
+        # "Dark" = the purple theme; "Light" = the app's original gray.
+        self._theme_toggle_btn = ttk.Button(
+            update_btn_frame,
+            text=("🌙  Dark" if self._theme_mode == "dark" else "☀  Light"),
+            command=self._toggle_theme)
+        self._theme_toggle_btn.pack(side=tk.RIGHT, padx=(0, 10))
 
         brand_frame = tk.Frame(header_frame, bg=BG)
         brand_frame.pack(anchor="w", fill=tk.X,
@@ -6920,7 +6957,7 @@ class MidiToRlrrApp:
         has_changelog = bool(changelog_entries)
         dlg = tk.Toplevel(self.root)
         dlg.title("Update Available")
-        dlg.configure(bg="#222222")
+        dlg.configure(bg=APP_BG)
         # Resizable only when the changelog preview is shown, so users can enlarge
         # to read a long entry; the plain popup stays fixed as before.
         dlg.resizable(has_changelog, has_changelog)
@@ -7213,7 +7250,7 @@ class MidiToRlrrApp:
 
         prog = tk.Toplevel(self.root)
         prog.title("Updating ParaKit")
-        prog.configure(bg="#222222")
+        prog.configure(bg=APP_BG)
         prog.transient(self.root)
         prog.grab_set()
         try:
@@ -7237,7 +7274,7 @@ class MidiToRlrrApp:
 
         log_row = ttk.Frame(pframe)
         log_row.pack(fill=tk.BOTH, expand=True)
-        log_txt = tk.Text(log_row, height=14, wrap="none", bg="#0d1117",
+        log_txt = tk.Text(log_row, height=14, wrap="none", bg=LOG_BG,
                           fg="#c9d1d9", insertbackground="#c9d1d9", relief="flat",
                           bd=0, padx=8, pady=6, font=("Consolas", 9),
                           highlightthickness=1, highlightbackground="#2a2440")
@@ -7415,7 +7452,7 @@ class MidiToRlrrApp:
 
         dlg = tk.Toplevel(self.root)
         dlg.title("One-time notice — check your supporting files")
-        dlg.configure(bg="#222222")
+        dlg.configure(bg=APP_BG)
         dlg.resizable(False, True)   # allow vertical grow so nothing clips at
         dlg.transient(self.root)     # high-DPI / large Windows text scaling
         try:
@@ -7748,7 +7785,7 @@ class MidiToRlrrApp:
         from sibling widgets that need them (the Practice canvas,
         for example, deliberately swallows wheel events).
         """
-        BG = "#222222"
+        BG = APP_BG
         container = ttk.Frame(parent)
         container.pack(fill=tk.BOTH, expand=True)
 
@@ -7818,6 +7855,76 @@ class MidiToRlrrApp:
         # of stripping the global handler.
 
         return inner
+
+    def _toggle_theme(self):
+        """Flip between the purple 'dark' theme and the original-gray 'light'
+        theme, re-colouring the RUNNING UI in place (no restart) and persisting
+        the choice. Reassigns the module globals APP_BG / LOG_BG so widgets built
+        after the toggle also pick up the active palette."""
+        global APP_BG, LOG_BG
+        old_app, old_log = APP_BG, LOG_BG
+        new_mode = "light" if self._theme_mode == "dark" else "dark"
+        self._theme_mode = new_mode
+        APP_BG = THEME_PALETTES[new_mode]["app_bg"]
+        LOG_BG = THEME_PALETTES[new_mode]["log_bg"]
+
+        # 1) ttk styles (frames, labels, checkbuttons, notebook, logs-loop) —
+        #    _apply_theme reads the new APP_BG via _parakit_theme_tokens() and
+        #    normalises every known log to the new LOG_BG.
+        try:
+            self._apply_theme()
+        except Exception:
+            pass
+        # 2) classic tk widgets carry their bg literally from creation — walk the
+        #    whole tree and swap the OLD palette colours for the NEW ones.
+        try:
+            self._recolor_tk_tree(self.root, old_app, APP_BG, old_log, LOG_BG)
+        except Exception:
+            pass
+        # 3) refresh the option database so widgets built later default correctly.
+        for _opt in ("*Label.Background", "*Label.highlightColor",
+                     "*Label.highlightBackground", "*highlightColor",
+                     "*highlightBackground"):
+            try:
+                self.root.option_add(_opt, APP_BG)
+            except Exception:
+                pass
+        # 4) toggle-button label + persist the choice.
+        try:
+            self._theme_toggle_btn.configure(
+                text=("🌙  Dark" if new_mode == "dark" else "☀  Light"))
+        except Exception:
+            pass
+        try:
+            save_config({"theme_mode": new_mode})
+        except Exception:
+            pass
+
+    def _recolor_tk_tree(self, widget, old_app, new_app, old_log, new_log):
+        """Recursively swap tk-widget background colours for a live theme change.
+        Only classic tk widgets carry a 'bg' we set; ttk widgets raise on
+        cget('bg') and are skipped (handled by _apply_theme). A widget whose
+        current bg matches the OLD app background moves to the NEW app bg; one
+        matching the OLD log background moves to the NEW log bg; anything else
+        (buttons, coloured note boxes, accents) is left untouched."""
+        try:
+            cur = str(widget.cget("bg"))
+        except Exception:
+            cur = None
+        if cur is not None:
+            try:
+                if cur == old_app:
+                    widget.configure(bg=new_app)
+                elif cur == old_log:
+                    widget.configure(bg=new_log)
+            except Exception:
+                pass
+        try:
+            kids = widget.winfo_children()
+        except Exception:
+            kids = []
+        for child in kids:
+            self._recolor_tk_tree(child, old_app, new_app, old_log, new_log)
 
     def _apply_theme(self):
         """Apply dark theme custom overrides on top of ttkbootstrap darkly."""
@@ -7902,6 +8009,12 @@ class MidiToRlrrApp:
         style.configure("TFrame", background=BG)
         style.configure("TLabelframe", background=BG)
         style.configure("TLabelframe.Label", background=BG)
+        # Pin the base widget backgrounds too — otherwise plain ttk.Label /
+        # Checkbutton / Radiobutton keep ttkbootstrap-darkly's own gray, which
+        # used to blend with the old #222222 frames but now shows as gray patches
+        # against APP_BG. (v4.5.9.x purple theming.)
+        style.configure("TLabel", background=BG)
+        style.configure("TCheckbutton", background=BG)
         style.configure("Header.TLabel",
                         background=BG, foreground=PURPLE,
                         font=("Segoe UI", 12 if compact else 16, "bold"))
@@ -7948,6 +8061,7 @@ class MidiToRlrrApp:
         # owner direction 2026-05-23 (companion to green→cyan text sweep).
         _RADIO_CYAN = "#00d4d4"  # matches Label/Checkbutton cyan from same slice
         style.configure("TRadiobutton",
+                        background=BG,
                         foreground=_RADIO_CYAN)
         style.map("TRadiobutton",
                   foreground=[("disabled", "#888888"),
@@ -8062,12 +8176,18 @@ class MidiToRlrrApp:
             pass
 
         # Log text widgets
+        # FORCE every known log to the single active LOG_BG (not each widget's
+        # own creation bg) — this is what fixes the old inconsistency where some
+        # logs were #0d1117, one had no bg (rendered light gray), and yt_log was
+        # #0d0d1a. It also drives the Dark/Light toggle: re-running _apply_theme
+        # after flipping LOG_BG repaints them all. (owner 2026-07-09)
         for attr in ['log_text', 'a2m_log_text', 'stem_log_text',
                      'ogg_log_text', 'batch_log_text', 'tester_log',
-                     'sm_log_text', 'yt_log', 'fix_log_text']:
+                     'sm_log_text', 'yt_log', 'fix_log_text',
+                     '_log_widget', '_log', '_batch_folder_log_text']:
             try:
                 w = getattr(self, attr)
-                self._setup_pretty_log_widget(w, bg=getattr(w, "cget", lambda *_: ENTRY_BG)("bg"))
+                self._setup_pretty_log_widget(w, bg=LOG_BG)
             except Exception:
                 pass
 
@@ -8076,7 +8196,7 @@ class MidiToRlrrApp:
 
     def _build_single_tab(self, parent):
         """Scrollable single-song converter UI."""
-        canvas = tk.Canvas(parent, bg="#222222", highlightthickness=0)
+        canvas = tk.Canvas(parent, bg=APP_BG, highlightthickness=0)
         self._tab1_canvas = canvas
         sb     = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set)
@@ -9471,8 +9591,12 @@ class MidiToRlrrApp:
                    ).pack(side=tk.LEFT)
         ttk.Button(log_btn_row, text="📂  Open Output Folder",
                    command=self._stem_open_output).pack(side=tk.RIGHT)
+        # PREVIEW (v4.5.9.x theming trial): dark-purple log background (LOG_BG)
+        # for owner to compare against the current near-black (#0d1117). If
+        # approved, LOG_BG rolls out to every log app-wide; else flip LOG_BG to
+        # black. This one log is switched first so the colour can be judged.
         self.stem_log_text = scrolledtext.ScrolledText(
-            log_col, height=14, bg="#0d1117", fg="#58a6ff",
+            log_col, height=14, bg=LOG_BG, fg="#58a6ff",
             font=("Consolas", 9), wrap=tk.WORD,
             insertbackground="#58a6ff", state="disabled")
         self.stem_log_text.pack(fill=tk.BOTH, expand=True)
@@ -11183,7 +11307,7 @@ demucs.separate.main()
         """Show success popup with option to send drums to MIDI converter."""
         popup = tk.Toplevel(self.root)
         popup.title("Stem Split Complete!")
-        popup.configure(bg="#222222")
+        popup.configure(bg=APP_BG)
         popup.resizable(False, False)
         popup.grab_set()
 
@@ -11244,7 +11368,7 @@ demucs.separate.main()
     # =========================================================================
     def _build_audio_to_midi_tab(self, parent):
         """Basic Pitch audio-to-MIDI conversion tab."""
-        canvas = tk.Canvas(parent, bg="#222222", highlightthickness=0)
+        canvas = tk.Canvas(parent, bg=APP_BG, highlightthickness=0)
         self._tab5_canvas = canvas
         sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set)
@@ -14892,7 +15016,7 @@ demucs.separate.main()
         if not cfg.get("skip_clear_warning", False):
             popup = tk.Toplevel(self.root)
             popup.title("Clear All Fields")
-            popup.configure(bg="#222222")
+            popup.configure(bg=APP_BG)
             popup.resizable(False, False)
             popup.grab_set()
             popup.update_idletasks()
@@ -15316,7 +15440,7 @@ demucs.separate.main()
                        variable=self.me_snap_var,
                        fg="#e6edf3", selectcolor="#0d1117",
                        activeforeground="#ffffff",
-                       bg="#222222", activebackground="#222222",
+                       bg=APP_BG, activebackground=APP_BG,
                        font=("Segoe UI", 8 if compact else 9))
         _me_snap_cb.pack(anchor="w")
         _me_snap_cb.after(50, lambda: _me_snap_cb.configure(
@@ -15333,7 +15457,7 @@ demucs.separate.main()
                        variable=self.me_reclassify_var,
                        fg="#00d4d4", selectcolor="#0d1117",
                        activeforeground="#00ffe0",
-                       bg="#222222", activebackground="#222222",
+                       bg=APP_BG, activebackground=APP_BG,
                        font=("Segoe UI", 8 if compact else 9, "bold"))
         _me_reclassify_cb.pack(anchor="w")
         _me_reclassify_cb.after(50, lambda: _me_reclassify_cb.configure(
@@ -15608,7 +15732,7 @@ demucs.separate.main()
             popup = tk.Toplevel(self.root)
             popup.overrideredirect(True)
             popup.attributes("-topmost", True)
-            popup.configure(bg="#222222")
+            popup.configure(bg=APP_BG)
             self._me_marker_popup = popup
             popup.bind("<MouseWheel>", lambda e: "break")
             popup.bind("<Button-4>", lambda e: "break")
@@ -15635,11 +15759,11 @@ demucs.separate.main()
             self.root.after(50, _bind_close)
 
             # Use plain tk.Frame so tk.Button bg colors aren't overridden
-            inner = tk.Frame(popup, bg="#222222", padx=8, pady=8)
+            inner = tk.Frame(popup, bg=APP_BG, padx=8, pady=8)
             inner.pack(fill=tk.BOTH, expand=True)
 
             fg = "#e0e0e0"
-            bg = "#222222"
+            bg = APP_BG
 
             # Apply mode
             self.me_marker_apply_all_var = tk.BooleanVar(value=getattr(self, 'me_marker_apply_all_var', tk.BooleanVar(value=True)).get() if hasattr(self, 'me_marker_apply_all_var') else True)
@@ -15912,7 +16036,7 @@ demucs.separate.main()
             popup = tk.Toplevel(self.root)
             popup.title("👻  Ghost Overlay")
             popup.resizable(False, False)
-            popup.configure(bg="#222222")
+            popup.configure(bg=APP_BG)
             popup.transient(self.root)
             self._me_ghost_popup = popup
             popup.bind("<MouseWheel>", lambda e: "break")
@@ -15921,9 +16045,9 @@ demucs.separate.main()
             popup.protocol("WM_DELETE_WINDOW",
                            lambda: (popup.destroy(),
                                     setattr(self, '_me_ghost_popup', None)))
-            inner = tk.Frame(popup, bg="#222222", padx=10, pady=10)
+            inner = tk.Frame(popup, bg=APP_BG, padx=10, pady=10)
             inner.pack(fill=tk.BOTH, expand=True)
-            fg, bg = "#e0e0e0", "#222222"
+            fg, bg = "#e0e0e0", APP_BG
             tk.Label(inner, text="👻  Ghost Overlay", bg=bg, fg="#b388ff",
                      font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 4))
             tk.Label(inner,
@@ -16066,7 +16190,7 @@ demucs.separate.main()
             popup = tk.Toplevel(self.root)
             popup.title("🎚  Stem Mixer")
             popup.resizable(False, False)
-            popup.configure(bg="#222222")
+            popup.configure(bg=APP_BG)
             popup.transient(self.root)
             self._me_mixer_popup = popup
             popup.bind("<MouseWheel>", lambda e: "break")
@@ -16075,9 +16199,9 @@ demucs.separate.main()
             popup.protocol("WM_DELETE_WINDOW", lambda: (popup.destroy(),
                                                          setattr(self, '_me_mixer_popup', None)))
 
-            inner = tk.Frame(popup, bg="#222222", padx=10, pady=10)
+            inner = tk.Frame(popup, bg=APP_BG, padx=10, pady=10)
             inner.pack(fill=tk.BOTH, expand=True)
-            fg, bg = "#e0e0e0", "#222222"
+            fg, bg = "#e0e0e0", APP_BG
 
             tk.Label(inner, text="🎚  Stem Volume Mixer", bg=bg, fg="#b388ff",
                      font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
@@ -17194,7 +17318,7 @@ demucs.separate.main()
 
         pop = tk.Toplevel(self.root)
         pop.title("🎵  Tempo Map")
-        pop.configure(bg="#222222")
+        pop.configure(bg=APP_BG)
         pop.resizable(True, False)
         pop.protocol("WM_DELETE_WINDOW", pop.withdraw)
         self._me_tempo_popup = pop
@@ -18204,7 +18328,7 @@ demucs.separate.main()
 
             # Lane label on left panel
             lc.create_rectangle(0, y1, self.ME_LABEL_W, y2,
-                                 fill=bg, outline="#222222")
+                                 fill=bg, outline=APP_BG)
             lc.create_rectangle(0, y1, 4, y2, fill=lane["color"], outline="")
             shape = lane["shape"]
             color = lane["color"]
@@ -18763,7 +18887,7 @@ demucs.separate.main()
         count    = len(self._me_selected_notes) if bulk else 1
 
         menu = tk.Menu(self.root, tearoff=0,
-                       bg="#222222", fg="#e0e0e0",
+                       bg=APP_BG, fg="#e0e0e0",
                        activebackground="#b388ff", activeforeground="#ffffff",
                        font=("Segoe UI", 9))
 
@@ -19044,7 +19168,7 @@ demucs.separate.main()
             }
             flag_desc = _FLAG_LABELS.get(flag_type, f'Flag ({flag_type})')
             menu = tk.Menu(self.root, tearoff=0,
-                           bg="#222222", fg="#c0c0d0",
+                           bg=APP_BG, fg="#c0c0d0",
                            activebackground="#2a2a5e", activeforeground="#ffffff",
                            relief="flat", bd=1)
             menu.add_command(label=flag_desc, state="disabled",
@@ -19405,7 +19529,7 @@ demucs.separate.main()
         = 'cancel' — the safe default so an accidental close never loses work."""
         popup = tk.Toplevel(self.root)
         popup.title("Unsaved MIDI Changes")
-        popup.configure(bg="#222222")
+        popup.configure(bg=APP_BG)
         popup.resizable(False, False)
         popup.transient(self.root)
         popup.grab_set()
@@ -20131,20 +20255,20 @@ demucs.separate.main()
         top.title("× Dedup")
         top.resizable(False, False)
         top.transient(self.root)
-        top.configure(bg="#222222")
-        f = tk.Frame(top, bg="#222222", padx=14, pady=12)
+        top.configure(bg=APP_BG)
+        f = tk.Frame(top, bg=APP_BG, padx=14, pady=12)
         f.pack()
         tk.Label(f, text="Remove duplicate notes in the same lane.",
-                 bg="#222222", fg="#e0e0e0", font=("Segoe UI", 9)).pack(anchor="w")
+                 bg=APP_BG, fg="#e0e0e0", font=("Segoe UI", 9)).pack(anchor="w")
         tk.Label(f, text="Two notes in the same lane within the gap window → second is removed.",
-                 bg="#222222", fg="#888", font=("Segoe UI", 8)).pack(anchor="w", pady=(2, 8))
+                 bg=APP_BG, fg="#888", font=("Segoe UI", 8)).pack(anchor="w", pady=(2, 8))
 
-        row = tk.Frame(f, bg="#222222")
+        row = tk.Frame(f, bg=APP_BG)
         row.pack(anchor="w")
-        tk.Label(row, text="Gap:", bg="#222222", fg="#e0e0e0",
+        tk.Label(row, text="Gap:", bg=APP_BG, fg="#e0e0e0",
                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 8))
         gap_var = tk.IntVar(value=30)
-        gap_lbl = tk.Label(row, text="30 ms", bg="#222222", fg="#b388ff",
+        gap_lbl = tk.Label(row, text="30 ms", bg=APP_BG, fg="#b388ff",
                            font=("Segoe UI", 9))
         _dd_sf = ttk.Frame(row)
         sc = ttk.Scale(_dd_sf, from_=0, to=100, variable=gap_var,
@@ -20163,24 +20287,24 @@ demucs.separate.main()
         ttk.Separator(f, orient="horizontal").pack(fill=tk.X, pady=(10, 8))
 
         tk.Label(f, text="Impossible 3-hit cluster removal",
-                 bg="#222222", fg="#ffffff", font=("Segoe UI", 9, "bold")).pack(anchor="w")
+                 bg=APP_BG, fg="#ffffff", font=("Segoe UI", 9, "bold")).pack(anchor="w")
         tk.Label(f,
                  text="A drummer has 2 hands — hitting 2 cymbals AND a snare/tom simultaneously\n"
                       "is physically impossible. If a cymbal lands within the window of a snare\n"
                       "or tom hit AND another cymbal is also present, the lower-priority cymbal\n"
                       "is removed.  Priority kept: Crash > Ride > Hi-Hat.",
-                 bg="#222222", fg="#888", font=("Segoe UI", 8),
+                 bg=APP_BG, fg="#888", font=("Segoe UI", 8),
                  justify=tk.LEFT).pack(anchor="w", pady=(2, 6))
         triple_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(f,
                         text="Remove impossible cymbal clusters  (2 cymbals + snare/tom)",
                         variable=triple_var).pack(anchor="w")
         triple_win_var = tk.IntVar(value=20)
-        triple_row = tk.Frame(f, bg="#222222")
+        triple_row = tk.Frame(f, bg=APP_BG)
         triple_row.pack(anchor="w", pady=(4, 0))
-        tk.Label(triple_row, text="Cluster window:", bg="#222222", fg="#888",
+        tk.Label(triple_row, text="Cluster window:", bg=APP_BG, fg="#888",
                  font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(16, 6))
-        triple_lbl = tk.Label(triple_row, text="20 ms", bg="#222222", fg="#b388ff",
+        triple_lbl = tk.Label(triple_row, text="20 ms", bg=APP_BG, fg="#b388ff",
                               font=("Segoe UI", 8))
         _tr_sf = ttk.Frame(triple_row)
         ttk.Scale(_tr_sf, from_=5, to=50, variable=triple_win_var,
@@ -20191,7 +20315,7 @@ demucs.separate.main()
         _tr_sf.pack(side=tk.LEFT)
         triple_lbl.pack(side=tk.LEFT, padx=(4, 0))
 
-        btn_row = tk.Frame(f, bg="#222222")
+        btn_row = tk.Frame(f, bg=APP_BG)
         btn_row.pack(pady=(10, 0))
 
         def _apply():
@@ -20482,19 +20606,19 @@ demucs.separate.main()
         top.title("⊞~  Soft Quantize")
         top.resizable(False, False)
         top.transient(self.root)
-        top.configure(bg="#222222")
-        f = tk.Frame(top, bg="#222222", padx=14, pady=12)
+        top.configure(bg=APP_BG)
+        f = tk.Frame(top, bg=APP_BG, padx=14, pady=12)
         f.pack()
         tk.Label(f, text="Only snap notes within this distance of a grid line:",
-                 bg="#222222", fg="#e0e0e0", font=("Segoe UI", 9)).pack(anchor="w")
+                 bg=APP_BG, fg="#e0e0e0", font=("Segoe UI", 9)).pack(anchor="w")
         tk.Label(f, text="Notes further away are left untouched (intentional timing preserved).",
-                 bg="#222222", fg="#888", font=("Segoe UI", 8)).pack(anchor="w", pady=(2, 8))
+                 bg=APP_BG, fg="#888", font=("Segoe UI", 8)).pack(anchor="w", pady=(2, 8))
         win_var = tk.IntVar(value=25)
-        row = tk.Frame(f, bg="#222222")
+        row = tk.Frame(f, bg=APP_BG)
         row.pack(anchor="w")
-        tk.Label(row, text="Window:", bg="#222222", fg="#e0e0e0",
+        tk.Label(row, text="Window:", bg=APP_BG, fg="#e0e0e0",
                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 8))
-        win_lbl = tk.Label(row, text="25 ms", bg="#222222", fg="#b388ff",
+        win_lbl = tk.Label(row, text="25 ms", bg=APP_BG, fg="#b388ff",
                            font=("Segoe UI", 9))
         _sq_sf = ttk.Frame(row)
         sc = ttk.Scale(_sq_sf, from_=5, to=80, variable=win_var, orient="horizontal",
@@ -20504,9 +20628,9 @@ demucs.separate.main()
         _tick_strip(_sq_sf, 160)
         _sq_sf.pack(side=tk.LEFT)
         win_lbl.pack(side=tk.LEFT, padx=(6, 0))
-        grid_row = tk.Frame(f, bg="#222222")
+        grid_row = tk.Frame(f, bg=APP_BG)
         grid_row.pack(anchor="w", pady=(8, 0))
-        tk.Label(grid_row, text="Grid:", bg="#222222", fg="#e0e0e0",
+        tk.Label(grid_row, text="Grid:", bg=APP_BG, fg="#e0e0e0",
                  font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 8))
         subdiv_var = tk.StringVar(value="16th")
         for label, val in [("8th", "8"), ("16th", "16"), ("32nd", "32")]:
@@ -20515,7 +20639,7 @@ demucs.separate.main()
         scope_var = tk.BooleanVar(value=bool(self._me_selected_notes))
         ttk.Checkbutton(f, text="Selected notes only",
                         variable=scope_var).pack(anchor="w", pady=(6, 0))
-        btn_row = tk.Frame(f, bg="#222222")
+        btn_row = tk.Frame(f, bg=APP_BG)
         btn_row.pack(pady=(10, 0))
 
         def _apply():
@@ -20649,12 +20773,12 @@ demucs.separate.main()
         top.title("🔍  Review Issues")
         top.resizable(False, False)
         top.transient(self.root)
-        top.configure(bg="#222222")
-        f = tk.Frame(top, bg="#222222", padx=16, pady=14)
+        top.configure(bg=APP_BG)
+        f = tk.Frame(top, bg=APP_BG, padx=16, pady=14)
         f.pack()
 
         tk.Label(f, text="🔍  Post-Generation Issue Summary",
-                 bg="#222222", fg="#ffffff",
+                 bg=APP_BG, fg="#ffffff",
                  font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 8))
 
         def _valid_sorted(idxs):
@@ -20814,10 +20938,10 @@ demucs.separate.main()
             return _remove_indices(set(low_conf), "low-confidence")
 
         def _row(icon, count, desc, color, jump_idx_list, auto_fix=None, auto_label="🔧 Auto Fix"):
-            r = tk.Frame(f, bg="#222222")
+            r = tk.Frame(f, bg=APP_BG)
             r.pack(fill=tk.X, pady=(0, 4))
             tk.Label(r, text=f"{icon}  {count}  {desc}",
-                     bg="#222222", fg=color,
+                     bg=APP_BG, fg=color,
                      font=("Segoe UI", 9)).pack(side=tk.LEFT)
             if jump_idx_list:
                 valid_idxs = _valid_sorted(jump_idx_list)
@@ -20891,15 +21015,15 @@ demucs.separate.main()
                  "#ff1493", low_conf, _apply_low_conf_fix)
 
         tk.Label(f, text=f"Total notes in chart:  {n_notes}",
-                 bg="#222222", fg="#888",
+                 bg=APP_BG, fg="#888",
                  font=("Segoe UI", 8)).pack(anchor="w", pady=(8, 4))
         tk.Label(f,
                  text="Yellow outline = same-onset misclassification  (lime green on Ride notes)  |  Hot pink stripes = low-confidence ML  |  Orange outline = Detection Troubleshooter flag\n"
                       "Use Select & Jump for review, or Auto Fix for cautious proposed fixes. Ctrl+Z to undo.",
-                 bg="#222222", fg="#666",
+                 bg=APP_BG, fg="#666",
                  font=("Segoe UI", 8), justify=tk.LEFT).pack(anchor="w")
 
-        btn_row = tk.Frame(f, bg="#222222")
+        btn_row = tk.Frame(f, bg=APP_BG)
         btn_row.pack(pady=(10, 0))
         ttk.Button(btn_row, text="Enable Hot Pink Stripes",
                    command=lambda: [self.me_conf_shade_var.set(True), self._me_redraw()]
@@ -21135,7 +21259,7 @@ demucs.separate.main()
         top = tk.Toplevel(self.root)
         top.title("✂  Velocity Filter")
         top.resizable(False, False)
-        top.configure(bg="#222222")
+        top.configure(bg=APP_BG)
         top.grab_set()
         top.transient(self.root)
         top.lift()
@@ -22425,7 +22549,7 @@ demucs.separate.main()
 
     def _build_sheet_music_tab(self, parent):
         """Tab 7 — Sheet Music (MusicXML) → MIDI converter."""
-        canvas = tk.Canvas(parent, bg="#222222", highlightthickness=0)
+        canvas = tk.Canvas(parent, bg=APP_BG, highlightthickness=0)
         self._tab9_canvas = canvas
         sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set)
@@ -24638,7 +24762,7 @@ demucs.separate.main()
         ttk.Label(log_col, text="ACTIVITY LOG",
                   font=("Segoe UI", 8, "bold"), foreground="#9a9ab0").pack(anchor="w")
         self.yt_log = scrolledtext.ScrolledText(log_col, height=14, state="disabled",
-                                                 font=("Consolas", 9), bg="#0d0d1a",
+                                                 font=("Consolas", 9), bg=LOG_BG,
                                                  fg="#c0c0d0", wrap=tk.WORD)
         self.yt_log.pack(fill=tk.BOTH, expand=True)
         self._setup_pretty_log_widget(self.yt_log, bg="#0d0d1a")
@@ -25184,7 +25308,7 @@ demucs.separate.main()
             song = os.path.basename(path)
         dlg = tk.Toplevel(self.root)
         dlg.title("Are you sure?")
-        dlg.configure(bg="#222222")
+        dlg.configure(bg=APP_BG)
         dlg.resizable(False, False)
         dlg.transient(self.root)
         dlg.grab_set()
@@ -26696,7 +26820,7 @@ demucs.separate.main()
 
         dlg = tk.Toplevel(self.root)
         dlg.title("Already split")
-        dlg.configure(bg="#222222")
+        dlg.configure(bg=APP_BG)
         dlg.resizable(False, False)
         dlg.transient(self.root)
         dlg.grab_set()
@@ -28190,7 +28314,7 @@ demucs.separate.main()
 
     def _build_help_tab(self, parent):
         """Quick Start & FAQ tab — two-column layout."""
-        canvas = tk.Canvas(parent, bg="#222222", highlightthickness=0)
+        canvas = tk.Canvas(parent, bg=APP_BG, highlightthickness=0)
         self._tab10_canvas = canvas
         sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set)
@@ -28438,7 +28562,7 @@ demucs.separate.main()
                     fg   = "#ffffff" if first_block else color
                     font = ("Segoe UI", 9, "bold") if first_block else ("Segoe UI", 9)
                     pady = (6, 2) if first_block else (1, 2)
-                    lbl  = tk.Label(f, text=block, foreground=fg, background="#222222",
+                    lbl  = tk.Label(f, text=block, foreground=fg, background=APP_BG,
                                     font=font, justify=tk.LEFT,
                                     wraplength=WR if first_block else WR - 12,
                                     anchor="w")
@@ -28492,7 +28616,7 @@ demucs.separate.main()
         whats_new_frame.pack(fill=tk.X, pady=(0, 12))
         def wn_entry(parent, text, color="#c0c0d0"):
             """Release-note entry with readable section breaks."""
-            card = tk.Frame(parent, bg="#222222")
+            card = tk.Frame(parent, bg=APP_BG)
             card.pack(fill=tk.X, pady=(8, 14))
 
             top_line = tk.Frame(card, bg="#3a3a3a", height=1)
@@ -28512,7 +28636,7 @@ demucs.separate.main()
                 if not body_lines:
                     return
                 lbl = tk.Label(card, text="\n".join(body_lines),
-                               foreground=color, background="#222222",
+                               foreground=color, background=APP_BG,
                                font=("Segoe UI", 9), justify=tk.LEFT,
                                wraplength=WR - 14, anchor="w")
                 lbl.pack(anchor="w", padx=(14, 0), pady=(1, 8), fill=tk.X)
@@ -28531,7 +28655,7 @@ demucs.separate.main()
                     continue
                 if not title_done:
                     lbl = tk.Label(card, text=raw_line.strip(),
-                                   foreground="#ffffff", background="#222222",
+                                   foreground="#ffffff", background=APP_BG,
                                    font=("Segoe UI", 9, "bold"),
                                    justify=tk.LEFT, wraplength=WR, anchor="w")
                     lbl.pack(anchor="w", pady=(0, 6), fill=tk.X)
@@ -29977,7 +30101,7 @@ demucs.separate.main()
               "  BPM tweak in the Song Tester (e.g. 143.0 → 142.8) instead.\n"
               "  The Tempo Map is for hard tempo changes, not gradual drift.")
         s2_lbl = tk.Label(s, justify=tk.LEFT, wraplength=440, fg="#00e5ff",
-                          bg="#222222",
+                          bg=APP_BG,
                           font=("Segoe UI", 9),
                           text="Step-by-step: Using the Tempo Map\n\n"
                                "1.  Load your MIDI and audio in the MIDI Editor\n\n"
@@ -30608,7 +30732,7 @@ demucs.separate.main()
         entry(s, "Paste your Audio→MIDI log here:")
 
         dt_log_box = scrolledtext.ScrolledText(
-            s, height=7, bg="#0d1117", fg="#58a6ff",
+            s, height=7, bg=LOG_BG, fg="#58a6ff",
             insertbackground="#ffffff", relief="flat",
             font=("Consolas", 8), wrap=tk.WORD)
         dt_log_box.pack(fill=tk.X, pady=(2, 8))
@@ -30616,7 +30740,7 @@ demucs.separate.main()
 
         entry(s, "What went wrong?  (check all that apply)")
 
-        sym_frame = tk.Frame(s, bg="#222222")
+        sym_frame = tk.Frame(s, bg=APP_BG)
         sym_frame.pack(fill=tk.X, pady=(4, 0))
         sym_frame.columnconfigure(0, weight=1)
         sym_frame.columnconfigure(1, weight=1)
@@ -30644,8 +30768,8 @@ demucs.separate.main()
             row, col = divmod(i, 2)
             tk.Checkbutton(
                 sym_frame, text=label, variable=var,
-                bg="#222222", fg="#c0c0d0", selectcolor="#0d1117",
-                activeforeground="#ffffff", activebackground="#222222",
+                bg=APP_BG, fg="#c0c0d0", selectcolor="#0d1117",
+                activeforeground="#ffffff", activebackground=APP_BG,
                 font=("Segoe UI", 9), anchor="w"
             ).grid(row=row, column=col, sticky="w", pady=1, padx=(0, 8))
 
@@ -30653,7 +30777,7 @@ demucs.separate.main()
         dt_btn_row.pack(fill=tk.X, pady=(10, 4))
 
         dt_out = scrolledtext.ScrolledText(
-            s, height=12, bg="#0d1117", fg="#c0c0d0",
+            s, height=12, bg=LOG_BG, fg="#c0c0d0",
             relief="flat", font=("Consolas", 8),
             wrap=tk.WORD, state="disabled")
         dt_out.pack(fill=tk.X, pady=(4, 0))
@@ -31177,17 +31301,17 @@ demucs.separate.main()
                 return
             pop = tk.Toplevel(self.root)
             pop.title("Apply / Flag Suggestions")
-            pop.configure(bg="#222222")
+            pop.configure(bg=APP_BG)
             pop.resizable(False, False)
             pop.grab_set()
 
             tk.Label(pop, text="Apply / Flag Suggestions",
-                     bg="#222222", fg="#ffffff",
+                     bg=APP_BG, fg="#ffffff",
                      font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
             tk.Label(pop,
                      text="Settings take effect on the next Audio→MIDI run.\n"
                           "Flags open the MIDI Editor with problem notes highlighted in orange.",
-                     bg="#222222", fg="#8b949e",
+                     bg=APP_BG, fg="#8b949e",
                      font=("Segoe UI", 8), justify=tk.LEFT).pack(anchor="w", padx=16, pady=(0, 8))
 
             ttk.Separator(pop, orient="horizontal").pack(fill=tk.X, padx=12, pady=(0, 6))
@@ -31198,7 +31322,7 @@ demucs.separate.main()
             # ── Section 1: Audio→MIDI Settings ────────────────────────────
             if _dt_actions:
                 tk.Label(pop, text="⚙  Adjust Audio→MIDI Settings",
-                         bg="#222222", fg="#00d4d4",
+                         bg=APP_BG, fg="#00d4d4",
                          font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=12, pady=(0, 3))
                 for act in _dt_actions:
                     var = tk.BooleanVar(value=True)
@@ -31222,12 +31346,12 @@ demucs.separate.main()
                 if _dt_actions:
                     ttk.Separator(pop, orient="horizontal").pack(fill=tk.X, padx=12, pady=(8, 6))
                 tk.Label(pop, text="🔍  Flag in MIDI Editor",
-                         bg="#222222", fg="#ff8c00",
+                         bg=APP_BG, fg="#ff8c00",
                          font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=12, pady=(0, 3))
                 tk.Label(pop,
                          text="Flagged notes get an orange outline.  "
                               "Use Reclassify, Dedup, or Vel Filter to fix them.",
-                         bg="#222222", fg="#666",
+                         bg=APP_BG, fg="#666",
                          font=("Segoe UI", 8), justify=tk.LEFT).pack(anchor="w", padx=16, pady=(0, 4))
                 for act in _dt_flag_actions:
                     var = tk.BooleanVar(value=True)
@@ -31249,7 +31373,7 @@ demucs.separate.main()
             ttk.Separator(pop, orient="horizontal").pack(fill=tk.X, padx=12, pady=(8, 4))
 
             all_cb_vars = cb_vars_settings + cb_vars_flags
-            sel_row = tk.Frame(pop, bg="#222222")
+            sel_row = tk.Frame(pop, bg=APP_BG)
             sel_row.pack(fill=tk.X, padx=12, pady=(0, 4))
             ttk.Button(sel_row, text="Select All",
                        command=lambda: [v.set(True)  for v in all_cb_vars]).pack(side=tk.LEFT, padx=(0, 6))
@@ -31308,7 +31432,7 @@ demucs.separate.main()
                     messagebox.showinfo("Suggestions Applied",
                         "\n\n".join(msg_parts), parent=self.root)
 
-            btn_row2 = tk.Frame(pop, bg="#222222")
+            btn_row2 = tk.Frame(pop, bg=APP_BG)
             btn_row2.pack(fill=tk.X, padx=12, pady=(4, 14))
             ttk.Button(btn_row2, text="✓  Apply Selected",
                        style="Convert.TButton",
@@ -32427,7 +32551,7 @@ demucs.separate.main()
         dlg.title("🎹  MIDI Controls & Learn Mode  (BETA)")
         dlg.resizable(False, False)
         try:
-            dlg.configure(bg="#222222")
+            dlg.configure(bg=APP_BG)
         except Exception:
             pass
         dlg.grab_set()
@@ -32574,7 +32698,7 @@ demucs.separate.main()
             name_row.grid(row=row_i, column=0, sticky="w", padx=(0, 8),
                           pady=2)
             sw = tk.Canvas(name_row, width=14, height=14,
-                           bg="#222222", highlightthickness=0)
+                           bg=APP_BG, highlightthickness=0)
             sw.create_rectangle(2, 2, 12, 12, fill=lane_color,
                                 outline=lane_color)
             sw.pack(side=tk.LEFT, padx=(0, 6))
@@ -32584,7 +32708,7 @@ demucs.separate.main()
 
             # Live hit indicator canvas (pulses on matching note_on)
             hit_canvas = tk.Canvas(lanes_frame, width=40, height=20,
-                                   bg="#222222", highlightthickness=0)
+                                   bg=APP_BG, highlightthickness=0)
             hit_canvas.create_rectangle(
                 2, 2, 38, 18, fill="#1a1a2e",
                 outline=lane_color, width=1, tags="hit_bg")
@@ -32693,7 +32817,7 @@ demucs.separate.main()
                       row=_row_offset + 3, column=0, columnspan=4,
                       sticky="w", pady=(4, 2))
         test = scrolledtext.ScrolledText(outer, height=6, width=68,
-                                         bg="#111827", fg="#d7e7ff",
+                                         bg=LOG_BG, fg="#d7e7ff",
                                          insertbackground="#d7e7ff",
                                          font=("Consolas", 9))
         test.grid(row=_row_offset + 4, column=0, columnspan=4, sticky="ew")
@@ -34818,7 +34942,7 @@ demucs.separate.main()
         # Lane dividers
         for i in range(n_lanes + 1):
             x = int(i * lane_w)
-            c.create_line(x, 0, x, h, fill="#222222", width=1)
+            c.create_line(x, 0, x, h, fill=APP_BG, width=1)
 
     def _viz_draw_practice_legend(self):
         """Draw the fixed Practice mode legend with keyboard bindings."""
@@ -34870,7 +34994,7 @@ demucs.separate.main()
                                    width=1)
         for i in range(n_lanes + 1):
             x = int(i * lane_w)
-            c.create_line(x, 0, x, h, fill="#222222", width=1)
+            c.create_line(x, 0, x, h, fill=APP_BG, width=1)
 
     def _viz_draw_hit_line_targets(self, c, hit_y, lane_w, note_scale,
                                    use_squares=False):
@@ -35205,7 +35329,7 @@ demucs.separate.main()
 
     def _build_tester_tab(self, parent):
         """Diagnostic tab — checks MIDI/audio sync and recommends settings."""
-        canvas = tk.Canvas(parent, bg="#222222", highlightthickness=0)
+        canvas = tk.Canvas(parent, bg=APP_BG, highlightthickness=0)
         self._tab7_canvas = canvas
         sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set)
@@ -36285,7 +36409,7 @@ demucs.separate.main()
         """
         popup = tk.Toplevel(self.root)
         popup.title("⚠  MP3 File Warning")
-        popup.configure(bg="#222222")
+        popup.configure(bg=APP_BG)
         popup.resizable(False, False)
         popup.grab_set()  # Modal
 
@@ -36423,7 +36547,7 @@ demucs.separate.main()
     # =========================================================================
     def _build_batch_tab(self, parent):
         """Batch conversion UI — 3 independent song slots."""
-        canvas = tk.Canvas(parent, bg="#222222", highlightthickness=0)
+        canvas = tk.Canvas(parent, bg=APP_BG, highlightthickness=0)
         self._tab3_canvas = canvas
         sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set)
@@ -38108,7 +38232,7 @@ demucs.separate.main()
 
         popup = tk.Toplevel(self.root)
         popup.overrideredirect(True)            # No window decorations
-        popup.configure(bg="#222222", bd=1, relief="solid")
+        popup.configure(bg=APP_BG, bd=1, relief="solid")
         popup.attributes("-topmost", True)
 
         def _close_popup(*_):
@@ -38147,7 +38271,7 @@ demucs.separate.main()
         # purple `#b388ff` for on-brand consistency. White text on hover
         # stays for legibility against the purple background.
         def _make_row_hover(row_widget, name_label, hover_bg="#b388ff",
-                            hover_fg="#ffffff", normal_bg="#222222",
+                            hover_fg="#ffffff", normal_bg=APP_BG,
                             normal_fg="#e0e0e0"):
             def _enter(_e):
                 row_widget.configure(bg=hover_bg)
@@ -38160,11 +38284,11 @@ demucs.separate.main()
         if recent:
             for path in recent:
                 display = os.path.basename(path)
-                row = tk.Frame(popup, bg="#222222")
+                row = tk.Frame(popup, bg=APP_BG)
                 row.pack(fill=tk.X)
 
                 name_lbl = tk.Label(row, text=display, fg="#e0e0e0",
-                                    bg="#222222", font=("Segoe UI", 9),
+                                    bg=APP_BG, font=("Segoe UI", 9),
                                     anchor="w", padx=10, pady=3,
                                     cursor="hand2")
                 name_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -38195,13 +38319,13 @@ demucs.separate.main()
                 # to match radio button color per owner ask.
                 # v4.4.33 — was red `#e94560`; swapped to purple.
                 x_lbl = tk.Label(row, text="✕", fg="#b388ff",
-                                 bg="#222222", font=("Segoe UI", 9, "bold"),
+                                 bg=APP_BG, font=("Segoe UI", 9, "bold"),
                                  padx=10, pady=3, cursor="hand2")
                 x_lbl.pack(side=tk.RIGHT)
                 def _x_enter(_e, b=x_lbl):
                     b.configure(bg="#7c3aed", fg="#ffffff")
                 def _x_leave(_e, b=x_lbl):
-                    b.configure(bg="#222222", fg="#b388ff")
+                    b.configure(bg=APP_BG, fg="#b388ff")
                 x_lbl.bind("<Enter>", _x_enter)
                 x_lbl.bind("<Leave>", _x_leave)
                 def _remove_entry(_e, p=path):
@@ -38219,10 +38343,10 @@ demucs.separate.main()
             sep = tk.Frame(popup, bg="#444444", height=1)
             sep.pack(fill=tk.X, padx=2, pady=(2, 2))
 
-            clear_row = tk.Frame(popup, bg="#222222")
+            clear_row = tk.Frame(popup, bg=APP_BG)
             clear_row.pack(fill=tk.X)
             clear_lbl = tk.Label(clear_row, text="Clear recent list",
-                                 fg="#e0e0e0", bg="#222222",
+                                 fg="#e0e0e0", bg=APP_BG,
                                  font=("Segoe UI", 9), anchor="w",
                                  padx=10, pady=3, cursor="hand2")
             clear_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -38237,7 +38361,7 @@ demucs.separate.main()
             clear_row.bind("<Button-1>", _clear_all)
         else:
             empty_lbl = tk.Label(popup, text="(no recent files)",
-                                 fg="#888888", bg="#222222",
+                                 fg="#888888", bg=APP_BG,
                                  font=("Segoe UI", 9), anchor="w",
                                  padx=10, pady=3)
             empty_lbl.pack(fill=tk.X)

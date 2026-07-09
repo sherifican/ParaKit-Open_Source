@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.9.3  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.9.4  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,17 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.9.4   --   2026-07-09
+------------------------------------------------------------------------------
+  - New Dark / Light theme toggle, up next to the "Check for Updates" button.
+    "Dark" is a new deep-purple look (now the default); "Light" is ParaKit's
+    original gray. It switches instantly -- no restart -- and remembers your
+    choice next time you open the app.
+  - Fixed inconsistent log window colors. Some tabs' activity logs showed up
+    lighter/gray while others were black; now every log across the app uses the
+    same background, and it follows whichever theme you're in.
 
 ------------------------------------------------------------------------------
   v4.5.9.3   --   2026-07-08
