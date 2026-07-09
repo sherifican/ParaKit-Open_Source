@@ -5457,7 +5457,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.9.2"
+    VERSION = "4.5.9.3"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -7060,7 +7060,7 @@ class MidiToRlrrApp:
         except Exception:
             return False
 
-    def _sync_manifest_deps(self, app_dir):
+    def _sync_manifest_deps(self, app_dir, progress=None):
         """Fetch update_manifest.json and sync every dependency file it lists into
         app_dir. Each file is hash-checked (unchanged files are skipped — the big
         models aren't re-downloaded), path-sanitized (no traversal / absolute /
@@ -7068,7 +7068,12 @@ class MidiToRlrrApp:
         hash-verified after download, and backed up (*.prev) before an atomic
         replace. Does NOT touch the main 'ParaKit v4.0.py'. Synchronous, no UI —
         call from a worker thread. Returns (updated_list, skipped_count,
-        failed_list); a repo with no manifest yields ([], 0, [])."""
+        failed_list); a repo with no manifest yields ([], 0, []).
+
+        *progress*, if given, is called as progress(status, rel, done, total):
+        once with status="start" (rel=None, done=0), then per file with
+        status in {"skipped","updated","failed"}. Used to drive a live progress
+        log; any exception it raises is swallowed so the sync never breaks on UI."""
         import urllib.request, urllib.parse, hashlib, json as _json
 
         def _fetch(url, timeout=120):
@@ -7105,13 +7110,29 @@ class MidiToRlrrApp:
                 return None
             return full
 
+        total = len(dep)
+        if progress:
+            try:
+                progress("start", None, 0, total)
+            except Exception:
+                pass
+
         updated, skipped, failed = [], 0, []
-        for ent in dep:
+        for idx, ent in enumerate(dep):
             rel = ent.get("path") if isinstance(ent, dict) else ent
             want = ent.get("sha256") if isinstance(ent, dict) else None
             local = _safe(rel)
+
+            def _emit(status):
+                if progress:
+                    try:
+                        progress(status, rel, idx + 1, total)
+                    except Exception:
+                        pass
+
             if not local:
                 failed.append(f"{rel} (unsafe path)")
+                _emit("failed")
                 continue
             if not want:
                 # No hash in the manifest => refuse to install it. Every real
@@ -7119,17 +7140,20 @@ class MidiToRlrrApp:
                 # entry can only come from a malformed/hostile manifest, and we
                 # never write an unverified (potentially executable) file.
                 failed.append(f"{rel} (no hash in manifest)")
+                _emit("failed")
                 continue
             try:
                 if want and os.path.isfile(local):
                     with open(local, "rb") as _lf:
                         if hashlib.sha256(_lf.read()).hexdigest() == want:
                             skipped += 1
+                            _emit("skipped")
                             continue   # already current — don't re-download
                 blob = _fetch(self.PARAKIT_RAW_BASE
                               + urllib.parse.quote(str(rel), safe="/"))
                 if want and hashlib.sha256(blob).hexdigest() != want:
                     failed.append(f"{rel} (hash mismatch)")
+                    _emit("failed")
                     continue
                 d = os.path.dirname(local)
                 if d:
@@ -7149,8 +7173,10 @@ class MidiToRlrrApp:
                         pass
                 os.replace(tmp, local)
                 updated.append(rel)
+                _emit("updated")
             except Exception as e:
                 failed.append(f"{rel} ({e})")
+                _emit("failed")
 
         return updated, skipped, failed
 
@@ -7176,6 +7202,120 @@ class MidiToRlrrApp:
             return
         app_dir = os.path.dirname(target)
 
+        # Close the little "Update Available" popup and open a live progress
+        # window (scrolling log + progress bar), so the user sees exactly what is
+        # being downloaded instead of a silent, seemingly-dead button.
+        if dlg is not None:
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+
+        prog = tk.Toplevel(self.root)
+        prog.title("Updating ParaKit")
+        prog.configure(bg="#222222")
+        prog.transient(self.root)
+        prog.grab_set()
+        try:
+            pw, ph = 600, 460
+            px = self.root.winfo_x() + (self.root.winfo_width() - pw) // 2
+            py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
+            prog.geometry(f"{pw}x{ph}+{px}+{py}")
+        except Exception:
+            pass
+
+        pframe = ttk.Frame(prog, padding=16)
+        pframe.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(pframe, text=f"Downloading ParaKit v{new_ver}…",
+                  font=("Segoe UI", 12, "bold"),
+                  foreground="#b388ff").pack(anchor="w")
+        status_var = tk.StringVar(value="Starting…")
+        ttk.Label(pframe, textvariable=status_var,
+                  style="Sub.TLabel").pack(anchor="w", pady=(2, 8))
+        pbar = ttk.Progressbar(pframe, mode="determinate", maximum=100, value=0)
+        pbar.pack(fill=tk.X, pady=(0, 8))
+
+        log_row = ttk.Frame(pframe)
+        log_row.pack(fill=tk.BOTH, expand=True)
+        log_txt = tk.Text(log_row, height=14, wrap="none", bg="#0d1117",
+                          fg="#c9d1d9", insertbackground="#c9d1d9", relief="flat",
+                          bd=0, padx=8, pady=6, font=("Consolas", 9),
+                          highlightthickness=1, highlightbackground="#2a2440")
+        log_sb = ttk.Scrollbar(log_row, orient="vertical", command=log_txt.yview)
+        log_txt.configure(yscrollcommand=log_sb.set)
+        log_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        log_txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        log_txt.tag_configure("hdr", foreground="#b388ff")
+        log_txt.tag_configure("ok", foreground="#00c853")
+        log_txt.tag_configure("dl", foreground="#58a6ff")
+        log_txt.tag_configure("err", foreground="#e63946")
+        log_txt.tag_configure("dim", foreground="#8a8a8a")
+        log_txt.configure(state="disabled")
+
+        btn_row = ttk.Frame(pframe)
+        btn_row.pack(anchor="e", pady=(12, 0))
+        close_btn = ttk.Button(btn_row, text="Close", state=tk.DISABLED,
+                               command=prog.destroy)
+        close_btn.pack(side=tk.RIGHT)
+        # Block the window's [X] while the worker is mid-update (files are being
+        # replaced on disk); re-enabled with the Close button when done.
+        prog.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        # --- thread-safe UI helpers: the worker calls these; they marshal onto
+        #     the Tk main thread via root.after so widgets are only touched there.
+        def _ui(fn):
+            try:
+                self.root.after(0, fn)
+            except Exception:
+                pass
+
+        def log(line, tag="dim"):
+            def _do():
+                try:
+                    log_txt.configure(state="normal")
+                    log_txt.insert("end", line + "\n", (tag,))
+                    log_txt.see("end")
+                    log_txt.configure(state="disabled")
+                except Exception:
+                    pass
+            _ui(_do)
+
+        def set_status(s):
+            _ui(lambda: status_var.set(s))
+
+        def set_prog(done, total):
+            def _do():
+                try:
+                    pbar.configure(maximum=max(1, total), value=done)
+                except Exception:
+                    pass
+            _ui(_do)
+
+        def finish(ok, summary):
+            def _do():
+                try:
+                    status_var.set(summary)
+                    pbar.configure(value=pbar.cget("maximum"))
+                    close_btn.configure(state=tk.NORMAL)
+                    prog.protocol("WM_DELETE_WINDOW", prog.destroy)
+                except Exception:
+                    pass
+            _ui(_do)
+
+        def dep_progress(status, rel, done, total):
+            if status == "start":
+                log(f"Checking {total} supporting file(s)…", "hdr")
+                set_prog(0, total)
+                return
+            set_prog(done, total)
+            if status == "updated":
+                log(f"  ⬇  downloaded    {rel}", "dl")
+            elif status == "skipped":
+                log(f"  ✓  up to date    {rel}", "ok")
+            elif status == "failed":
+                log(f"  ✗  failed        {rel}", "err")
+            set_status(f"Supporting files: {done}/{total}…")
+
         def _work():
             import urllib.request
 
@@ -7185,42 +7325,36 @@ class MidiToRlrrApp:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     return resp.read()
 
-            def _done(ok, title, msg):
-                def _show():
-                    if dlg is not None:
-                        try:
-                            dlg.destroy()
-                        except Exception:
-                            pass
-                    (messagebox.showinfo if ok else messagebox.showerror)(title, msg)
-                try:
-                    self.root.after(0, _show)
-                except Exception:
-                    pass
-
             # 1) main 'ParaKit v4.0.py' — download + version-validate BEFORE touching
             #    anything (so a README/.py mismatch on GitHub can't install a wrong file)
+            set_status("Downloading the main app file…")
+            log("Downloading the main app (ParaKit v4.0.py)…", "hdr")
             try:
                 data = _fetch(self.PARAKIT_PY_RAW_URL)
                 text = data.decode("utf-8", "replace")
             except Exception as e:
-                _done(False, "Download Failed",
-                      f"Could not download the update:\n{e}")
+                log(f"✗ Download failed: {e}", "err")
+                finish(False, f"Download failed — nothing was changed. ({e})")
                 return
             if (len(data) < 200000 or "class MidiToRlrrApp" not in text
                     or f'VERSION = "{new_ver}"' not in text):
-                _done(False, "Update Aborted",
-                      "The downloaded ParaKit didn't look like a valid build (or its "
-                      "version didn't match), so nothing was changed. Use 'Open "
-                      "GitHub' to download it manually.")
+                log("✗ The downloaded file didn't look like a valid v"
+                    f"{new_ver} build — aborting, nothing changed.", "err")
+                finish(False, "Update aborted — the download didn't validate. "
+                              "Use 'Open GitHub' to download it manually.")
                 return
+            log(f"✓ Main app downloaded and validated ({len(data)//1024} KB).", "ok")
 
             # 2) sync every dependency file the manifest lists (best-effort — a
             #    pre-v4.5.5.1 repo may lack the manifest, so nothing gets synced).
-            updated, skipped, failed = self._sync_manifest_deps(app_dir)
+            set_status("Checking supporting files…")
+            updated, skipped, failed = self._sync_manifest_deps(
+                app_dir, progress=dep_progress)
 
             # 3) write the main .py LAST — so a half-failed dependency set is never
             #    left running under the new .py before the user restarts.
+            set_status("Installing the main app file…")
+            log("Installing the main app file…", "hdr")
             try:
                 shutil.copyfile(target, target + ".prev")
                 tmp = target + ".dl.tmp"
@@ -7233,26 +7367,25 @@ class MidiToRlrrApp:
                         pass
                 os.replace(tmp, target)
             except Exception as e:
-                _done(False, "Update Failed",
-                      f"Could not replace the main file:\n{e}\n\nYour current "
-                      f"version is unchanged.")
+                log(f"✗ Could not replace the main file: {e}", "err")
+                finish(False, f"Update failed — your current version is unchanged. ({e})")
                 return
 
-            msg = f"ParaKit was updated to v{new_ver}."
+            log("", "dim")
+            parts = [f"✓ Updated to v{new_ver}."]
             if updated:
-                shown = ", ".join(str(u) for u in updated[:8])
-                msg += f"\n\n{len(updated)} supporting file(s) also updated: {shown}"
-                if len(updated) > 8:
-                    msg += f" (+{len(updated) - 8} more)"
+                parts.append(f"{len(updated)} file(s) downloaded.")
             if skipped:
-                msg += f"\n({skipped} already up to date.)"
+                parts.append(f"{skipped} already up to date.")
             if failed:
-                msg += ("\n\n⚠ Could not update: " + ", ".join(failed[:6])
-                        + ("  ..." if len(failed) > 6 else "")
-                        + "\nGrab these from GitHub if the app misbehaves.")
-            msg += ("\n\nClose and reopen ParaKit to run the new version.\n"
-                    "(Backups saved as *.prev.)")
-            _done(True, "Updated", msg)
+                parts.append(f"{len(failed)} failed.")
+            summary = "  ".join(parts)
+            log(summary, "ok" if not failed else "err")
+            if failed:
+                log("Some files failed — grab them from GitHub if the app "
+                    "misbehaves. Backups saved as *.prev.", "err")
+            log("Done. Close and reopen ParaKit to run the new version.", "hdr")
+            finish(not failed, summary + "  Close and reopen ParaKit to finish.")
 
         threading.Thread(target=_work, daemon=True).start()
 

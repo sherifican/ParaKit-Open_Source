@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.9.2  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.9.3  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,16 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.9.3   --   2026-07-08
+------------------------------------------------------------------------------
+  - "Download update now" now shows its work. When you let ParaKit install an
+    update for you, a progress window opens with a live log of every file as it
+    goes -- downloaded, already up to date, or failed -- plus a progress bar and
+    a clear "done, close and reopen ParaKit" summary at the end. Before, the
+    button just went quiet until everything finished, so it looked like nothing
+    was happening.
 
 ------------------------------------------------------------------------------
   v4.5.9.2   --   2026-07-08
