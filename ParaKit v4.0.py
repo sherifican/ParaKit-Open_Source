@@ -81,6 +81,10 @@ CONFIG_BAK_PATH = CONFIG_PATH + ".bak"
 YT_LIBRARY_PATH     = os.path.join(os.path.expanduser("~"), ".parakit_yt_library.json")
 YT_LIBRARY_BAK_PATH = YT_LIBRARY_PATH + ".bak"
 YT_ART_CACHE_DIR    = os.path.join(os.path.expanduser("~"), ".parakit_yt_art_cache")
+# Pre-search album-art backups so a right-click "Undo album art search" can revert
+# to the cover a song had before the last "Search for missing album art" (one
+# backup per song, keyed by sha1(normcase(abspath)); survives restarts).
+YT_ART_UNDO_DIR     = os.path.join(os.path.expanduser("~"), ".parakit_yt_art_undo")
 # Serializes registry read-modify-write across the Tk thread (download add) and
 # the two background workers (file backfill + art backfill) so concurrent
 # load->modify->save cycles can't clobber each other's rows. Slow work (duration
@@ -5446,7 +5450,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.8.4"
+    VERSION = "4.5.9.1"
     REACTIVE_NOTE_WINDOW_S = 0.050   # trailing-only: note flashes white from the moment the playhead reaches it until this many seconds after it has passed (no pre-trigger). Loosened 40ms→50ms in v4.3.22 to give the flash more visible time after worst-case tick-alignment latency at 40 FPS playback.
 
     ME_DEFAULT_STATUS = (
@@ -9772,7 +9776,8 @@ class MidiToRlrrApp:
         # can't shift the cluster and break that alignment.
         row.columnconfigure(2, weight=1)
         row.columnconfigure(8, minsize=110)
-        row.columnconfigure(9, minsize=80)
+        row.columnconfigure(9, minsize=22)    # braille playback spinner
+        row.columnconfigure(10, minsize=80)   # Play/Pause
         row._yt_path = path
         row._yt_split = split
         row._yt_color_targets = []
@@ -9864,12 +9869,21 @@ class MidiToRlrrApp:
         # Filled brand-colour chip: PURPLE "▶ Play" / PINK "⏸ Pause". White
         # text, bg set directly (track=False) so the row-hover recolor leaves it
         # alone.
+        # Braille playback spinner (col 9, between Open Stems and Play) — animates
+        # on the row whose song is playing, blank otherwise. Same shared loop as
+        # the YouTube library (_yt_preview_spinner_tick).
+        _spinner = tk.Label(row, text="", bg=rest_bg, fg=ACCENT,
+                            font=("Consolas", 11, "bold"), width=2)
+        _spinner.grid(row=0, column=9, padx=(0, 2), sticky="e")
+        row._yt_color_targets.append(_spinner)
+        row._yt_spinner = _spinner
+
         _playing = (path == getattr(self, "_yt_preview_path", None)
                     and getattr(self, "_yt_preview_state", None) == "playing")
         _play_bg = YT_PAUSE_CHIP_BG if _playing else YT_PLAY_CHIP_BG
         row._yt_play_chip = _mk_chip(
             "⏸  Pause" if _playing else "▶  Play",
-            "#ffffff", self._stem_lib_on_play, 9,
+            "#ffffff", self._stem_lib_on_play, 10,
             border=_play_bg, bg=_play_bg, track=False)
 
         sep = tk.Frame(parent, bg="#222238", height=1)
@@ -9946,6 +9960,8 @@ class MidiToRlrrApp:
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Split this song",
                          command=lambda: self._stem_lib_on_split(path))
+        menu.add_command(label="Edit artist…",
+                         command=lambda: self._stem_lib_edit_artist(path))
         menu.add_command(label="Open file location",
                          command=lambda: self._stem_lib_open_location(path))
         if self._stem_is_split(path):
@@ -9956,6 +9972,62 @@ class MidiToRlrrApp:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _stem_lib_edit_artist(self, path):
+        """Right-click → Edit artist for the Stem Splitter 'Your Songs' library.
+        Writes the file's embedded ARTIST tag; the library reads artist from the
+        file tags on each scan, so writing the tag + refresh updates the row (no
+        separate registry — the scan is live)."""
+        from tkinter import simpledialog
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning(
+                "File not found",
+                "That song is no longer on disk:\n" + str(path))
+            return
+        cur = ""
+        try:
+            m = batch_audio_metadata_lookup(path) or {}
+            cur = (m.get("artist") or "").strip()
+        except Exception:
+            pass
+        new = simpledialog.askstring(
+            "Edit artist",
+            "Artist / band for this song (updates the file's metadata):",
+            initialvalue=cur, parent=self.root)
+        if new is None:
+            return
+        new = new.strip()
+        # Stop the shared preview if it's this file (avoid a Windows file lock).
+        if getattr(self, "_yt_preview_path", None) == path:
+            try:
+                self._yt_preview_stop()
+            except Exception:
+                pass
+        try:
+            wrote = self._write_artist_tag(path, new)
+        except PermissionError:
+            messagebox.showwarning(
+                "File locked",
+                "Couldn't update the file — it's open in another program (or the "
+                "preview player). Close it and try again.")
+            return
+        except Exception as exc:
+            messagebox.showerror("Error", f"Couldn't write the artist tag:\n{exc}")
+            return
+        if not wrote:
+            messagebox.showinfo(
+                "Unsupported format",
+                "This file format has no standard artist tag (e.g. WAV), so its "
+                "metadata couldn't be changed.")
+            return
+        # Invalidate the (path, mtime) meta cache so the refresh re-reads the tag.
+        try:
+            mc = getattr(self, "_stem_lib_meta_cache", None)
+            if mc:
+                mc.pop(os.path.abspath(path), None)
+        except Exception:
+            pass
+        self._stem_library_refresh()
 
     def _stem_lib_open_location(self, path):
         """Open the song's folder, selecting the file where the OS supports it."""
@@ -24262,6 +24334,16 @@ demucs.separate.main()
                         variable=self.yt_embed_art_var).pack(side=tk.LEFT)
         self.yt_embed_art_var.trace_add("write",
             lambda *_: save_config({"yt_embed_art": self.yt_embed_art_var.get()}))
+        # Library right-click tips + album-art disclaimer, tucked into the empty
+        # space beside the controls (kept OUT of the library column so it doesn't
+        # steal room from the song list).
+        ttk.Label(dl_row,
+                  text=("ℹ  Right-click a downloaded song to Rename, Edit artist, or "
+                        "search for album art. Art search isn't always accurate — the "
+                        "file name and song/artist order affect the match; right-click "
+                        "→ Undo album art search to revert."),
+                  style="Sub.TLabel", foreground="#7a86c8",
+                  wraplength=380, justify="left").pack(side=tk.LEFT, padx=(24, 0))
 
         # v4.4.61-1 — "Send to Stem Splitter" header action. Disabled until a
         # download completes this session; enabled by _yt_on_download_complete,
@@ -24297,17 +24379,23 @@ demucs.separate.main()
         if getattr(self, "_compact_layout", False):
             bottom.configure(height=320)
             bottom.pack(fill=tk.X, pady=(4, 0))
-            bottom.pack_propagate(False)
+            bottom.grid_propagate(False)
         else:
             bottom.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+        # v4.5.8.x (owner) — give the song library more width by shrinking the
+        # log: weighted grid (library 3 : log 2) instead of an even pack split,
+        # so the library extends right and the log narrows. Also makes room for a
+        # per-row activity spinner between Play / Open Stems.
+        bottom.rowconfigure(0, weight=1)
+        bottom.columnconfigure(0, weight=3)   # LEFT — Downloaded-Songs library (wider)
+        bottom.columnconfigure(1, weight=2)   # RIGHT — activity log (narrower)
 
         # RIGHT — the activity log (created with log_col as master; a Tk widget
         # cannot be re-parented after creation, so build it here, not move it).
-        # v4.4.63 — log moved to the RIGHT, library to the LEFT (owner: the
-        # library sits more directly in the user's natural vertical path). Same
-        # creation order; only the pack side/padding flips.
+        # v4.4.63 — log on the RIGHT, library on the LEFT (owner: the library sits
+        # more directly in the user's natural vertical path).
         log_col = ttk.Frame(bottom)
-        log_col.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(8, 0))
+        log_col.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
         ttk.Label(log_col, text="ACTIVITY LOG",
                   font=("Segoe UI", 8, "bold"), foreground="#9a9ab0").pack(anchor="w")
         self.yt_log = scrolledtext.ScrolledText(log_col, height=14, state="disabled",
@@ -24319,7 +24407,7 @@ demucs.separate.main()
 
         # LEFT — the persistent Downloaded-Songs library.
         lib_col = ttk.Frame(bottom)
-        lib_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        lib_col.grid(row=0, column=0, sticky="nsew")
         self._yt_library_build(lib_col)
 
         # v4.4.62-1 — stop the library preview whenever the user leaves this tab,
@@ -24791,6 +24879,45 @@ demucs.separate.main()
             self._stem_lib_update_chips()
         except Exception:
             pass
+        # Drive the per-row braille playback spinner (the loop self-clears when
+        # nothing is playing, so calling it on every state change is enough).
+        try:
+            self._yt_preview_spinner_start()
+        except Exception:
+            pass
+
+    # Braille playback spinner: animates on the row whose song is playing (both
+    # libraries share the preview stream), blank on every other row. It reads the
+    # shared _yt_preview_path/_state each tick, so it follows play / pause / stop /
+    # switch-song / natural-end automatically and stops itself when idle.
+    _BRAILLE_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    def _yt_preview_spinner_start(self):
+        """(Re)start the spinner loop if it isn't already running."""
+        if getattr(self, "_yt_spinner_after", None) is None:
+            self._yt_preview_spinner_tick()
+
+    def _yt_preview_spinner_tick(self):
+        self._yt_spinner_after = None
+        cur = getattr(self, "_yt_preview_path", None)
+        playing = (getattr(self, "_yt_preview_state", None) == "playing" and bool(cur))
+        if playing:
+            self._yt_spinner_idx = (getattr(self, "_yt_spinner_idx", 0) + 1) % len(self._BRAILLE_SPINNER)
+            frame = self._BRAILLE_SPINNER[self._yt_spinner_idx]
+        else:
+            frame = ""
+        for rows_attr in ("_yt_lib_rows", "_stem_lib_rows"):
+            for r in (getattr(self, rows_attr, []) or []):
+                sp = getattr(r, "_yt_spinner", None)
+                if sp is None:
+                    continue
+                try:
+                    on = (getattr(r, "_yt_path", None) == cur and playing)
+                    sp.configure(text=(frame if on else ""))
+                except Exception:
+                    pass
+        if playing:
+            self._yt_spinner_after = self.root.after(110, self._yt_preview_spinner_tick)
 
     def _yt_on_tab_changed_stop_preview(self, _e=None):
         """Stop the preview whenever the user leaves the YouTube tab."""
@@ -25541,7 +25668,8 @@ demucs.separate.main()
         # can't shift the cluster and break that alignment.
         row.columnconfigure(2, weight=1)
         row.columnconfigure(8, minsize=96)
-        row.columnconfigure(9, minsize=80)
+        row.columnconfigure(9, minsize=22)    # braille playback spinner
+        row.columnconfigure(10, minsize=80)   # Play/Pause
         row._yt_path = path
         row._yt_split = split
         row._yt_color_targets = []
@@ -25649,12 +25777,21 @@ demucs.separate.main()
         # Filled brand-colour chip (owner): PURPLE "▶ Play" matches the app's
         # purple buttons, PINK/magenta "⏸ Pause" matches the logo. White text,
         # bg set directly (track=False) so the row-hover recolor leaves it alone.
+        # Braille playback spinner (col 9, between Open Stems and Play) — animates
+        # on the row whose song is playing, blank otherwise. Driven by
+        # _yt_preview_spinner_tick; rides the row band for hover recolor.
+        _spinner = tk.Label(row, text="", bg=rest_bg, fg=ACCENT,
+                            font=("Consolas", 11, "bold"), width=2)
+        _spinner.grid(row=0, column=9, padx=(0, 2), sticky="e")
+        row._yt_color_targets.append(_spinner)
+        row._yt_spinner = _spinner
+
         _playing = (path == getattr(self, "_yt_preview_path", None)
                     and getattr(self, "_yt_preview_state", None) == "playing")
         _play_bg = YT_PAUSE_CHIP_BG if _playing else YT_PLAY_CHIP_BG
         row._yt_play_chip = _mk_chip(
             "⏸  Pause" if _playing else "▶  Play",
-            "#ffffff", self._yt_preview_toggle, 9,
+            "#ffffff", self._yt_preview_toggle, 10,
             border=_play_bg, bg=_play_bg, track=False)
 
         sep = tk.Frame(parent, bg="#222238", height=1)
@@ -25732,11 +25869,20 @@ demucs.separate.main()
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Rename",
                          command=lambda: self._yt_lib_rename(path))
+        menu.add_command(label="Edit artist…",
+                         command=lambda: self._yt_lib_edit_artist(path))
         menu.add_command(label="Open file location",
                          command=lambda: self._yt_lib_open_location(path))
         menu.add_separator()
         menu.add_command(label="Search for missing album art",
                          command=lambda: self._yt_lib_search_art(path))
+        # Only offer Undo once a search has been run (a backup exists).
+        try:
+            if self._yt_art_undo_available(path):
+                menu.add_command(label="Undo album art search",
+                                 command=lambda: self._yt_lib_undo_art_search(path))
+        except Exception:
+            pass
         menu.add_command(label="Send to Stem Splitter",
                          command=lambda: self._send_audio_to_stem(path))
         try:
@@ -25779,6 +25925,154 @@ demucs.separate.main()
                 except Exception:
                     pass
             self._yt_library_save(entries)
+        self._yt_library_refresh()
+
+    def _yt_lib_edit_artist(self, path):
+        """Right-click → Edit artist: fix the artist/band metadata for a song
+        downloaded under the wrong name (e.g. a random YouTube channel). Writes
+        the file's embedded ARTIST tag (so the Song Creator / ParaDB pick it up)
+        AND the library registry so the row updates immediately."""
+        from tkinter import simpledialog
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning(
+                "File not found",
+                "That download is no longer on disk:\n" + str(path))
+            return
+        try:
+            norm = os.path.normcase(os.path.abspath(path))
+        except Exception:
+            norm = path
+        cur = ""
+        for e in self._yt_library_load():
+            try:
+                if os.path.normcase(os.path.abspath(e.get("path", ""))) == norm:
+                    cur = (e.get("artist") or "").strip()
+                    break
+            except Exception:
+                pass
+        if not cur:
+            try:
+                m = batch_audio_metadata_lookup(path) or {}
+                cur = (m.get("artist") or "").strip()
+            except Exception:
+                pass
+        new = simpledialog.askstring(
+            "Edit artist",
+            "Artist / band for this song\n(updates the file's metadata + the library):",
+            initialvalue=cur, parent=self.root)
+        if new is None:
+            return
+        new = new.strip()
+        # Stop the shared preview if it's this file — pygame keeps the handle
+        # open, and Windows won't let mutagen rewrite a locked file.
+        if getattr(self, "_yt_preview_path", None) == path:
+            try:
+                self._yt_preview_stop()
+            except Exception:
+                pass
+        try:
+            wrote = self._write_artist_tag(path, new)
+        except PermissionError:
+            messagebox.showwarning(
+                "File locked",
+                "Couldn't update the file — it's open in another program (or the "
+                "preview player). Close it and try again.")
+            return
+        except Exception as exc:
+            messagebox.showerror("Error", f"Couldn't write the artist tag:\n{exc}")
+            return
+        if not wrote:
+            messagebox.showinfo(
+                "Library updated",
+                "This file format has no standard artist tag (e.g. WAV), so only "
+                "the library label was updated — the file's metadata was left "
+                "unchanged.")
+        with YT_LIBRARY_LOCK:
+            entries = self._yt_library_load()
+            for e in entries:
+                try:
+                    if os.path.normcase(os.path.abspath(e.get("path", ""))) == norm:
+                        e["artist"] = new
+                except Exception:
+                    pass
+            self._yt_library_save(entries)
+        self._yt_library_refresh()
+
+    def _yt_lib_undo_art_search(self, path):
+        """Right-click → Undo album art search: revert the cover to what it was
+        before the last 'Search for missing album art' (often the original
+        YouTube thumbnail). One-level undo — the backup is consumed on use."""
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning(
+                "File not found",
+                "That download is no longer on disk:\n" + str(path))
+            return
+        jpg, noart = self._yt_art_undo_paths(path)
+        if not (os.path.isfile(jpg) or os.path.isfile(noart)):
+            messagebox.showinfo(
+                "Nothing to undo",
+                "No album-art search has been run on this song to undo.\n\n"
+                "'Undo album art search' reverts to the cover the song had "
+                "before you last used 'Search for missing album art'.")
+            return
+        fmt_l = os.path.splitext(path)[1].lower().lstrip(".")
+        if getattr(self, "_yt_preview_path", None) == path:
+            try:
+                self._yt_preview_stop()
+            except Exception:
+                pass
+        try:
+            if os.path.isfile(jpg):
+                with open(jpg, "rb") as f:
+                    art = f.read()
+                if not self._embed_album_art_bytes(path, fmt_l, art, self._yt_log):
+                    return   # helper logged the reason
+            else:
+                # .noart marker — the song had no embedded cover before the search
+                self._strip_album_art(path, fmt_l)
+        except PermissionError:
+            messagebox.showwarning(
+                "File locked",
+                "Couldn't revert the art — the file is open in another program "
+                "(or the preview player). Close it and try again.")
+            return
+        except Exception as exc:
+            messagebox.showerror("Undo failed",
+                                 f"Could not revert the album art:\n{exc}")
+            return
+        # Regenerate the cached row thumbnail from the reverted art, then refresh.
+        try:
+            import hashlib
+            tkey = hashlib.sha1(path.encode("utf-8")).hexdigest()
+            old_png = os.path.join(YT_ART_CACHE_DIR, tkey + ".png")
+            if os.path.isfile(old_png):
+                os.remove(old_png)
+        except Exception:
+            pass
+        new_png = self._yt_fetch_art_cache(path, None)
+        if new_png:
+            try:
+                norm = os.path.normcase(os.path.abspath(path))
+            except Exception:
+                norm = path
+            with YT_LIBRARY_LOCK:
+                entries = self._yt_library_load()
+                for e in entries:
+                    try:
+                        if os.path.normcase(os.path.abspath(e.get("path", ""))) == norm:
+                            e["art_cache"] = new_png
+                    except Exception:
+                        pass
+                self._yt_library_save(entries)
+        self._yt_lib_art_refs.pop(path, None)
+        # Consume the backup (one-level undo).
+        for p in (jpg, noart):
+            try:
+                if os.path.isfile(p):
+                    os.remove(p)
+            except Exception:
+                pass
+        self._yt_log("   ↩  Reverted album art to the version before the last search.")
         self._yt_library_refresh()
 
     def _yt_lib_open_location(self, path):
@@ -25911,6 +26205,15 @@ demucs.separate.main()
             img.save(buf, format="JPEG", quality=92)
             jpeg_bytes = buf.getvalue()
 
+            # Back up the CURRENT cover before overwriting it, so a right-click
+            # "Undo album art search" can revert (users would rather keep the
+            # original YouTube thumbnail than re-download when the lookup returns
+            # the wrong cover). Worker-thread safe (file I/O + PIL, no Tk).
+            try:
+                self._yt_art_backup_before_search(path)
+            except Exception:
+                pass
+
             if not self._embed_album_art_bytes(path, fmt_l, jpeg_bytes, _log):
                 return  # helper logged the reason
 
@@ -26011,6 +26314,126 @@ demucs.separate.main()
         except Exception as exc:
             log(f"   ⚠  Album art embedding failed: {exc}")
             return False
+
+    def _write_artist_tag(self, path, artist):
+        """Write the ARTIST tag into an audio file via mutagen. Preserves every
+        other tag (title/album/cover art). Returns True on success, False when
+        the format has no standard artist tag (WAV / unknown) or mutagen is
+        missing. Raises PermissionError if the file is locked (caller surfaces
+        it). Tag keys mirror the read side (batch_audio_metadata_lookup)."""
+        ext = os.path.splitext(path)[1].lower()
+        try:
+            if ext == ".flac":
+                from mutagen.flac import FLAC
+                f = FLAC(path); f["artist"] = [artist]; f.save()
+            elif ext == ".ogg":
+                from mutagen.oggvorbis import OggVorbis
+                f = OggVorbis(path); f["artist"] = [artist]; f.save()
+            elif ext == ".mp3":
+                from mutagen.id3 import ID3, TPE1, ID3NoHeaderError
+                try:
+                    tags = ID3(path)
+                except ID3NoHeaderError:
+                    tags = ID3()
+                tags.setall("TPE1", [TPE1(encoding=3, text=[artist])])
+                tags.save(path)
+            elif ext in (".m4a", ".mp4"):
+                from mutagen.mp4 import MP4
+                f = MP4(path); f["\xa9ART"] = [artist]; f.save()
+            else:
+                return False
+            return True
+        except ImportError:
+            return False
+
+    def _strip_album_art(self, path, fmt_l):
+        """Remove embedded cover art from an audio file (used by the 'no art
+        before the search' branch of Undo album art search). Best-effort."""
+        try:
+            if fmt_l == "flac":
+                from mutagen.flac import FLAC
+                a = FLAC(path); a.clear_pictures(); a.save()
+            elif fmt_l == "mp3":
+                from mutagen.id3 import ID3, ID3NoHeaderError
+                try:
+                    a = ID3(path)
+                except ID3NoHeaderError:
+                    return
+                a.delall("APIC"); a.save(path)
+            elif fmt_l == "ogg":
+                from mutagen.oggvorbis import OggVorbis
+                a = OggVorbis(path)
+                for k in ("metadata_block_picture", "METADATA_BLOCK_PICTURE"):
+                    if k in a:
+                        del a[k]
+                a.save()
+            elif fmt_l in ("m4a", "mp4"):
+                from mutagen.mp4 import MP4
+                a = MP4(path)
+                if "covr" in a:
+                    del a["covr"]
+                a.save()
+        except Exception:
+            pass
+
+    # ── Album-art Undo backup helpers (right-click → Undo album art search) ────
+    def _yt_art_undo_key(self, path):
+        import hashlib
+        try:
+            norm = os.path.normcase(os.path.abspath(path))
+        except Exception:
+            norm = path
+        return hashlib.sha1(norm.encode("utf-8")).hexdigest()
+
+    def _yt_art_undo_paths(self, path):
+        """(jpg_backup, noart_marker) for this song's pre-search art backup."""
+        key = self._yt_art_undo_key(path)
+        return (os.path.join(YT_ART_UNDO_DIR, key + ".jpg"),
+                os.path.join(YT_ART_UNDO_DIR, key + ".noart"))
+
+    def _yt_art_undo_available(self, path):
+        jpg, noart = self._yt_art_undo_paths(path)
+        return os.path.isfile(jpg) or os.path.isfile(noart)
+
+    def _yt_art_backup_before_search(self, path):
+        """Capture the CURRENT embedded art (or a 'no art' marker) before a
+        Search-for-album-art overwrites it, so Undo can revert. Overwrites any
+        prior backup for this song (one-level undo)."""
+        try:
+            os.makedirs(YT_ART_UNDO_DIR, exist_ok=True)
+        except Exception:
+            return
+        jpg, noart = self._yt_art_undo_paths(path)
+        for p in (jpg, noart):
+            try:
+                if os.path.isfile(p):
+                    os.remove(p)
+            except Exception:
+                pass
+        try:
+            cur, _mime = self._extract_album_art_from_audio(path)
+        except Exception:
+            cur = None
+        if cur:
+            # Normalize to JPEG so restore via _embed_album_art_bytes is exact.
+            try:
+                from PIL import Image
+                import io
+                im = Image.open(io.BytesIO(cur))
+                if im.mode != "RGB":
+                    im = im.convert("RGB")
+                im.save(jpg, format="JPEG", quality=95)
+            except Exception:
+                try:
+                    with open(jpg, "wb") as f:
+                        f.write(cur)
+                except Exception:
+                    pass
+        else:
+            try:
+                open(noart, "wb").close()   # marker: no embedded art before search
+            except Exception:
+                pass
 
     def _stem_confirm_resplit(self, input_path, output_base):
         """Modal re-split warning with a persistent 'don't show again' option.
@@ -26800,8 +27223,16 @@ demucs.separate.main()
         ttk.Label(search_row, text="Search:", width=8).pack(side=tk.LEFT)
         self.am_search_var = tk.StringVar()
         ttk.Entry(search_row, textvariable=self.am_search_var, width=50).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(search_row, text="🔍  Fetch Metadata",
+        ttk.Button(search_row, text="🔍  Fetch Album Art",
                    command=self._am_fetch_metadata).pack(side=tk.LEFT)
+        # Disclaimer tucked into the empty space beside the button (doesn't push
+        # the layout down).
+        ttk.Label(search_row,
+                  text="⚠  Results aren't always exact — the song/artist name and "
+                       "their order affect the match. Wrong cover? Tweak the terms "
+                       "and try again.",
+                  style="Sub.TLabel", foreground="#c8a24a",
+                  wraplength=460, justify="left").pack(side=tk.LEFT, padx=(14, 0))
 
         ttk.Label(meta_frame, text='e.g. "Duality Slipknot" or "Enter Sandman Metallica"',
                   style="Sub.TLabel", foreground="#555").pack(anchor="w", pady=(0, 4))
@@ -26853,6 +27284,8 @@ demucs.separate.main()
         ttk.Button(apply_row, text="💾  Save Image...",
                    style="Convert.TButton",
                    command=self._am_save_image).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(apply_row, text="🔎  Show alternate art choices",
+                   command=self._am_show_alternate_art).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(meta_frame,
                   text="Metadata fills Title and Artist. Art sets the Cover Image path. "
                        "Use one or both — each can be applied independently.\n"
@@ -27007,6 +27440,119 @@ demucs.separate.main()
         finally:
             self.root.after(0, self._am_stop_search_spinner)
 
+    @staticmethod
+    def _am_norm(s):
+        """Lowercase + collapse non-alphanumerics — for fuzzy artist/title match."""
+        import re as _re
+        return _re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
+
+    def _am_http_get(self, url, timeout=8):
+        import urllib.request
+        req = urllib.request.Request(
+            url, headers={"User-Agent": f"ParaKit/{getattr(self, 'VERSION', '')} (parakit-app)"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read()
+
+    @staticmethod
+    def _am_art_url_key(url):
+        """Collapse obvious size variants so one cover doesn't repeat per source."""
+        import re as _re
+        u = (url or "").split("?")[0]
+        u = _re.sub(r"\d{2,4}x\d{2,4}", "SZ", u)
+        u = _re.sub(r"(front-)\d+", r"\1SZ", u)
+        return u
+
+    def _am_score_art(self, cand, query_tokens, mb_artist, mb_title, mb_trusted):
+        """Rank an art candidate primarily by how well its artist+title words
+        overlap what the USER actually typed (robust even when MusicBrainz
+        mis-parses the query), with a sanity-gated MusicBrainz bonus on top.
+
+        query_tokens : set of normalized words from the raw search box.
+        mb_artist/mb_title : normalized MusicBrainz guess.
+        mb_trusted : True only when MB's artist actually appears in the query
+                     (so a bad MB parse can't hijack the ranking)."""
+        ca = self._am_norm(cand.get("artist"))
+        ct = self._am_norm(cand.get("title"))
+        cand_tokens = set(ca.split()) | set(ct.split())
+        if not cand_tokens:
+            return 0
+        inter = cand_tokens & query_tokens
+        prec = len(inter) / len(cand_tokens)                       # cand words the user typed
+        rec  = len(inter) / len(query_tokens) if query_tokens else 0.0   # query words covered
+        score = int(100 * prec + 60 * rec)
+        if mb_trusted:
+            if ca and ca == mb_artist:
+                score += 30
+            if mb_title and (ct == mb_title or mb_title in ct):
+                score += 20
+        # Small source-trust nudge (Cover Art Archive is MB-matched = high trust).
+        score += {"caa": 6, "itunes": 3, "deezer": 3}.get(cand.get("source"), 0)
+        return score
+
+    def _am_gather_art_candidates(self, query, artist, title, mb_release_ids):
+        """Collect album-art candidates from iTunes + Deezer + Cover Art Archive,
+        each scored by artist+title match, best first. All free / no API key.
+        Networked; each source is best-effort (one failing just yields no
+        candidates from it). Returns a list of dicts:
+            {"url", "artist", "title", "album", "source", "score"}."""
+        import urllib.parse, json
+        cands = []
+        # Search each source with the RAW user query — their own search engines
+        # rank better than a MusicBrainz-reworded term, and MB can mis-parse a
+        # free-text box (it turned "set it off evil people" into a Lil Witness
+        # track). MB's artist/title feed the SCORING only, sanity-gated below.
+        term = (query.strip() or f"{artist} {title}".strip())
+        # iTunes — song-level (carries the single/album art)
+        try:
+            it = json.loads(self._am_http_get(
+                "https://itunes.apple.com/search?" + urllib.parse.urlencode(
+                    {"term": term, "media": "music", "entity": "song", "limit": 25})
+            ).decode("utf-8", "replace"))
+            for res in it.get("results", []):
+                u = (res.get("artworkUrl100", "") or "").replace("100x100", "600x600")
+                if u:
+                    cands.append({"url": u, "artist": res.get("artistName", ""),
+                                  "title": res.get("trackName", ""),
+                                  "album": res.get("collectionName", ""), "source": "itunes"})
+        except Exception:
+            pass
+        # Deezer — free, no auth; strong indie/single coverage iTunes can miss
+        try:
+            dz = json.loads(self._am_http_get(
+                "https://api.deezer.com/search?" + urllib.parse.urlencode(
+                    {"q": term, "limit": 25})).decode("utf-8", "replace"))
+            for res in (dz.get("data", []) or []):
+                alb = res.get("album", {}) or {}
+                u = alb.get("cover_xl") or alb.get("cover_big") or ""
+                if u:
+                    cands.append({"url": u, "artist": (res.get("artist", {}) or {}).get("name", ""),
+                                  "title": res.get("title", ""), "album": alb.get("title", ""),
+                                  "source": "deezer"})
+        except Exception:
+            pass
+        # Cover Art Archive — the art DB MusicBrainz links to; use the MB release
+        # ids we already found (high trust). Some releases have no front cover;
+        # those 404 and are skipped at download time.
+        for rid in (mb_release_ids or [])[:4]:
+            if rid:
+                cands.append({"url": f"https://coverartarchive.org/release/{rid}/front-500",
+                              "artist": artist, "title": title, "album": "", "source": "caa"})
+        # Trust MusicBrainz's parse only when its artist actually appears in what
+        # the user typed — otherwise a bad MB guess (Lil Witness) must not steer
+        # the ranking. Scoring is primarily raw-query overlap regardless.
+        q_tokens = set(self._am_norm(query).split())
+        mb_a, mb_t = self._am_norm(artist), self._am_norm(title)
+        mb_trusted = bool(mb_a) and set(mb_a.split()).issubset(q_tokens)
+        for c in cands:
+            c["score"] = self._am_score_art(c, q_tokens, mb_a, mb_t, mb_trusted)
+        # Dedup size variants within a source, then sort best-first.
+        best = {}
+        for c in cands:
+            k = (c["source"], self._am_art_url_key(c["url"]))
+            if k not in best or c["score"] > best[k]["score"]:
+                best[k] = c
+        return sorted(best.values(), key=lambda c: c.get("score", 0), reverse=True)
+
     def _am_fetch_worker_impl(self, query):
         try:
             import urllib.request, urllib.parse, json
@@ -27021,6 +27567,7 @@ demucs.separate.main()
 
             recordings = mb.get("recordings", [])
             title = artist = album = ""
+            mb_release_ids = []
             if recordings:
                 rec = recordings[0]
                 title = rec.get("title", "")
@@ -27030,47 +27577,78 @@ demucs.separate.main()
                 releases = rec.get("releases", [])
                 if releases:
                     album = releases[0].get("title", "")
+                    mb_release_ids = [rel.get("id") for rel in releases[:4] if rel.get("id")]
 
-            # iTunes — cover art
-            it_url = (f"https://itunes.apple.com/search?"
-                      f"term={urllib.parse.quote(query)}&media=music&limit=1")
-            art_url = ""
+            # ── Album art — scored, multi-source ─────────────────────────────
+            # The old code took iTunes' loose top keyword hit, which for a
+            # jumbled "artist title" query is often a random unrelated track (why
+            # the alternates were noise). Now we gather candidates from iTunes +
+            # Deezer + the Cover Art Archive and RANK them by artist+title match
+            # (from MusicBrainz), so the right cover floats up and alternates are
+            # the same song's other releases. All free, no API key.
+            self._am_last_meta = {"title": title, "artist": artist, "album": album,
+                                  "art_url": "", "art_alternates": []}
             try:
-                with urllib.request.urlopen(it_url, timeout=8) as r:
-                    it = json.loads(r.read().decode())
-                results = it.get("results", [])
-                if results:
-                    art_url = results[0].get("artworkUrl100", "").replace("100x100", "600x600")
-                    if not title:
-                        title = results[0].get("trackName", "")
-                    if not artist:
-                        artist = results[0].get("artistName", "")
-                    if not album:
-                        album = results[0].get("collectionName", "")
+                cands = self._am_gather_art_candidates(query, artist, title, mb_release_ids)
             except Exception:
-                pass
+                cands = []
 
-            self._am_last_meta = {"title": title, "artist": artist, "album": album, "art_url": art_url}
+            # Download best-first until we have a pick + up to 3 alternates,
+            # skipping URLs that 404 or aren't valid images (e.g. a Cover Art
+            # Archive release with no front cover). Capped attempts so an
+            # all-miss search can't stall.
+            try:
+                from PIL import Image as _Img
+            except Exception:
+                _Img = None
+            import io as _io, hashlib as _hl
+            used = []
+            used_hashes = set()
+            attempts = 0
+            for c in cands:
+                if len(used) >= 4 or attempts >= 14:
+                    break
+                attempts += 1
+                try:
+                    b = self._am_http_get(c["url"], timeout=8)
+                    if _Img is not None:
+                        _Img.open(_io.BytesIO(b)).verify()   # reject non-images
+                    elif len(b) < 1000:
+                        raise ValueError("too small to be art")
+                    h = _hl.sha1(b).digest()                 # skip the same cover
+                    if h in used_hashes:                     # served by two sources
+                        continue
+                    used_hashes.add(h)
+                    used.append((c, b))
+                except Exception:
+                    continue
 
-            msg = f"✓  {artist} — {title}"
-            if album: msg += f"  |  {album}"
-            if not art_url: msg += "  (no art found)"
+            if used:
+                pick_c, pick_bytes = used[0]
+                self._am_last_meta["art_bytes"] = pick_bytes
+                self._am_last_meta["art_url"] = pick_c.get("url", "")
+                self._am_last_meta["art_alternates"] = [b for (_c, b) in used[1:4]]
+                self.root.after(0, lambda d=pick_bytes: self._am_show_art_preview(d))
+                msg = f"✓  {artist} — {title}" if (artist or title) else f"✓  {query}"
+                if album:
+                    msg += f"  |  {album}"
+                # Flag a weak match (best cover only partially matched the query)
+                # so the user knows to check alternates or drop in their own.
+                if pick_c.get("score", 0) < 120:
+                    msg += "  ⚠ loose match — try “Show alternate art choices” or the Cropper"
+            else:
+                msg = f"✓  {artist} — {title}" if (artist or title) else f"✓  {query}"
+                if album:
+                    msg += f"  |  {album}"
+                msg += ("  (no album art found on iTunes / Deezer / Cover Art Archive "
+                        "— use the Album Art Cropper with your own image)")
             self.root.after(0, lambda m=msg: self.am_meta_result_var.set(m))
 
-            # Download art (600x600 from iTunes). We stash the raw bytes on
-            # _am_last_meta so the Save Image button can save the full-
-            # resolution original, not the 120x120 preview thumbnail.
-            if art_url:
-                try:
-                    with urllib.request.urlopen(art_url, timeout=8) as r:
-                        art_data = r.read()
-                    self._am_last_meta["art_bytes"] = art_data
-                    self.root.after(0, lambda d=art_data: self._am_show_art_preview(d))
-                except Exception:
-                    pass
-
         except Exception as e:
-            self.root.after(0, lambda: self.am_meta_result_var.set(f"✗  Error: {e}"))
+            # Bind the message NOW — `e` is deleted when this except block ends,
+            # but the deferred root.after lambda runs later (was a NameError).
+            _err = f"✗  Error: {e}"
+            self.root.after(0, lambda m=_err: self.am_meta_result_var.set(m))
 
     def _am_show_art_preview(self, image_data):
         """Show a thumbnail of the fetched art in the canvas."""
@@ -27143,6 +27721,80 @@ demucs.separate.main()
                             "Cover Art path set in Song Creator.\n\n"
                             "You can override it later by browsing a different "
                             "image in the Cover Image field.")
+
+    def _am_show_alternate_art(self):
+        """Show up to 3 OTHER album covers iTunes returned for the last fetch, so
+        the user can pick a better one if the top hit was wrong. Clicking a
+        thumbnail makes it the current fetched art (preview + what Apply/Save use).
+        If only one cover was found, says so."""
+        meta = getattr(self, "_am_last_meta", None)
+        if not meta:
+            messagebox.showinfo(
+                "Alternate art",
+                "Fetch album art first (🔍 Fetch Album Art), then check for "
+                "alternates.")
+            return
+        alts = [b for b in (meta.get("art_alternates") or []) if b]
+        if not alts:
+            messagebox.showinfo("Alternate art", "No other art found from search.")
+            return
+        try:
+            from PIL import Image, ImageTk
+            import io
+        except Exception:
+            messagebox.showinfo(
+                "Alternate art",
+                "Pillow (PIL) is required to preview alternate album art.")
+            return
+        top = tk.Toplevel(self.root)
+        top.title("Alternate album art")
+        top.configure(bg="#15152a")
+        try:
+            top.transient(self.root)
+            top.resizable(False, False)
+        except Exception:
+            pass
+        ttk.Label(top,
+                  text="Other covers found for this search — click one to use it:",
+                  style="Sub.TLabel").pack(anchor="w", padx=12, pady=(10, 6))
+        row = tk.Frame(top, bg="#15152a")
+        row.pack(padx=12, pady=(0, 12))
+        top._am_alt_refs = []   # keep PhotoImage refs alive
+        THUMB = 170
+        shown = 0
+        for art_bytes in alts[:3]:
+            try:
+                im = Image.open(io.BytesIO(art_bytes))
+                im.thumbnail((THUMB, THUMB), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(im)
+            except Exception:
+                continue
+            top._am_alt_refs.append(photo)
+            tk.Button(row, image=photo, bd=1, relief="solid",
+                      bg="#0d0d1a", activebackground="#22203c", cursor="hand2",
+                      command=lambda b=art_bytes, t=top: self._am_pick_alternate_art(b, t)
+                      ).pack(side=tk.LEFT, padx=6)
+            shown += 1
+        if not shown:
+            try: top.destroy()
+            except Exception: pass
+            messagebox.showinfo("Alternate art", "No other art found from search.")
+
+    def _am_pick_alternate_art(self, art_bytes, top):
+        """Set a chosen alternate cover as the current fetched art, then close the
+        picker. Reuses _am_show_art_preview so the main preview, the 120px temp,
+        and _am_last_meta['art_path'] (what Apply art uses) all update together."""
+        try:
+            if getattr(self, "_am_last_meta", None) is None:
+                self._am_last_meta = {}
+            self._am_last_meta["art_bytes"] = art_bytes
+            self._am_show_art_preview(art_bytes)
+        except Exception:
+            pass
+        try:
+            top.destroy()
+        except Exception:
+            pass
 
     def _am_save_image(self):
         """Save the fetched album art to disk as .jpg or .png.
@@ -29446,7 +30098,7 @@ demucs.separate.main()
               "  and iTunes for album artwork.\n\n"
               "  How to use:\n"
               "    1.  Type artist and song name (e.g. 'Duality Slipknot')\n"
-              "    2.  Click 🔍 Fetch Metadata\n"
+              "    2.  Click 🔍 Fetch Album Art\n"
               "    3.  Review the result and art thumbnail\n"
               "    4.  Click ✓ Apply Metadata to Song Creator to fill Title and\n"
               "        Artist, and/or 🖼 Apply art from thumbnail to Song Creator\n"

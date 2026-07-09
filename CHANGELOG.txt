@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.8.4  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.9.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,33 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.9.1   --   2026-07-07
+------------------------------------------------------------------------------
+  - Album-art search is much smarter (Asset Manager). It now searches iTunes,
+    Deezer, AND the Cover Art Archive and ranks the results by how well each
+    matches the song you typed -- so it stops grabbing a random cover from the
+    wrong artist, and it finds art that iTunes alone was missing (a lot of indie
+    singles live on Deezer but not iTunes). If it's still not perfect, the new
+    "Show alternate art choices" button shows up to 3 other covers the search
+    found so you can pick the right one.
+  - "Fetch Metadata" button is now "Fetch Album Art", with a note that art
+    matching isn't always exact (the song/artist name and their order affect the
+    result).
+  - Song libraries -- right-click "Edit artist" (Downloaded Songs AND Stem
+    Splitter libraries): fix the artist/band metadata for a song downloaded
+    under the wrong name (e.g. a random YouTube channel). It updates the file's
+    embedded metadata and the library row.
+  - Downloaded Songs library -- right-click "Undo album art search": if a search
+    replaced the cover with the wrong one, revert to what it was before (usually
+    the original YouTube thumbnail) instead of re-downloading the song.
+  - A small braille spinner now animates on the library row whose song is
+    playing (both libraries), and stops when you pause or play another song.
+  - The YouTube tab's song library is wider now (the Activity Log was narrowed
+    to give it room).
+  - Fixed: when an album-art fetch failed, it logged an internal error instead
+    of the actual reason.
 
 ------------------------------------------------------------------------------
   v4.5.8.4   --   2026-07-07
