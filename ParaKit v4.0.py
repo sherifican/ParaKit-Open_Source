@@ -7328,7 +7328,8 @@ class MidiToRlrrApp:
         def _open_github():
             import webbrowser
             try:
-                webbrowser.open(self.PARAKIT_RELEASE_FILE_URL)
+                # Open the repo main page (not the raw .py blob view).
+                webbrowser.open(self.PARAKIT_RELEASE_URL)
             except Exception:
                 pass
 
