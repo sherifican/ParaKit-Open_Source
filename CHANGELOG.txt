@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.0  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,28 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.1   --   2026-07-10
+------------------------------------------------------------------------------
+  Follow-up fixes to the v4.7.0 Single Song Creator, several found by an
+  independent code-audit pass:
+  - Rename song now also updates the title INSIDE the files, so a renamed song
+    shows the new name in-game too (Paradiddle/ParaDB read the .rlrr's title;
+    Clone Hero reads song.ini) — not just in the library. Rename is also now
+    all-or-nothing: if it can't finish, it undoes what it started (and tells
+    you plainly if it couldn't), so a song can't get split into two rows.
+  - Clone Hero export: enabling ONLY ghost notes (or ONLY accents) no longer
+    also emits the other kind. The two are now independent.
+  - "Your Songs" library:
+      • Faster on large libraries — song info is now read only for the rows
+        actually shown, not every song on every keystroke.
+      • The library now refreshes when you change the Output Folder or CH
+        Folder (they're its default sources).
+      • Album art updates when you replace a song's album image in place.
+      • Difficulty badges are read more precisely from the chart file.
+      • A song whose Paradiddle and Clone Hero files live in ONE folder is now
+        handled correctly by Delete and Rename.
 
 ------------------------------------------------------------------------------
   v4.7.0   --   2026-07-10

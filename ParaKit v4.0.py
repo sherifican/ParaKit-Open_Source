@@ -2101,19 +2101,24 @@ _CH_ACCENT_BY_PAD = {1: 34, 2: 35, 3: 36, 4: 37}
 _CH_GHOST_BY_PAD = {1: 40, 2: 41, 3: 42, 4: 43}
 
 
-def _ch_velocity_flag(vel_int_0_127, ch_pad):
+def _ch_velocity_flag(vel_int_0_127, ch_pad, emit_ghost=True, emit_accent=True):
     """Return the CH per-lane accent/ghost modifier note number for the given
     velocity + pad, or None if velocity is in the normal band or the pad is the
-    kick (which has no accent/ghost modifier)."""
+    kick (which has no accent/ghost modifier).
+
+    emit_ghost / emit_accent let the two be requested INDEPENDENTLY — enabling
+    only accents must not also emit ghosts, and vice versa (audit 2026-07-10:
+    the callers used a single 'emit velocity flags' bool, so ticking one box
+    silently emitted the other kind too)."""
     try:
         v = int(vel_int_0_127)
     except (TypeError, ValueError):
         return None
     if ch_pad == 0:
         return None
-    if v > _CH_VELOCITY_ACCENT_THRESHOLD:
+    if emit_accent and v > _CH_VELOCITY_ACCENT_THRESHOLD:
         return _CH_ACCENT_BY_PAD.get(ch_pad)
-    if v < _CH_VELOCITY_GHOST_THRESHOLD:
+    if emit_ghost and v < _CH_VELOCITY_GHOST_THRESHOLD:
         return _CH_GHOST_BY_PAD.get(ch_pad)
     return None
 
@@ -2142,11 +2147,19 @@ def _ch_dedupe_same_pad(events):
 
 def _paradiddle_rlrr_to_ch_events(rlrr_notes_list, bpm,
                                    emit_velocity_flags=False,
-                                   resolution=192):
+                                   resolution=192,
+                                   emit_ghost=None, emit_accent=None):
     """Sibling to `midi_notes_to_ch` that preserves per-event velocity for
-    ghost/accent flags. Returns 3-tuples (tick, note, cymbal_flag) when
-    emit_velocity_flags=False; 4-tuples (tick, note, cymbal_flag, vel_flag)
-    when True. `build_chart_multi_difficulty` accepts both shapes."""
+    ghost/accent flags. Returns 3-tuples (tick, note, cymbal_flag) when no
+    velocity flags are requested; 4-tuples (tick, note, cymbal_flag, vel_flag)
+    otherwise. `build_chart_multi_difficulty` accepts both shapes.
+
+    emit_ghost / emit_accent can be requested independently; when either is
+    None it falls back to `emit_velocity_flags` (back-compat for the single-
+    checkbox callers: Pd→CH converter, folder-batch)."""
+    eg = emit_velocity_flags if emit_ghost is None else emit_ghost
+    ea = emit_velocity_flags if emit_accent is None else emit_accent
+    want_flags = bool(eg or ea)
     events = []
     for n in rlrr_notes_list:
         try:
@@ -2158,8 +2171,9 @@ def _paradiddle_rlrr_to_ch_events(rlrr_notes_list, bpm,
             continue
         ch_pad, cymbal_flag = _CH_NOTE_MAP[midi_note]
         ch_tick = int(round(time_sec * bpm / 60.0 * resolution))
-        if emit_velocity_flags:
-            vel_flag = _ch_velocity_flag(n.get("vel", 80), ch_pad)
+        if want_flags:
+            vel_flag = _ch_velocity_flag(n.get("vel", 80), ch_pad,
+                                         emit_ghost=eg, emit_accent=ea)
             events.append((ch_tick, ch_pad, cymbal_flag, vel_flag))
         else:
             events.append((ch_tick, ch_pad, cymbal_flag))
@@ -2242,7 +2256,7 @@ _RLRR_NAME_TO_NOTE = {
 
 
 def rlrr_events_to_ch_events(events, bpm, emit_velocity_flags=False,
-                             resolution=192):
+                             resolution=192, emit_ghost=None, emit_accent=None):
     """Derive Clone Hero events from the FINAL .rlrr event list — i.e. AFTER
     difficulty reduction — so .rlrr and .chart always represent the SAME hit
     set (audit E2: reduction used to apply only to the .rlrr while the .chart
@@ -2258,7 +2272,7 @@ def rlrr_events_to_ch_events(events, bpm, emit_velocity_flags=False,
                       "time": ev.get("time", 0.0)})
     return _paradiddle_rlrr_to_ch_events(
         dicts, bpm, emit_velocity_flags=emit_velocity_flags,
-        resolution=resolution)
+        resolution=resolution, emit_ghost=emit_ghost, emit_accent=emit_accent)
 
 
 def _itunes_fetch_album_art(title, artist, user_agent_version=""):
@@ -5563,7 +5577,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.0"
+    VERSION = "4.7.1"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -9291,17 +9305,21 @@ class MidiToRlrrApp:
                 except Exception:
                     continue
                 key = os.path.normcase(name)
-                e = songs.setdefault(key, {"title": name, "artist": "",
+                # artist = None means "not read yet" — it's filled lazily for
+                # rendered rows / search-by-artist misses (see do_refresh), so a
+                # big library doesn't read every song's metadata up front.
+                e = songs.setdefault(key, {"title": name, "artist": None,
                                            "added_ts": 0})
                 if has_rlrr and not e.get("folder"):
                     e["folder"] = sub
                 if has_chart and not e.get("ch_folder"):
                     e["ch_folder"] = sub
                 e["added_ts"] = max(e.get("added_ts", 0), mtime)
-        entries = list(songs.values())
-        for e in entries:
-            e["artist"] = self._sc_lib_quick_meta_artist(e)
-        return entries
+        # Artist is read LAZILY (not here for every song) — see
+        # _sc_library_do_refresh. On a large library, reading each song's
+        # .rlrr-head/song.ini up front hitched the UI thread on every refresh;
+        # now only the rendered rows (and search-by-artist misses) pay for it.
+        return list(songs.values())
 
     def _sc_lib_scan(self, entry):
         """Live disk scan for one entry: which formats/difficulties exist, plus
@@ -9328,13 +9346,23 @@ class MidiToRlrrApp:
             chart_path = os.path.join(ch, "notes.chart")
             if os.path.isfile(chart_path):
                 scan["chart"] = True
+                # Anchored, streamed section-header scan (was: read 2 MB into
+                # one string + unanchored substring `in`). Anchoring on a line
+                # that IS the header stops a stray '[ExpertDrums]' inside a
+                # title/lyric from lighting a badge, and streaming means a huge
+                # chart doesn't push later headers past a byte cap. Stop early
+                # once all four are seen.
                 try:
+                    _headers = {f"[{d}Drums]": d
+                                for d in ("Easy", "Medium", "Hard", "Expert")}
                     with open(chart_path, "r", encoding="utf-8",
                               errors="ignore") as f:
-                        txt = f.read(2_000_000)
-                    for d in ("Easy", "Medium", "Hard", "Expert"):
-                        if ("[" + d + "Drums]") in txt:
-                            scan["diffs"].add(d)
+                        for line in f:
+                            d = _headers.get(line.strip())
+                            if d:
+                                scan["diffs"].add(d)
+                                if len(scan["diffs"]) >= 4:
+                                    break
                 except Exception:
                     pass
             if scan["art"] is None:
@@ -9481,6 +9509,15 @@ class MidiToRlrrApp:
             return "break"
         vsb.bind("<MouseWheel>", _vsb_wheel)
 
+        # The library FOLLOWS the Output Folder / CH Folder as its default
+        # sources — so when either changes (Browse / clear / drag-drop) the
+        # library must re-resolve + rescan, not wait for the next unrelated
+        # refresh trigger. Refresh is debounced + guarded, so this is cheap.
+        for _v in (getattr(self, "output_var", None),
+                   getattr(self, "sc_ch_out_var", None)):
+            if _v is not None:
+                _v.trace_add("write", lambda *_a: self._sc_library_refresh())
+
         self._sc_library_refresh()
 
     def _sc_library_refresh(self, *_):
@@ -9534,9 +9571,14 @@ class MidiToRlrrApp:
         else:
             q = (self._sc_lib_search_var.get() or "").strip().lower()
         if q:
-            live = [e for e in live
-                    if q in (e.get("title", "") or "").lower()
-                    or q in (e.get("artist", "") or "").lower()]
+            def _match(e):
+                if q in (e.get("title", "") or "").lower():
+                    return True   # title match is free — no file read
+                art = e.get("artist")
+                if art is None:   # only read the artist when the title missed
+                    art = e["artist"] = self._sc_lib_quick_meta_artist(e)
+                return q in (art or "").lower()
+            live = [e for e in live if _match(e)]
 
         if self._sc_lib_sort_var.get() == "Title":
             live.sort(key=lambda e: (e.get("title", "") or "").lower())
@@ -9555,6 +9597,8 @@ class MidiToRlrrApp:
             cap = 60
             show = live if self._sc_lib_show_all else live[:cap]
             for i, e in enumerate(show):
+                if e.get("artist") is None:   # lazy — only the rows we render
+                    e["artist"] = self._sc_lib_quick_meta_artist(e)
                 scan = self._sc_lib_scan(e)
                 self._sc_lib_row(self._sc_lib_inner, e, scan, i)
             if (not self._sc_lib_show_all) and len(live) > cap:
@@ -9571,9 +9615,9 @@ class MidiToRlrrApp:
 
         # Prune cached PhotoImage refs to currently-rendered rows.
         try:
-            rendered = {getattr(r, "_sc_art_path", None) for r in self._sc_lib_rows}
+            rendered = {getattr(r, "_sc_art_key", None) for r in self._sc_lib_rows}
             self._sc_lib_art_refs = {
-                p: v for p, v in self._sc_lib_art_refs.items() if p in rendered}
+                k: v for k, v in self._sc_lib_art_refs.items() if k in rendered}
         except Exception:
             pass
 
@@ -9621,19 +9665,27 @@ class MidiToRlrrApp:
         accent = tk.Frame(row, bg=rest_bg, width=3)
         accent.grid(row=0, column=0, sticky="ns")
 
-        # Art tile (col 1) — album.* from the song folder, thumbnailed.
+        # Art tile (col 1) — album.* from the song folder, thumbnailed. Cache
+        # key is (path, mtime) so replacing album.png in place (same path)
+        # refreshes the thumbnail instead of showing the stale one.
         photo = None
         art_path = scan.get("art")
         if art_path and os.path.isfile(art_path):
             try:
                 from PIL import Image, ImageTk
-                if art_path in self._sc_lib_art_refs:
-                    photo = self._sc_lib_art_refs[art_path]
+                try:
+                    _mt = os.path.getmtime(art_path)
+                except Exception:
+                    _mt = 0
+                _art_key = (art_path, _mt)
+                row._sc_art_key = _art_key
+                if _art_key in self._sc_lib_art_refs:
+                    photo = self._sc_lib_art_refs[_art_key]
                 else:
                     img = Image.open(art_path)
                     img.thumbnail((40, 40), Image.LANCZOS)
                     photo = ImageTk.PhotoImage(img)
-                    self._sc_lib_art_refs[art_path] = photo
+                    self._sc_lib_art_refs[_art_key] = photo
             except Exception:
                 photo = None
         if photo is not None:
@@ -9797,8 +9849,18 @@ class MidiToRlrrApp:
         (no Recycle Bin, matching the YT library's disk-delete policy), after
         an explicit confirmation that lists exactly what will be removed. The
         library is scan-based, so deleting the folders IS removing the row."""
-        folders = [f for f in (entry.get("folder"), entry.get("ch_folder"))
-                   if f and os.path.isdir(f)]
+        # Dedupe by real path — one physical folder can hold BOTH a .rlrr and a
+        # notes.chart (e.g. CH Folder set to the output folder), which the scan
+        # records as folder == ch_folder; without dedupe we'd try to delete the
+        # same path twice.
+        folders, _seen = [], set()
+        for f in (entry.get("folder"), entry.get("ch_folder")):
+            if not f or not os.path.isdir(f):
+                continue
+            nc = os.path.normcase(os.path.abspath(f))
+            if nc not in _seen:
+                _seen.add(nc)
+                folders.append(f)
         if not folders:
             self._sc_library_refresh()
             return
@@ -9887,12 +9949,19 @@ class MidiToRlrrApp:
             return
 
         # Collect the folders to rename (skip a target that already exists so a
-        # rename never clobbers another song).
-        moves = []   # (which, old_dir, new_dir)
+        # rename never clobbers another song). Dedupe by real path — one folder
+        # can hold BOTH a .rlrr and a notes.chart (folder == ch_folder), and
+        # queueing the same move twice would fail the 2nd rename + roll back.
+        moves = []   # (old_dir, new_dir)
+        _seen = set()
         for which in ("folder", "ch_folder"):
             d = entry.get(which)
             if not d or not os.path.isdir(d):
                 continue
+            nc = os.path.normcase(os.path.abspath(d))
+            if nc in _seen:
+                continue
+            _seen.add(nc)
             new_dir = os.path.join(os.path.dirname(d), new)
             if os.path.normcase(new_dir) == os.path.normcase(d):
                 continue
@@ -9902,32 +9971,106 @@ class MidiToRlrrApp:
                     f"A folder named “{new}” already exists here:\n"
                     f"{os.path.dirname(d)}")
                 return
-            moves.append((which, d, new_dir))
+            moves.append((d, new_dir))
         if not moves:
             return
 
+        # Phase 1 — rename the folder(s) ALL-OR-NOTHING. If a later folder
+        # rename fails (e.g. the Clone Hero folder is locked) after an earlier
+        # one succeeded, roll the successful ones back, so a song can never be
+        # left split across two different names (which the scan would then show
+        # as two separate library rows).
+        done = []   # (new_dir, old_dir) — rollback newest-first
         try:
-            for which, old_dir, new_dir in moves:
+            for old_dir, new_dir in moves:
                 os.rename(old_dir, new_dir)
-                # Keep the inner .rlrr filenames in step with the folder name
-                # (best-effort — a failure here doesn't undo the folder rename;
-                # the difficulty suffix parsing works regardless of prefix).
-                if which == "folder" and old:
-                    try:
-                        for fn in os.listdir(new_dir):
-                            if not fn.lower().endswith(".rlrr"):
-                                continue
-                            if fn == old + ".rlrr" or fn.startswith(old + "_"):
-                                dst = os.path.join(new_dir, new + fn[len(old):])
-                                if not os.path.exists(dst):
-                                    os.rename(os.path.join(new_dir, fn), dst)
-                    except Exception:
-                        pass
+                done.append((new_dir, old_dir))
         except Exception as e:
-            messagebox.showerror("Rename failed", f"Could not rename:\n{e}")
+            stuck = []
+            for nd, od in reversed(done):
+                try:
+                    os.rename(nd, od)
+                except Exception:
+                    stuck.append(nd)   # rollback ITSELF failed — be honest
+            if stuck:
+                messagebox.showerror(
+                    "Rename failed",
+                    "The rename failed and the partial change could NOT be fully "
+                    "undone. These folders are still under the new name — rename "
+                    "them back by hand:\n\n" + "\n".join(stuck) + f"\n\n({e})")
+            else:
+                messagebox.showerror(
+                    "Rename failed",
+                    f"Could not rename — no changes were made:\n{e}")
+            self._sc_library_refresh()
+            return
+
+        # Phase 2 — best-effort inner updates (folders are already renamed; a
+        # failure here can't split the song, so it never rolls back):
+        #   • rename the '<old>_<Difficulty>.rlrr' files to '<new>_…'
+        #   • set the title INSIDE the files so the song shows the NEW name
+        #     in-game too (Paradiddle/ParaDB read the .rlrr recordingMetadata
+        #     title; Clone Hero reads song.ini 'name ='), not just in the library.
+        for old_dir, new_dir in moves:
+            if old:
+                try:
+                    for fn in os.listdir(new_dir):
+                        if (fn.lower().endswith(".rlrr")
+                                and (fn == old + ".rlrr" or fn.startswith(old + "_"))):
+                            dst = os.path.join(new_dir, new + fn[len(old):])
+                            if not os.path.exists(dst):
+                                os.rename(os.path.join(new_dir, fn), dst)
+                except Exception:
+                    pass
+            self._sc_rename_update_titles(new_dir, new)
 
         self._sc_lib_selected_key = None
         self._sc_library_refresh()
+
+    def _sc_rename_update_titles(self, folder, new_title):
+        """Best-effort: set the song's title INSIDE its files so a rename shows
+        the new name in-game, not only in the library. Updates BOTH formats
+        present in the folder (a single folder can hold both):
+          • Paradiddle `.rlrr` → `recordingMetadata.title` (JSON, indent=4, CRLF
+            — how ParaKit writes it; ensure_ascii keeps bytes identical to a
+            fresh export)
+          • Clone Hero `song.ini` → the `name =` line (UTF-8, LF)
+        Any per-file failure is swallowed — the folder rename already succeeded
+        and must not be undone."""
+        try:
+            names = os.listdir(folder)
+        except Exception:
+            return
+        ini = os.path.join(folder, "song.ini")
+        if os.path.isfile(ini):
+            try:
+                with open(ini, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.read().splitlines()
+                changed = False
+                for i, ln in enumerate(lines):
+                    if ln.split("=", 1)[0].strip().lower() == "name" and "=" in ln:
+                        lines[i] = f"name = {new_title}"
+                        changed = True
+                        break
+                if changed:
+                    with open(ini, "w", encoding="utf-8", newline="\n") as f:
+                        f.write("\n".join(lines) + "\n")
+            except Exception:
+                pass
+        for fn in names:
+            if not fn.lower().endswith(".rlrr"):
+                continue
+            p = os.path.join(folder, fn)
+            try:
+                with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                    data = json.load(f)
+                rec = data.get("recordingMetadata")
+                if isinstance(rec, dict) and rec.get("title") != new_title:
+                    rec["title"] = new_title
+                    with open(p, "w", encoding="utf-8", newline="\r\n") as f:
+                        json.dump(data, f, indent=4)
+            except Exception:
+                pass
 
     def _sc_lib_open_folder(self, folder):
         try:
@@ -39970,12 +40113,12 @@ demucs.separate.main()
                     if slot["reduce_var"].get() and diff != "Expert":
                         rlrr["events"] = reduce_notes_for_difficulty(
                             rlrr["events"], bpm, diff)
-                _want_vel_flags = bool(
-                    getattr(self, "ghost_notes_var", None)
-                    and (self.ghost_notes_var.get()
-                         or self.accent_notes_var.get()))
+                _g = bool(getattr(self, "ghost_notes_var", None)
+                          and self.ghost_notes_var.get())
+                _a = bool(getattr(self, "accent_notes_var", None)
+                          and self.accent_notes_var.get())
                 ch_events = rlrr_events_to_ch_events(
-                    rlrr["events"], bpm, emit_velocity_flags=_want_vel_flags)
+                    rlrr["events"], bpm, emit_ghost=_g, emit_accent=_a)
                 audio_path = slot["audio_var"].get()
                 _ch_audio_ext = os.path.splitext(audio_path)[1].lower()
                 _diff_key = str(diff).title()
@@ -41197,10 +41340,10 @@ demucs.separate.main()
                 if self.reduce_difficulty_var.get() and difficulty != "Expert":
                     rlrr["events"] = reduce_notes_for_difficulty(
                         rlrr["events"], bpm, difficulty)
-            _want_vel_flags = bool(self.ghost_notes_var.get()
-                                   or self.accent_notes_var.get())
+            _g = bool(self.ghost_notes_var.get())
+            _a = bool(self.accent_notes_var.get())
             ch_events = rlrr_events_to_ch_events(
-                rlrr["events"], bpm, emit_velocity_flags=_want_vel_flags)
+                rlrr["events"], bpm, emit_ghost=_g, emit_accent=_a)
             if not ch_events:
                 self.log("\nERROR: No Clone Hero drum events generated. Check MIDI file and BPM.")
                 return
