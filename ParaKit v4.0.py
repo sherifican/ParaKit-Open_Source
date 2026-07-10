@@ -5160,6 +5160,7 @@ class MidiExtractorPanel:
 
         nb = ttk.Notebook(body)
         nb.pack(fill="x", pady=(0, 4))
+        self._nb = nb   # kept so load_file() can flip to the Single File subtab
 
         self._tab_single = ttk.Frame(nb)
         self._tab_batch  = ttk.Frame(nb)
@@ -5288,6 +5289,22 @@ class MidiExtractorPanel:
         self._extract_btn.configure(state="normal")
         self._send_btn.configure(state="normal")
         self._reset_progress()
+
+    def load_file(self, path):
+        """Programmatic _pick_file — used by the Song Creator library's
+        Extract → chip. Loads the given .rlrr into the Single File subtab
+        exactly as if the user had browsed to it."""
+        self._single_path = Path(path)
+        self._single_var.set(self._single_path.name)
+        self._log_clear()
+        self._load_preview(self._single_path)
+        self._extract_btn.configure(state="normal")
+        self._send_btn.configure(state="normal")
+        self._reset_progress()
+        try:
+            self._nb.select(self._tab_single)
+        except Exception:
+            pass
 
     def _pick_folder(self):
         path = filedialog.askdirectory(title="Select folder of .rlrr files")
@@ -5546,7 +5563,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.6.1"
+    VERSION = "4.6.2"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -8877,9 +8894,17 @@ class MidiToRlrrApp:
         # ── Advanced Options ──────────────────────────────────────────────────
         self._build_advanced_panel(main)
 
-        # ── Output ────────────────────────────────────────────────────────────
-        out_frame = ttk.LabelFrame(main, text=" Output ", padding=10)
-        out_frame.pack(fill=tk.X, pady=(0, 10))
+        # ── v4.6.2 — Bottom-band redesign (owner) ─────────────────────────────
+        # The stacked Output / action-buttons / Export-Format sections are
+        # reorganized into ONE horizontal card band (mirrors the YouTube tab's
+        # top_band: Format / Runtime / Cookies cards). _sc_relayout_band
+        # (defined after the cards exist) reflows to a stacked grid when the
+        # tab is narrow so no card overflows its column.
+        sc_band = ttk.Frame(main)
+        sc_band.pack(fill=tk.X, pady=(0, 8))
+
+        # ── Output (band card 0) ─────────────────────────────────────────────
+        out_frame = ttk.LabelFrame(sc_band, text=" Output ", padding=10)
 
         self.output_var = tk.StringVar()
         _cfg = load_config()
@@ -8887,7 +8912,7 @@ class MidiToRlrrApp:
             self.output_var.set(_cfg["output_folder_single"])
 
         ttk.Label(out_frame, text="Output Folder:").grid(row=0, column=0, sticky="w", padx=(0, 5))
-        out_ent = ttk.Entry(out_frame, textvariable=self.output_var, width=45)
+        out_ent = ttk.Entry(out_frame, textvariable=self.output_var, width=24)
         out_ent.grid(row=0, column=1, sticky="ew", padx=(0, 5))
         out_btn = ttk.Button(out_frame, text="Browse...", command=self._browse_output)
         out_btn.grid(row=0, column=2)
@@ -8911,7 +8936,7 @@ class MidiToRlrrApp:
         self.zip_folder_frame = ttk.Frame(zip_row)
         ttk.Label(self.zip_folder_frame, text="Zip to:", style="Sub.TLabel").pack(side=tk.LEFT, padx=(0, 4))
         self.zip_folder_var = tk.StringVar(value=load_config().get("zip_folder", ""))
-        ttk.Entry(self.zip_folder_frame, textvariable=self.zip_folder_var, width=30).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Entry(self.zip_folder_frame, textvariable=self.zip_folder_var, width=16).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(self.zip_folder_frame, text="Browse...",
                    command=lambda: (self.zip_folder_var.set(
                        filedialog.askdirectory(title="Select zip save folder")
@@ -8925,45 +8950,68 @@ class MidiToRlrrApp:
         if self.zip_output_var.get():
             self.zip_folder_frame.pack(side=tk.LEFT)
 
-        # ── Test Before Convert button ────────────────────────────────────────
-        test_btn_row = ttk.Frame(main)
-        test_btn_row.pack(fill=tk.X, pady=(5, 0))
-        ttk.Button(test_btn_row, text="🔬  Test Sync Before Converting",
-                   command=self._quick_test_from_converter).pack(side=tk.LEFT)
-        ttk.Button(test_btn_row, text="🔍  Check for Issues",
-                   command=self._pfv_run_single_button).pack(side=tk.LEFT, padx=(10, 0))
-        ttk.Button(test_btn_row, text="🗑  Clear All Fields",
-                   command=self._clear_all_fields).pack(side=tk.LEFT, padx=(10, 0))
-        ttk.Button(test_btn_row, text="📋  Copy to Batch",
-                   command=self._copy_to_batch).pack(side=tk.LEFT, padx=(10, 0))
-        ttk.Button(test_btn_row, text="📺  Preview/Practice Track",
-                   command=self._creator_send_to_visualizer).pack(side=tk.LEFT, padx=(10, 0))
-        ttk.Button(test_btn_row, text="💾  Save Project",
-                   command=self._project_save).pack(side=tk.LEFT, padx=(10, 0))
-        ttk.Button(test_btn_row, text="📂  Load Project",
-                   command=self._project_load).pack(side=tk.LEFT, padx=(4, 0))
-        # ?? Clone Hero extra metadata (shown only for CH / Both) ?????????????????
-        self.sc_ch_meta_frame = ttk.Frame(main)
+        # ── Tools (band card 2) — the old horizontal button strip, now a 2-col
+        # grid inside a card so it stacks beside Output / Export Format.
+        tools_frame = ttk.LabelFrame(sc_band, text=" Tools ", padding=8)
+        _sc_tool_btns = [
+            ("🔬  Test Sync Before Converting", self._quick_test_from_converter),
+            ("🔍  Check for Issues",            self._pfv_run_single_button),
+            ("🗑  Clear All Fields",            self._clear_all_fields),
+            ("📋  Copy to Batch",               self._copy_to_batch),
+            ("📺  Preview/Practice Track",      self._creator_send_to_visualizer),
+            ("💾  Save Project",                self._project_save),
+            ("📂  Load Project",                self._project_load),
+        ]
+        for _i, (_txt, _cmd) in enumerate(_sc_tool_btns):
+            ttk.Button(tools_frame, text=_txt, command=_cmd).grid(
+                row=_i // 2, column=_i % 2, sticky="ew",
+                padx=(0, 6) if (_i % 2 == 0) else 0, pady=(0, 4))
+        tools_frame.columnconfigure(0, weight=1)
+        tools_frame.columnconfigure(1, weight=1)
+        # ── Export Format (band card 1) — radios stacked vertically; the Clone
+        # Hero extras (Album / Year / CH Folder) live INSIDE this card now and
+        # reveal below the radios when CH / Both is selected.
+        fmt_frame = ttk.LabelFrame(sc_band, text=" Export Format ", padding=8)
+
+        self.sc_export_fmt = tk.StringVar(
+            value=load_config().get("export_format", "paradiddle"))
+
+        def _on_fmt_change(*_):
+            save_config({"export_format": self.sc_export_fmt.get()})
+            _update_fmt_ui()
+
+        ttk.Radiobutton(fmt_frame, text="Paradiddle (.rlrr)",
+                        variable=self.sc_export_fmt, value="paradiddle",
+                        command=_on_fmt_change).pack(anchor="w", pady=(0, 2))
+        ttk.Radiobutton(fmt_frame, text="Clone Hero (.chart)",
+                        variable=self.sc_export_fmt, value="clonehero",
+                        command=_on_fmt_change).pack(anchor="w", pady=(0, 2))
+        ttk.Radiobutton(fmt_frame, text="Both",
+                        variable=self.sc_export_fmt, value="both",
+                        command=_on_fmt_change).pack(anchor="w")
+
+        # Clone Hero extra metadata (shown only for CH / Both)
+        self.sc_ch_meta_frame = ttk.Frame(fmt_frame)
 
         _ch_album_row = ttk.Frame(self.sc_ch_meta_frame)
         _ch_album_row.pack(fill=tk.X, pady=(0, 4))
-        ttk.Label(_ch_album_row, text="Album", width=12, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Label(_ch_album_row, text="Album", width=9, anchor=tk.W).pack(side=tk.LEFT)
         self.sc_album_var = tk.StringVar()
         ttk.Entry(_ch_album_row, textvariable=self.sc_album_var).pack(
             side=tk.LEFT, fill=tk.X, expand=True)
 
         _ch_year_row = ttk.Frame(self.sc_ch_meta_frame)
         _ch_year_row.pack(fill=tk.X, pady=(0, 4))
-        ttk.Label(_ch_year_row, text="Year", width=12, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Label(_ch_year_row, text="Year", width=9, anchor=tk.W).pack(side=tk.LEFT)
         self.sc_year_var = tk.StringVar()
         ttk.Entry(_ch_year_row, textvariable=self.sc_year_var, width=8).pack(side=tk.LEFT)
 
-        # ?? Clone Hero output folder ??????????????????????????????????????????
-        self.sc_ch_out_frame = ttk.Frame(main)
+        # Clone Hero output folder (shown only for CH / Both)
+        self.sc_ch_out_frame = ttk.Frame(fmt_frame)
 
         _ch_out_row = ttk.Frame(self.sc_ch_out_frame)
         _ch_out_row.pack(fill=tk.X)
-        ttk.Label(_ch_out_row, text="CH Folder", width=12, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Label(_ch_out_row, text="CH Folder", width=9, anchor=tk.W).pack(side=tk.LEFT)
         self.sc_ch_out_var = tk.StringVar(
             value=load_config().get("ch_output_folder", ""))
         ttk.Entry(_ch_out_row, textvariable=self.sc_ch_out_var).pack(
@@ -8976,35 +9024,14 @@ class MidiToRlrrApp:
                        save_config({"ch_output_folder": self.sc_ch_out_var.get()})
                    ]).pack(side=tk.LEFT)
         ttk.Label(self.sc_ch_out_frame,
-                  text="  (blank = output folder \\ Clone Hero Songs)",
+                  text="(blank = output folder \\ Clone Hero Songs)",
                   foreground="#888").pack(anchor=tk.W)
-
-        # ?? Export format selector ????????????????????????????????????????????
-        fmt_frame = ttk.LabelFrame(main, text=" Export Format ", padding=8)
-        fmt_frame.pack(fill=tk.X, pady=(0, 6))
-
-        self.sc_export_fmt = tk.StringVar(
-            value=load_config().get("export_format", "paradiddle"))
-
-        def _on_fmt_change(*_):
-            save_config({"export_format": self.sc_export_fmt.get()})
-            _update_fmt_ui()
-
-        ttk.Radiobutton(fmt_frame, text="Paradiddle (.rlrr)",
-                        variable=self.sc_export_fmt, value="paradiddle",
-                        command=_on_fmt_change).pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Radiobutton(fmt_frame, text="Clone Hero (.chart)",
-                        variable=self.sc_export_fmt, value="clonehero",
-                        command=_on_fmt_change).pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Radiobutton(fmt_frame, text="Both",
-                        variable=self.sc_export_fmt, value="both",
-                        command=_on_fmt_change).pack(side=tk.LEFT)
 
         def _update_fmt_ui():
             is_ch = self.sc_export_fmt.get() in ("clonehero", "both")
             if is_ch:
-                self.sc_ch_meta_frame.pack(fill=tk.X, pady=(0, 4), before=fmt_frame)
-                self.sc_ch_out_frame.pack(fill=tk.X, pady=(0, 8), before=fmt_frame)
+                self.sc_ch_meta_frame.pack(fill=tk.X, pady=(6, 4))
+                self.sc_ch_out_frame.pack(fill=tk.X, pady=(0, 2))
             else:
                 self.sc_ch_meta_frame.pack_forget()
                 self.sc_ch_out_frame.pack_forget()
@@ -9012,6 +9039,40 @@ class MidiToRlrrApp:
                 self.convert_btn.configure(text=self._sc_convert_button_text())
             except Exception:
                 pass
+
+        # ── Band relayout (mirrors _yt_relayout_band) — 3 cards in one row when
+        # the tab is wide; Output full-width + [Format | Tools] when narrow.
+        def _sc_relayout_band(_e=None):
+            try:
+                w = sc_band.winfo_width()
+            except Exception:
+                return
+            if w <= 1:
+                return
+            mode = "wide" if w >= 980 else "narrow"
+            if getattr(self, "_sc_band_mode", None) == mode:
+                return
+            self._sc_band_mode = mode
+            for f in (out_frame, fmt_frame, tools_frame):
+                f.grid_forget()
+            for c in range(3):
+                sc_band.columnconfigure(c, weight=0)
+            if mode == "wide":
+                out_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+                fmt_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 8))
+                tools_frame.grid(row=0, column=2, sticky="nsew")
+                sc_band.columnconfigure(0, weight=3)
+                sc_band.columnconfigure(1, weight=2)
+                sc_band.columnconfigure(2, weight=3)
+            else:
+                out_frame.grid(row=0, column=0, columnspan=2,
+                               sticky="nsew", pady=(0, 6))
+                fmt_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
+                tools_frame.grid(row=1, column=1, sticky="nsew")
+                sc_band.columnconfigure(0, weight=1)
+                sc_band.columnconfigure(1, weight=1)
+        sc_band.bind("<Configure>", _sc_relayout_band)
+        self.root.after(60, _sc_relayout_band)
 
         # ?? Convert button ????????????????????????????????????????????????????
         self.convert_btn = ttk.Button(main, text=self._sc_convert_button_text(),
@@ -9024,8 +9085,23 @@ class MidiToRlrrApp:
         self.convert_timer_lbl = ttk.Label(main, text="", style="Sub.TLabel")
         self.convert_timer_lbl.pack(anchor="e", pady=(0, 4))
 
-        # ── Log ───────────────────────────────────────────────────────────────
-        log_frame = ttk.LabelFrame(main, text=" Log ", padding=5)
+        # ── v4.6.2 — Bottom split: Finished-Songs library (LEFT) + Log (RIGHT).
+        # Mirrors the YouTube tab's [library | log] bottom band. This tab's body
+        # always lives inside a scroll-canvas whose <Configure> only syncs WIDTH,
+        # so a child packed with expand=True collapses to zero height — give the
+        # container an explicit height + grid_propagate(False) (same fix as the
+        # YT tab's compact mode). The log keeps everything it had, just taller.
+        bottom = ttk.Frame(main)
+        bottom.configure(height=380)
+        bottom.pack(fill=tk.X, pady=(4, 0))
+        bottom.grid_propagate(False)
+        bottom.rowconfigure(0, weight=1)
+        bottom.columnconfigure(0, weight=1)   # LEFT — Finished-Songs library
+        bottom.columnconfigure(1, weight=1)   # RIGHT — conversion log
+
+        log_col = ttk.Frame(bottom)
+        log_col.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        log_frame = ttk.LabelFrame(log_col, text=" Log ", padding=5)
         log_frame.pack(fill=tk.BOTH, expand=True)
 
         log_btn_row = ttk.Frame(log_frame)
@@ -9049,6 +9125,791 @@ class MidiToRlrrApp:
             insertbackground="#58a6ff", state="disabled")
         self.log_text.pack(fill=tk.BOTH, expand=True)
         self._setup_pretty_log_widget(self.log_text)
+
+        # LEFT — the persistent Finished-Songs library.
+        lib_col = ttk.Frame(bottom)
+        lib_col.grid(row=0, column=0, sticky="nsew")
+        self._sc_library_build(lib_col)
+
+        # Stop the library preview whenever the user leaves this tab (mirrors
+        # the YT / Stem Splitter guards; add="+" so it can't clobber theirs).
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           self._sc_lib_on_tab_changed_stop_preview, add="+")
+
+    # =====================================================================
+    # v4.6.2 — Single Song Creator "Finished Songs" library
+    # UI + folder-scan glue only (mirrors the YT / Stem Splitter libraries).
+    # The library is populated by SCANNING up to two user-pickable source
+    # folders (defaults: the Output Folder + the Clone Hero folder) — every
+    # subfolder holding a .rlrr is a Paradiddle song, every subfolder holding
+    # a notes.chart is a Clone Hero song; same-named folders merge into one
+    # row. No registry: pre-existing songs show up too, and the badges
+    # (rlrr / chart / E-M-H-X) are computed LIVE from disk each refresh.
+    # =====================================================================
+
+    def _sc_entry_key(self, entry):
+        """Stable identity for a library entry: the .rlrr song folder when it
+        exists, else the Clone Hero folder (chart-only songs)."""
+        p = entry.get("folder") or entry.get("ch_folder") or ""
+        return os.path.normcase(os.path.abspath(p)) if p else ""
+
+    def _sc_lib_default_sources(self):
+        """The two DEFAULT source folders: (1) the Output Folder setting,
+        (2) the CH Folder setting — or, when that's blank, the same
+        '<output folder>\\Clone Hero Songs' the CH export itself defaults to."""
+        try:
+            src1 = (self.output_var.get() or "").strip()
+        except Exception:
+            src1 = ""
+        try:
+            src2 = (self.sc_ch_out_var.get() or "").strip()
+        except Exception:
+            src2 = ""
+        if not src2 and src1:
+            src2 = os.path.join(src1, "Clone Hero Songs")
+        return src1, src2
+
+    def _sc_lib_sources(self):
+        """The two RESOLVED source folders the library scans: the persisted
+        user picks when set, else the live defaults."""
+        cfg = load_config()
+        d1, d2 = self._sc_lib_default_sources()
+        s1 = (cfg.get("sc_lib_src1") or "").strip() or d1
+        s2 = (cfg.get("sc_lib_src2") or "").strip() or d2
+        return s1, s2
+
+    def _sc_lib_quick_meta_artist(self, entry):
+        """Cheap artist lookup: song.ini for CH songs (tiny file), else the
+        head of the first .rlrr (recordingMetadata sits at the top of the
+        JSON). Cached by (path, mtime) so refreshes don't re-read files."""
+        cache = getattr(self, "_sc_meta_cache", None)
+        if cache is None:
+            cache = self._sc_meta_cache = {}
+        for kind, folder in (("ch", entry.get("ch_folder")),
+                             ("pd", entry.get("folder"))):
+            if not folder or not os.path.isdir(folder):
+                continue
+            try:
+                if kind == "ch":
+                    p = os.path.join(folder, "song.ini")
+                    if not os.path.isfile(p):
+                        continue
+                    mt = os.path.getmtime(p)
+                    hit = cache.get(p)
+                    if hit and hit[0] == mt:
+                        if hit[1]:
+                            return hit[1]
+                        continue
+                    artist = ""
+                    with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                        for line in f:
+                            k, _, v = line.partition("=")
+                            if k.strip().lower() == "artist":
+                                artist = v.strip()
+                                break
+                    cache[p] = (mt, artist)
+                    if artist:
+                        return artist
+                else:
+                    rlrr = None
+                    for fn in sorted(os.listdir(folder)):
+                        if fn.lower().endswith(".rlrr"):
+                            rlrr = os.path.join(folder, fn)
+                            break
+                    if not rlrr:
+                        continue
+                    mt = os.path.getmtime(rlrr)
+                    hit = cache.get(rlrr)
+                    if hit and hit[0] == mt:
+                        if hit[1]:
+                            return hit[1]
+                        continue
+                    with open(rlrr, "r", encoding="utf-8",
+                              errors="ignore") as f:
+                        head = f.read(4096)
+                    m = re.search(r'"artist"\s*:\s*"([^"]*)"', head)
+                    artist = m.group(1) if m else ""
+                    cache[rlrr] = (mt, artist)
+                    if artist:
+                        return artist
+            except Exception:
+                continue
+        return ""
+
+    def _sc_library_scan_sources(self):
+        """Build the library entry list by scanning the (up to 2) source
+        folders. One entry per song, keyed by the subfolder NAME so a song's
+        .rlrr folder and its same-named Clone Hero folder merge into one row
+        with both badges."""
+        songs = {}
+        seen_dirs = set()
+        for src in self._sc_lib_sources():
+            if not src:
+                continue
+            try:
+                nsrc = os.path.normcase(os.path.abspath(src))
+            except Exception:
+                continue
+            if nsrc in seen_dirs:      # both sources pointing at one folder
+                continue
+            seen_dirs.add(nsrc)
+            if not os.path.isdir(src):
+                continue
+            try:
+                names = os.listdir(src)
+            except Exception:
+                continue
+            for name in names:
+                sub = os.path.join(src, name)
+                try:
+                    if not os.path.isdir(sub):
+                        continue
+                    has_rlrr = False
+                    has_chart = False
+                    for fn in os.listdir(sub):
+                        low = fn.lower()
+                        if low.endswith(".rlrr"):
+                            has_rlrr = True
+                        elif low == "notes.chart":
+                            has_chart = True
+                    if not (has_rlrr or has_chart):
+                        continue
+                    mtime = os.path.getmtime(sub)
+                except Exception:
+                    continue
+                key = os.path.normcase(name)
+                e = songs.setdefault(key, {"title": name, "artist": "",
+                                           "added_ts": 0})
+                if has_rlrr and not e.get("folder"):
+                    e["folder"] = sub
+                if has_chart and not e.get("ch_folder"):
+                    e["ch_folder"] = sub
+                e["added_ts"] = max(e.get("added_ts", 0), mtime)
+        entries = list(songs.values())
+        for e in entries:
+            e["artist"] = self._sc_lib_quick_meta_artist(e)
+        return entries
+
+    def _sc_lib_scan(self, entry):
+        """Live disk scan for one entry: which formats/difficulties exist, plus
+        the preview audio + album art. Cheap (one listdir per folder + one
+        notes.chart header check), run per rendered row on refresh."""
+        _AUD = (".ogg", ".mp3", ".flac", ".wav")
+        folder = entry.get("folder") or ""
+        ch = entry.get("ch_folder") or ""
+        scan = {"rlrr": False, "chart": False, "diffs": set(),
+                "audio": None, "art": None}
+        if folder and os.path.isdir(folder):
+            best_audio, best_size = None, -1
+            try:
+                for fn in os.listdir(folder):
+                    low = fn.lower()
+                    p = os.path.join(folder, fn)
+                    if low.endswith(".rlrr"):
+                        scan["rlrr"] = True
+                        d = _paradiddle_difficulty_from_filename(fn)
+                        if d:
+                            scan["diffs"].add(d)
+                    elif (low.startswith("album.")
+                          and low.rsplit(".", 1)[-1] in ("png", "jpg", "jpeg")):
+                        scan["art"] = p
+                    elif (low.endswith(_AUD) and not low.startswith("drum")
+                          and "preview" not in low):
+                        # main-mix heuristic: largest non-drums, non-preview audio
+                        try:
+                            sz = os.path.getsize(p)
+                        except Exception:
+                            sz = 0
+                        if sz > best_size:
+                            best_audio, best_size = p, sz
+            except Exception:
+                pass
+            scan["audio"] = best_audio
+        if ch and os.path.isdir(ch):
+            chart_path = os.path.join(ch, "notes.chart")
+            if os.path.isfile(chart_path):
+                scan["chart"] = True
+                try:
+                    with open(chart_path, "r", encoding="utf-8",
+                              errors="ignore") as f:
+                        txt = f.read(2_000_000)
+                    for d in ("Easy", "Medium", "Hard", "Expert"):
+                        if ("[" + d + "Drums]") in txt:
+                            scan["diffs"].add(d)
+                except Exception:
+                    pass
+            if scan["audio"] is None:
+                for ext in _AUD:
+                    p = os.path.join(ch, "song" + ext)
+                    if os.path.isfile(p):
+                        scan["audio"] = p
+                        break
+            if scan["art"] is None:
+                p = os.path.join(ch, "album.png")
+                if os.path.isfile(p):
+                    scan["art"] = p
+        return scan
+
+    def _sc_library_build(self, parent):
+        self._sc_lib_art_refs = getattr(self, "_sc_lib_art_refs", {})
+        self._sc_lib_rows = []
+        self._sc_lib_selected_key = None
+        self._sc_lib_show_all = False
+        self._sc_lib_refresh_after = None
+
+        ttk.Label(parent, text="YOUR SONGS",
+                  font=("Segoe UI", 8, "bold"), foreground="#9a9ab0").pack(anchor="w")
+
+        # ── Source pickers — the (up to 2) folders the library scans.
+        # Entries show the RESOLVED source (user pick, else live default);
+        # edits commit on Enter / focus-out, 📂 browses, ↺ resets to default.
+        self._sc_src_vars = (tk.StringVar(), tk.StringVar())
+        self._sc_src_entries = []
+        for _si, (_icon, _tip_what, _cfg_key) in enumerate((
+                ("🎵", "Paradiddle songs source — defaults to your Output Folder",
+                 "sc_lib_src1"),
+                ("🎸", "Clone Hero songs source — defaults to your CH Folder "
+                       "(or '<Output Folder>\\Clone Hero Songs')",
+                 "sc_lib_src2"))):
+            _srow = ttk.Frame(parent)
+            _srow.pack(fill=tk.X, pady=(2 if _si == 0 else 0, 2))
+            _ic = ttk.Label(_srow, text=_icon)
+            _ic.pack(side=tk.LEFT, padx=(0, 4))
+            self._add_tooltip(_ic, _tip_what)
+            _ent = ttk.Entry(_srow, textvariable=self._sc_src_vars[_si],
+                             font=("Segoe UI", 8))
+            _ent.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self._sc_src_entries.append(_ent)
+
+            def _commit(_e=None, si=_si, key=_cfg_key):
+                val = (self._sc_src_vars[si].get() or "").strip()
+                default = self._sc_lib_default_sources()[si]
+                # picking the default (or blanking) = follow the default again
+                save_config({key: "" if (not val or os.path.normcase(val)
+                                         == os.path.normcase(default)) else val})
+                self._sc_library_refresh()
+            _ent.bind("<Return>", _commit)
+            _ent.bind("<FocusOut>", _commit)
+
+            def _browse(si=_si, key=_cfg_key):
+                path = filedialog.askdirectory(
+                    title="Select a folder for the library to pull from")
+                if not path:
+                    return
+                self._sc_src_vars[si].set(path)
+                default = self._sc_lib_default_sources()[si]
+                save_config({key: "" if os.path.normcase(path)
+                             == os.path.normcase(default) else path})
+                self._sc_library_refresh()
+
+            def _reset(si=_si, key=_cfg_key):
+                save_config({key: ""})
+                self._sc_src_vars[si].set(self._sc_lib_default_sources()[si])
+                self._sc_library_refresh()
+
+            _bbtn = ttk.Button(_srow, text="📂", width=3, command=_browse)
+            _bbtn.pack(side=tk.LEFT, padx=(4, 0))
+            self._add_tooltip(_bbtn, "Choose a different folder for this source")
+            _rbtn = ttk.Button(_srow, text="↺", width=3, command=_reset)
+            _rbtn.pack(side=tk.LEFT, padx=(2, 0))
+            self._add_tooltip(_rbtn, "Reset this source to its default folder")
+
+        bar = ttk.Frame(parent)
+        bar.pack(fill=tk.X, pady=(2, 4))
+        self._sc_lib_search_var = tk.StringVar()
+        search_entry = ttk.Entry(bar, textvariable=self._sc_lib_search_var)
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._sc_lib_search_var.trace_add("write", self._sc_library_refresh)
+        # Same placeholder shim as the YT library search box.
+        self._sc_lib_search_placeholder = "Search songs…"
+        self._sc_lib_search_is_placeholder = True
+
+        def _sc_search_show_placeholder():
+            self._sc_lib_search_is_placeholder = True
+            search_entry.configure(foreground="#7e7e96")
+            self._sc_lib_search_var.set(self._sc_lib_search_placeholder)
+
+        def _sc_search_on_focus_in(_e):
+            if self._sc_lib_search_is_placeholder:
+                self._sc_lib_search_is_placeholder = False
+                self._sc_lib_search_var.set("")
+                search_entry.configure(foreground="#e8e8f0")
+
+        def _sc_search_on_focus_out(_e):
+            if not self._sc_lib_search_var.get().strip():
+                _sc_search_show_placeholder()
+        search_entry.bind("<FocusIn>", _sc_search_on_focus_in)
+        search_entry.bind("<FocusOut>", _sc_search_on_focus_out)
+        _sc_search_show_placeholder()
+        ttk.Label(bar, text="Sort:", style="Sub.TLabel").pack(side=tk.LEFT, padx=(6, 2))
+        self._sc_lib_sort_var = tk.StringVar(value="Newest")
+        sort_combo = ttk.Combobox(bar, textvariable=self._sc_lib_sort_var,
+                                  values=("Newest", "Title"),
+                                  width=10, state="readonly")
+        sort_combo.pack(side=tk.LEFT)
+        sort_combo.bind("<<ComboboxSelected>>", self._sc_library_refresh)
+
+        canvas_wrap = ttk.Frame(parent)
+        canvas_wrap.pack(fill=tk.BOTH, expand=True)
+        self._sc_lib_canvas = tk.Canvas(canvas_wrap, bg="#15152a",
+                                        highlightthickness=0, bd=0)
+        vsb = ttk.Scrollbar(canvas_wrap, orient="vertical",
+                            command=self._sc_lib_canvas.yview)
+        self._sc_lib_canvas.configure(yscrollcommand=vsb.set)
+        self._sc_lib_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._sc_lib_inner = tk.Frame(self._sc_lib_canvas, bg="#15152a")
+        self._sc_lib_inner_id = self._sc_lib_canvas.create_window(
+            (0, 0), window=self._sc_lib_inner, anchor="nw")
+
+        def _on_inner_cfg(_e):
+            try:
+                self._sc_lib_canvas.configure(
+                    scrollregion=self._sc_lib_canvas.bbox("all"))
+            except Exception:
+                pass
+        self._sc_lib_inner.bind("<Configure>", _on_inner_cfg)
+
+        def _on_canvas_cfg(e):
+            try:
+                self._sc_lib_canvas.itemconfigure(self._sc_lib_inner_id, width=e.width)
+            except Exception:
+                pass
+        self._sc_lib_canvas.bind("<Configure>", _on_canvas_cfg)
+        # No canvas <MouseWheel> binding on purpose — the app-level global
+        # wheel walker already scrolls this canvas (see the YT library note).
+        # Only the SIBLING scrollbar needs a local forward.
+
+        def _vsb_wheel(e):
+            try:
+                self._sc_lib_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+            except Exception:
+                pass
+            return "break"
+        vsb.bind("<MouseWheel>", _vsb_wheel)
+
+        self._sc_library_refresh()
+
+    def _sc_library_refresh(self, *_):
+        """Debounced entry point (search keystrokes / sort / conversion end)."""
+        if not hasattr(self, "_sc_lib_inner"):
+            return
+        prev = getattr(self, "_sc_lib_refresh_after", None)
+        if prev:
+            try:
+                self.root.after_cancel(prev)
+            except Exception:
+                pass
+        self._sc_lib_refresh_after = self.root.after(200, self._sc_library_do_refresh)
+
+    def _sc_library_do_refresh(self):
+        self._sc_lib_refresh_after = None
+        if not hasattr(self, "_sc_lib_inner"):
+            return
+        try:
+            if not self._sc_lib_inner.winfo_exists():
+                return
+        except Exception:
+            return
+
+        for child in list(self._sc_lib_inner.winfo_children()):
+            try:
+                child.destroy()
+            except Exception:
+                pass
+        self._sc_lib_rows = []
+
+        # Re-sync the source entries to their resolved folders (a changed
+        # Output Folder moves the defaults) — but never stomp one being typed.
+        try:
+            focused = self.root.focus_get()
+        except Exception:
+            focused = None
+        resolved = self._sc_lib_sources()
+        for _si, _var in enumerate(getattr(self, "_sc_src_vars", ())):
+            try:
+                if (self._sc_src_entries[_si] is not focused
+                        and _var.get() != resolved[_si]):
+                    _var.set(resolved[_si])
+            except Exception:
+                pass
+
+        live = self._sc_library_scan_sources()
+
+        if getattr(self, "_sc_lib_search_is_placeholder", False):
+            q = ""
+        else:
+            q = (self._sc_lib_search_var.get() or "").strip().lower()
+        if q:
+            live = [e for e in live
+                    if q in (e.get("title", "") or "").lower()
+                    or q in (e.get("artist", "") or "").lower()]
+
+        if self._sc_lib_sort_var.get() == "Title":
+            live.sort(key=lambda e: (e.get("title", "") or "").lower())
+        else:
+            live.sort(key=lambda e: e.get("added_ts", 0), reverse=True)
+
+        if not live:
+            msg = ("No finished songs found in your source folders yet — "
+                   "convert one above and it'll appear here, or point a "
+                   "source (📂) at your songs." if not q else "No matches.")
+            tk.Label(self._sc_lib_inner, text=msg, bg="#15152a",
+                     fg="#7e7e96", font=("Segoe UI", 9),
+                     padx=10, pady=14, wraplength=380,
+                     justify="left").pack(anchor="w")
+        else:
+            cap = 60
+            show = live if self._sc_lib_show_all else live[:cap]
+            for i, e in enumerate(show):
+                scan = self._sc_lib_scan(e)
+                self._sc_lib_row(self._sc_lib_inner, e, scan, i)
+            if (not self._sc_lib_show_all) and len(live) > cap:
+                more = tk.Label(self._sc_lib_inner,
+                                text=f"▾  Show all {len(live)} songs",
+                                bg="#15152a", fg="#b388ff", cursor="hand2",
+                                font=("Segoe UI", 9, "bold"), pady=6)
+                more.pack(fill=tk.X)
+
+                def _show_all(_e):
+                    self._sc_lib_show_all = True
+                    self._sc_library_do_refresh()
+                more.bind("<Button-1>", _show_all)
+
+        # Prune cached PhotoImage refs to currently-rendered rows.
+        try:
+            rendered = {getattr(r, "_sc_art_path", None) for r in self._sc_lib_rows}
+            self._sc_lib_art_refs = {
+                p: v for p, v in self._sc_lib_art_refs.items() if p in rendered}
+        except Exception:
+            pass
+
+        try:
+            self._sc_lib_canvas.update_idletasks()
+            self._sc_lib_canvas.configure(
+                scrollregion=self._sc_lib_canvas.bbox("all"))
+        except Exception:
+            pass
+
+    def _sc_make_badge(self, parent, text, color, present, tip_on, tip_off,
+                       row=None):
+        """Outlined pill in a caller-supplied colour when present, dim when
+        absent. Always rendered (present OR absent) so every row's badge
+        cluster keeps a constant width and the columns line up."""
+        border, fg = (color, color) if present else ("#4a4a6b", "#8a8aa2")
+        b = tk.Label(parent, text=text, bg=parent["bg"], fg=fg,
+                     font=("Segoe UI", 8), padx=4, pady=0, bd=0,
+                     highlightthickness=1, highlightbackground=border,
+                     highlightcolor=border)
+        b.pack(side=tk.LEFT, padx=2)
+        try:
+            self._add_tooltip(b, tip_on if present else tip_off)
+        except Exception:
+            pass
+        if row is not None:
+            row._yt_color_targets.append(b)
+        return b
+
+    def _sc_lib_row(self, parent, entry, scan, idx):
+        key = self._sc_entry_key(entry)
+        audio = scan.get("audio")
+        rest_bg = "#181830" if (idx % 2) else "#15152a"
+        HOVER_BG, SEL_BG, ACCENT = "#22203c", "#2c2748", "#b388ff"
+
+        row = tk.Frame(parent, bg=rest_bg)
+        row.pack(fill=tk.X)
+        # Only the text column (col 2) expands, so the right cluster —
+        # [rlrr][chart] · ▶Play · Extract → · | · [E][M][H][X] — right-aligns
+        # at a consistent position across rows. Reserved minsizes keep the
+        # wider "Pause" glyph / spinner from shifting the cluster.
+        row.columnconfigure(2, weight=1)
+        row.columnconfigure(4, minsize=22)   # braille playback spinner
+        row.columnconfigure(5, minsize=80)   # Play/Pause
+        row._sc_key = key
+        row._yt_path = audio          # shared-preview identity (chip/spinner match)
+        row._sc_art_path = scan.get("art")
+        row._yt_color_targets = []
+
+        accent = tk.Frame(row, bg=rest_bg, width=3)
+        accent.grid(row=0, column=0, sticky="ns")
+
+        # Art tile (col 1) — album.* from the song folder, thumbnailed.
+        photo = None
+        art_path = scan.get("art")
+        if art_path and os.path.isfile(art_path):
+            try:
+                from PIL import Image, ImageTk
+                if art_path in self._sc_lib_art_refs:
+                    photo = self._sc_lib_art_refs[art_path]
+                else:
+                    img = Image.open(art_path)
+                    img.thumbnail((40, 40), Image.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    self._sc_lib_art_refs[art_path] = photo
+            except Exception:
+                photo = None
+        if photo is not None:
+            art_lbl = tk.Label(row, image=photo, bg=rest_bg, bd=0)
+        else:
+            art_lbl = tk.Label(row, text="♪", bg="#0d0d1a", fg="#6f6f8f",
+                               font=("Segoe UI", 15), width=3, height=2)
+        art_lbl.grid(row=0, column=1, padx=(6, 8), pady=4)
+
+        textcol = tk.Frame(row, bg=rest_bg)
+        textcol.grid(row=0, column=2, sticky="ew")
+        row._yt_color_targets.append(textcol)
+        title_lbl = tk.Label(textcol,
+                             text=self._yt_ellipsize(entry.get("title", "") or "Untitled", 34),
+                             bg=rest_bg, fg="#e8e8f0",
+                             font=("Segoe UI", 10, "bold"), anchor="w", justify="left")
+        title_lbl.pack(fill=tk.X, anchor="w")
+        row._yt_color_targets.append(title_lbl)
+        artist = entry.get("artist") or ""
+        if artist:
+            art_sub = tk.Label(textcol, text=self._yt_ellipsize(artist, 34),
+                               bg=rest_bg, fg="#9a9ab0",
+                               font=("Segoe UI", 9), anchor="w", justify="left")
+            art_sub.pack(fill=tk.X, anchor="w")
+            row._yt_color_targets.append(art_sub)
+
+        # Format badges (col 3): rlrr = purple, chart = cyan.
+        badges = tk.Frame(row, bg=rest_bg)
+        badges.grid(row=0, column=3, padx=(6, 4))
+        row._yt_color_targets.append(badges)
+        self._sc_make_badge(badges, "rlrr", "#b388ff", scan.get("rlrr"),
+                            "Paradiddle Ready ✔",
+                            "No .rlrr file in this song's folder ✖", row=row)
+        self._sc_make_badge(badges, "chart", "#00d4d4", scan.get("chart"),
+                            "Clone Hero Ready ✔",
+                            "No notes.chart for this song ✖", row=row)
+
+        def _mk_chip(text, fg, cmd, col, arg, border="#4a4a6b", bg=None,
+                     track=True):
+            chip = tk.Label(row, text=text, bg=(rest_bg if bg is None else bg),
+                            fg=fg, font=("Segoe UI", 9, "bold"), cursor="hand2",
+                            padx=8, pady=4, bd=0, highlightthickness=1,
+                            highlightbackground=border, highlightcolor=border)
+            chip.bind("<Button-1>", lambda _e, a=arg: cmd(a))
+            chip.grid(row=0, column=col, padx=(0, 4), sticky="e")
+            if track:
+                row._yt_color_targets.append(chip)
+            return chip
+
+        # Braille playback spinner (col 4) — animates on the playing row.
+        _spinner = tk.Label(row, text="", bg=rest_bg, fg=ACCENT,
+                            font=("Consolas", 11, "bold"), width=2)
+        _spinner.grid(row=0, column=4, padx=(0, 2), sticky="e")
+        row._yt_color_targets.append(_spinner)
+        row._yt_spinner = _spinner
+
+        # Play/Pause (col 5) — same shared full-song preview stream as the
+        # YT / Stem Splitter libraries; filled brand-colour chip.
+        _playing = (audio is not None
+                    and audio == getattr(self, "_yt_preview_path", None)
+                    and getattr(self, "_yt_preview_state", None) == "playing")
+        _play_bg = YT_PAUSE_CHIP_BG if _playing else YT_PLAY_CHIP_BG
+        row._yt_play_chip = _mk_chip(
+            "⏸  Pause" if _playing else "▶  Play",
+            "#ffffff", self._sc_lib_play, 5, audio,
+            border=_play_bg, bg=_play_bg, track=False)
+
+        # Extract → (col 6) — send this song's best .rlrr to the MIDI Extractor.
+        extract_chip = _mk_chip("Extract  →", ACCENT,
+                                self._sc_send_to_extractor, 6,
+                                entry.get("folder") or "")
+        self._add_tooltip(extract_chip, "Send to MIDI Extractor")
+
+        # "|" divider (col 7) between the actions and the difficulty badges.
+        _divider = tk.Label(row, text="|", bg=rest_bg, fg="#5a5a75",
+                            font=("Segoe UI", 12))
+        _divider.grid(row=0, column=7, padx=(2, 2), sticky="e")
+        row._yt_color_targets.append(_divider)
+
+        # Difficulty badges (col 8): E green / M yellow / H orange / X red —
+        # which difficulties exist in this song's folder.
+        diffs = scan.get("diffs") or set()
+        diff_frame = tk.Frame(row, bg=rest_bg)
+        diff_frame.grid(row=0, column=8, padx=(2, 6), sticky="e")
+        row._yt_color_targets.append(diff_frame)
+        for _letter, _dname, _dcolor in (("E", "Easy",   "#46d18a"),
+                                         ("M", "Medium", "#e6c84a"),
+                                         ("H", "Hard",   "#ff9f43"),
+                                         ("X", "Expert", "#e05650")):
+            self._sc_make_badge(diff_frame, _letter, _dcolor,
+                                _dname in diffs,
+                                f"{_dname} chart exists ✔",
+                                f"No {_dname} chart ✖", row=row)
+
+        sep = tk.Frame(parent, bg="#222238", height=1)
+        sep.pack(fill=tk.X)
+
+        def _set_state(state):
+            if state == "selected":
+                bg = SEL_BG
+                accent.configure(bg=ACCENT)
+            elif state == "hover":
+                bg = HOVER_BG
+                accent.configure(bg=ACCENT)
+            else:
+                bg = rest_bg
+                accent.configure(bg=rest_bg)
+            try:
+                row.configure(bg=bg)
+            except Exception:
+                pass
+            for w in row._yt_color_targets:
+                try:
+                    w.configure(bg=bg)
+                except Exception:
+                    pass
+        row._yt_set_state = _set_state
+
+        def _is_selected():
+            return self._sc_lib_selected_key == key
+
+        def _on_enter(_e):
+            _set_state("selected" if _is_selected() else "hover")
+
+        def _on_leave(_e):
+            try:
+                x, y = self.root.winfo_pointerxy()
+                w = row.winfo_containing(x, y)
+            except Exception:
+                w = None
+            inside = False
+            while w is not None:
+                if w is row:
+                    inside = True
+                    break
+                w = getattr(w, "master", None)
+            if inside:
+                return
+            _set_state("selected" if _is_selected() else "rest")
+
+        def _on_click(_e):
+            self._sc_lib_select_key(key)
+
+        def _on_right_click(e):
+            self._sc_lib_select_key(key)
+            self._sc_lib_context_menu(e, entry)
+            return "break"
+
+        def _bind_recursive(w):
+            w.bind("<Enter>", _on_enter, add="+")
+            w.bind("<Leave>", _on_leave, add="+")
+            w.bind("<Button-1>", _on_click, add="+")
+            w.bind("<Button-3>", _on_right_click, add="+")
+            for c in w.winfo_children():
+                _bind_recursive(c)
+        _bind_recursive(row)
+
+        self._sc_lib_rows.append(row)
+        _set_state("selected" if _is_selected() else "rest")
+
+    def _sc_lib_select_key(self, key):
+        self._sc_lib_selected_key = key
+        for r in getattr(self, "_sc_lib_rows", []):
+            try:
+                r._yt_set_state("selected" if r._sc_key == key else "rest")
+            except Exception:
+                pass
+
+    def _sc_lib_play(self, audio):
+        """Row Play/Pause — full-song preview through the shared stream."""
+        if not audio or not os.path.isfile(audio):
+            messagebox.showinfo(
+                "No audio found",
+                "Couldn't find a song audio file in this song's folder.")
+            return
+        self._yt_preview_toggle(audio)
+
+    def _sc_lib_update_chips(self):
+        """Flip OUR rows' Play/Pause chips to match the shared preview state.
+        Mirrors _stem_lib_update_chips, scoped to self._sc_lib_rows."""
+        cur = getattr(self, "_yt_preview_path", None)
+        state = getattr(self, "_yt_preview_state", None)
+        for r in getattr(self, "_sc_lib_rows", []):
+            chip = getattr(r, "_yt_play_chip", None)
+            if chip is None:
+                continue
+            try:
+                playing = (getattr(r, "_yt_path", None) is not None
+                           and getattr(r, "_yt_path", None) == cur
+                           and state == "playing")
+                _bg = YT_PAUSE_CHIP_BG if playing else YT_PLAY_CHIP_BG
+                chip.configure(text="⏸  Pause" if playing else "▶  Play",
+                               bg=_bg, highlightbackground=_bg,
+                               highlightcolor=_bg)
+            except Exception:
+                pass
+
+    def _sc_lib_on_tab_changed_stop_preview(self, _e=None):
+        """Stop the preview whenever the user leaves the Single Song Creator
+        tab (mirrors the YT / Stem Splitter leave-guards; _yt_preview_stop is
+        idempotent so the three guards coexist)."""
+        try:
+            if self.notebook.index("current") != self._tab_indexes.get("single"):
+                if getattr(self, "_yt_preview_path", None) is not None:
+                    self._yt_preview_stop()
+                self._sc_lib_update_chips()
+        except Exception:
+            pass
+
+    def _sc_lib_context_menu(self, event, entry):
+        """Right-click menu for a library row."""
+        menu = tk.Menu(self.root, tearoff=0)
+        folder = entry.get("folder") or ""
+        ch = entry.get("ch_folder") or ""
+        if folder and os.path.isdir(folder):
+            menu.add_command(label="Open song folder",
+                             command=lambda: self._sc_lib_open_folder(folder))
+        if ch and os.path.isdir(ch):
+            menu.add_command(label="Open Clone Hero folder",
+                             command=lambda: self._sc_lib_open_folder(ch))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _sc_lib_open_folder(self, folder):
+        try:
+            os.startfile(folder)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open folder:\n{e}")
+
+    def _sc_send_to_extractor(self, folder):
+        """Extract → chip: load this song's best .rlrr (Expert → Hard → Medium
+        → Easy) into the MIDI Extractor and jump to it."""
+        best, best_rank = None, 99
+        _order = {"Expert": 0, "Hard": 1, "Medium": 2, "Easy": 3}
+        if folder and os.path.isdir(folder):
+            try:
+                for fn in sorted(os.listdir(folder)):
+                    if fn.lower().endswith(".rlrr"):
+                        d = _paradiddle_difficulty_from_filename(fn)
+                        rank = _order.get(d, 50)
+                        if rank < best_rank:
+                            best, best_rank = os.path.join(folder, fn), rank
+            except Exception:
+                pass
+        if not best:
+            messagebox.showinfo(
+                "No .rlrr found",
+                "This song has no .rlrr file to extract — convert it to "
+                "Paradiddle format first.")
+            return
+        try:
+            if not getattr(self, "_midi_extractor_visible", False):
+                self._toggle_midi_extractor_fn()
+            self._midi_extractor_panel.load_file(best)
+        except Exception as e:
+            messagebox.showerror("MIDI Extractor",
+                                 f"Could not open the MIDI Extractor:\n{e}")
+            return
+        self.notebook.select(self._tab_indexes["a2m"])
+        self._set_global_status(
+            f"Sent {os.path.basename(best)} to the MIDI Extractor "
+            "(Audio → MIDI tab ▸ Advanced / Debug)", 5000)
 
     # ── Recent files helpers ──────────────────────────────────────────────────
     def _refresh_recent_combo(self):
@@ -26172,6 +27033,12 @@ demucs.separate.main()
             self._stem_lib_update_chips()
         except Exception:
             pass
+        # The Single Song Creator "Finished Songs" library shares the same
+        # preview stream too — refresh ITS chips from the same central point.
+        try:
+            self._sc_lib_update_chips()
+        except Exception:
+            pass
         # Drive the per-row braille playback spinner (the loop self-clears when
         # nothing is playing, so calling it on every state change is enough).
         try:
@@ -26199,7 +27066,7 @@ demucs.separate.main()
             frame = self._BRAILLE_SPINNER[self._yt_spinner_idx]
         else:
             frame = ""
-        for rows_attr in ("_yt_lib_rows", "_stem_lib_rows"):
+        for rows_attr in ("_yt_lib_rows", "_stem_lib_rows", "_sc_lib_rows"):
             for r in (getattr(self, rows_attr, []) or []):
                 sp = getattr(r, "_yt_spinner", None)
                 if sp is None:
@@ -40351,6 +41218,13 @@ demucs.separate.main()
             "difficulty": difficulty,
             "complexity": complexity,
         })
+
+        # v4.6.2 — the finished song lands in a library source folder, so a
+        # rescan picks it up (worker thread → refresh deferred to Tk).
+        try:
+            self.root.after(0, self._sc_library_refresh)
+        except Exception:
+            pass
 
         # Export log file if option is enabled
         if self.export_log_var.get():

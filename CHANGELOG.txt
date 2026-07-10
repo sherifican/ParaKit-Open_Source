@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.6.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.6.2  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,29 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.6.2   --   2026-07-10
+------------------------------------------------------------------------------
+  - Single Song Creator redesign (bottom half) -- the stacked Output / action
+    buttons / Export Format sections are now three side-by-side cards (like
+    the YouTube tab), and the space below the Convert button is split into a
+    new "Your Songs" library on the left with a taller Log on the right.
+  - NEW: Finished-Songs library -- the Single Song Creator now shows all your
+    finished songs, scanned live from up to two source folders. Source 1
+    defaults to your Output Folder and Source 2 to your Clone Hero folder
+    (or "<Output Folder>\Clone Hero Songs", the same default the CH export
+    uses); both are pickable (folder button) and resettable (undo button),
+    and your picks are remembered. Songs already on disk appear immediately
+    -- nothing needs re-converting.
+  - Library rows: "rlrr" (purple, Paradiddle Ready) and "chart" (cyan, Clone
+    Hero Ready) badges, full-song Play/Pause preview, an "Extract ->" button
+    that sends the song's best .rlrr straight to the MIDI Extractor, and
+    E / M / H / X badges (green / yellow / orange / red) showing which
+    difficulties exist in the song's folder. A song's .rlrr folder and its
+    same-named Clone Hero folder merge into one row. Search + sort included;
+    right-click opens the song's folders.
+  - Every finished conversion refreshes the library automatically.
 
 ------------------------------------------------------------------------------
   v4.6.1   --   2026-07-10
