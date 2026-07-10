@@ -533,6 +533,12 @@ MIDI_MAP = {
     # Hi-hat (closed + open + pedal)
     42: "BP_HiHat_C",     46: "BP_HiHat_C",
     44: "BP_HiHat_C",     # Pedal hi-hat
+    # Extended/e-kit hi-hat notes (audit 2026-07-10 E1): the editor lanes and
+    # the Clone Hero map already accept 21/22/23/26, but this map silently
+    # DROPPED them from .rlrr export. Admit them as hi-hats so external/e-kit
+    # MIDI keeps its hats in both formats.
+    21: "BP_HiHat_C",     22: "BP_HiHat_C",
+    23: "BP_HiHat_C",     26: "BP_HiHat_C",
     # Floor tom
     41: "BP_FloorTom_C",  43: "BP_FloorTom_C",
     # Low tom (Tom 2)
@@ -2187,6 +2193,38 @@ def build_chart_multi_difficulty(events_by_difficulty, bpm, title, artist,
         lines += ["}", ""]
 
     return "\n".join(lines)
+
+
+# Audit E2 (2026-07-10): reverse of build_rlrr's midi_to_name — one canonical
+# MIDI note per Paradiddle instrument name, for deriving Clone Hero events
+# from FINAL .rlrr events. CH collapses in-lane variants to the same pad, so
+# the canonical note per class is lossless for .chart purposes.
+_RLRR_NAME_TO_NOTE = {
+    "BP_Kick_C_1": 35,  "BP_Snare_C_1": 38,   "BP_HiHat_C_1": 42,
+    "BP_FloorTom_C_1": 41, "BP_Tom2_C_2": 45, "BP_Tom1_C_1": 48,
+    "BP_Crash15_C_1": 49,  "BP_Crash17_C_1": 57,
+    "BP_Ride17_C_1": 51,   "BP_Ride20_C_1": 59,
+}
+
+
+def rlrr_events_to_ch_events(events, bpm, emit_velocity_flags=False,
+                             resolution=192):
+    """Derive Clone Hero events from the FINAL .rlrr event list — i.e. AFTER
+    difficulty reduction — so .rlrr and .chart always represent the SAME hit
+    set (audit E2: reduction used to apply only to the .rlrr while the .chart
+    was built from the unreduced note list). Velocity survives via the event
+    "vel" field, so ghost/accent flags can be emitted (audit E5). Event "time"
+    strings already include the export offset — no further shifting."""
+    dicts = []
+    for ev in events:
+        note = _RLRR_NAME_TO_NOTE.get(ev.get("name"))
+        if note is None:
+            continue
+        dicts.append({"note": note, "vel": ev.get("vel", 80),
+                      "time": ev.get("time", 0.0)})
+    return _paradiddle_rlrr_to_ch_events(
+        dicts, bpm, emit_velocity_flags=emit_velocity_flags,
+        resolution=resolution)
 
 
 def _itunes_fetch_album_art(title, artist, user_agent_version=""):
@@ -5474,7 +5512,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.9.5"
+    VERSION = "4.6.0"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -6278,7 +6316,15 @@ class MidiToRlrrApp:
 
             events_by_difficulty = {}
             highest_rating = 0
-            bpm_used = 120.0
+            # Audit E8 (2026-07-10): ONE reference BPM (the first usable
+            # file's) converts EVERY difficulty's absolute note-times, and that
+            # same BPM is written to the chart's single SyncTrack. Previously
+            # each file converted under its own BPM but the LAST file's BPM
+            # went to the SyncTrack — mixed-BPM selections decoded earlier
+            # sections at the wrong wall-clock time. Note times are absolute
+            # seconds, so converting under the reference keeps every section
+            # wall-clock correct.
+            bpm_used = 0.0
             for rp in selected_rlrrs:
                 diff = difficulty_map.get(rp)
                 if diff not in self._pd_to_ch_diff_order():
@@ -6290,7 +6336,15 @@ class MidiToRlrrApp:
                     _log(f"  SKIP (parse failed): "
                          f"{os.path.basename(rp)}")
                     continue
-                bpm_used = float(bpm) if bpm else 120.0
+                file_bpm = float(bpm) if bpm else 120.0
+                if not bpm_used:
+                    bpm_used = file_bpm
+                elif abs(file_bpm - bpm_used) > 0.01:
+                    _log(f"  NOTE: {os.path.basename(rp)} carries "
+                         f"bpmEvents={file_bpm:.2f}, but the chart's single "
+                         f"SyncTrack uses {bpm_used:.2f} — its notes are "
+                         f"converted from absolute seconds under the SyncTrack "
+                         f"BPM so timing stays correct.")
                 ev_list = _paradiddle_rlrr_to_ch_events(
                     notes, bpm_used,
                     emit_velocity_flags=emit_velocity_flags,
@@ -6311,6 +6365,7 @@ class MidiToRlrrApp:
                 return False
             if highest_rating == 0:
                 highest_rating = 3
+            bpm_used = bpm_used or 120.0   # E8: never write a 0-BPM SyncTrack
 
             def _safe_name(s):
                 illegal = '<>:"/\\|?*'
@@ -6689,6 +6744,17 @@ class MidiToRlrrApp:
     # =========================================================================
     # Tab 1 — Single Song Creator
     # =========================================================================
+    def _register_session_temp(self, path):
+        """Track a temp file that must outlive its creator (another tab still
+        references the path this session) but should not outlive the app.
+        Deleted best-effort in _on_close. (Audit A4 — sheet-music conversions
+        with 'Save file' off leaked one .mid per run, permanently.)"""
+        try:
+            self._session_temp_files = getattr(self, "_session_temp_files", [])
+            self._session_temp_files.append(str(path))
+        except Exception:
+            pass
+
     def _on_close(self):
         """Save window geometry before closing. If the MIDI Editor has unsaved
         edits, prompt the user first (Save & Quit / Exit Without Saving / Cancel)."""
@@ -6701,6 +6767,12 @@ class MidiToRlrrApp:
                     return                   # user backed out of the save dialog → don't quit
             # choice == "discard" → fall through and quit without saving
         save_config({"window_geometry": self.root.geometry()})
+        # Session temp files (sheet-music handoffs etc.) — best-effort removal.
+        for _p in getattr(self, "_session_temp_files", []):
+            try:
+                os.remove(_p)
+            except Exception:
+                pass
         try:
             self._midi_close()
         except Exception:
@@ -6780,6 +6852,21 @@ class MidiToRlrrApp:
                         os.remove(p)
                 except Exception:
                     pass
+
+    def _bg_message(self, title, msg, kind="error"):
+        """Show a messagebox on the Tk main thread from any worker thread.
+        The message is materialized to a plain string HERE (the caller's scope),
+        so a deferred ``except ... as e`` variable — which Python deletes when the
+        except block ends, before this after() lambda runs — can't NameError.
+        (Audit fix A1/B: replaces the leaky `after(0, lambda: showerror(..{e}..))`.)"""
+        m = str(msg)
+        fn = {"error": messagebox.showerror,
+              "warning": messagebox.showwarning,
+              "info": messagebox.showinfo}.get(kind, messagebox.showerror)
+        try:
+            self.root.after(0, lambda: fn(title, m))
+        except Exception:
+            pass
 
     def _check_for_update(self):
         """Check GitHub for a newer version and prompt user if available (silent on fail)."""
@@ -6889,11 +6976,11 @@ class MidiToRlrrApp:
             if not silent:
                 self.root.after(0, lambda: self._update_status_lbl.configure(
                     text="Check failed", foreground="#e63946"))
-                self.root.after(0, lambda: messagebox.showwarning(
+                self._bg_message(
                     "Update Check Failed",
                     f"Could not reach GitHub to check for updates.\n\n{e}\n\n"
                     f"Check your internet connection or visit the repo "
-                    f"manually:\n{release_url}"))
+                    f"manually:\n{release_url}", "warning")
 
     def _fetch_remote_changelog_since(self, cur_ver, latest_ver, cap=8):
         """Best-effort: fetch the repo's CHANGELOG.txt and return the newest-first
@@ -7217,6 +7304,159 @@ class MidiToRlrrApp:
 
         return updated, skipped, failed
 
+    def _sync_manifest_deps_transactional(self, app_dir, new_ver, progress=None):
+        """Audit C (2026-07-10): TRANSACTIONAL dependency sync for the real
+        self-updater. Unlike the best-effort _sync_manifest_deps (kept for the
+        'refresh supporting files' dialog), this one refuses to leave a
+        mismatched install:
+
+          * missing / malformed manifest, or a manifest whose "version" doesn't
+            match the release being installed  ->  FATAL, nothing touched
+          * STAGE: every changed file downloads + hash-verifies to <file>.dl.tmp
+            first; ANY failure  ->  all temps deleted, FATAL, nothing touched
+          * COMMIT: *.prev backup then os.replace per file; a commit failure
+            triggers rollback of the already-committed files from their .prev
+
+        Returns (updated_list, skipped_count, fatal_message_or_None). The
+        caller must NOT install the main .py when fatal is not None."""
+        import urllib.request, urllib.parse, hashlib, json as _json
+
+        def _fetch(url, timeout=120):
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "ParaKit-update"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+
+        # 1) STRICT manifest fetch + version binding.
+        try:
+            man = _json.loads(
+                _fetch(self.PARAKIT_MANIFEST_RAW_URL, timeout=30).decode("utf-8"))
+        except Exception as e:
+            return [], 0, f"could not fetch/parse update_manifest.json ({e})"
+        if not isinstance(man, dict) or not isinstance(man.get("files"), list):
+            return [], 0, "update_manifest.json is malformed (no files list)"
+        man_ver = str(man.get("version", ""))
+        if man_ver != str(new_ver):
+            return [], 0, (f"manifest version {man_ver!r} doesn't match the "
+                           f"release being installed ({new_ver}) — likely a "
+                           f"release still publishing; try again in a minute")
+
+        def _safe(rel):
+            if not isinstance(rel, str):
+                return None
+            p = rel.replace("\\", "/").strip()
+            if (not p or p.startswith("/") or ".." in p.split("/")
+                    or (len(p) > 1 and p[1] == ":")):
+                return None
+            full = os.path.normpath(os.path.join(app_dir, p))
+            try:
+                if os.path.commonpath([full, os.path.normpath(app_dir)]) \
+                        != os.path.normpath(app_dir):
+                    return None
+            except Exception:
+                return None
+            return full
+
+        dep = man["files"]
+        total = len(dep)
+        if progress:
+            try:
+                progress("start", None, 0, total)
+            except Exception:
+                pass
+
+        # 2) STAGE — download + verify everything BEFORE touching any live file.
+        staged = []            # (rel, local, tmp)
+        skipped = 0
+        done = 0
+
+        def _emit(status, rel):
+            if progress:
+                try:
+                    progress(status, rel, done, total)
+                except Exception:
+                    pass
+
+        try:
+            for ent in dep:
+                rel = ent.get("path") if isinstance(ent, dict) else ent
+                want = ent.get("sha256") if isinstance(ent, dict) else None
+                local = _safe(rel)
+                if not local or not want:
+                    raise RuntimeError(f"{rel} (unsafe path or missing hash "
+                                       f"in manifest)")
+                if os.path.isfile(local):
+                    with open(local, "rb") as _lf:
+                        if hashlib.sha256(_lf.read()).hexdigest() == want:
+                            skipped += 1
+                            done += 1
+                            _emit("skipped", rel)
+                            continue
+                blob = _fetch(self.PARAKIT_RAW_BASE
+                              + urllib.parse.quote(str(rel), safe="/"))
+                if hashlib.sha256(blob).hexdigest() != want:
+                    raise RuntimeError(f"{rel} (hash mismatch after download)")
+                d = os.path.dirname(local)
+                if d:
+                    os.makedirs(d, exist_ok=True)
+                tmp = local + ".dl.tmp"
+                with open(tmp, "wb") as f:
+                    f.write(blob)
+                    f.flush()
+                    try:
+                        os.fsync(f.fileno())
+                    except Exception:
+                        pass
+                staged.append((rel, local, tmp))
+        except Exception as e:
+            for _rel, _local, tmp in staged:
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+            return [], skipped, (f"staging failed — {e}. Nothing was changed; "
+                                 f"your current install is untouched")
+
+        # 3) COMMIT — backup + atomic replace; roll back on a mid-commit failure.
+        updated = []
+        committed = []         # (local,) with a .prev alongside
+        try:
+            for rel, local, tmp in staged:
+                if os.path.isfile(local):
+                    shutil.copyfile(local, local + ".prev")
+                os.replace(tmp, local)
+                committed.append(local)
+                updated.append(rel)
+                done += 1
+                _emit("updated", rel)
+        except Exception as e:
+            rolled_back, stuck = 0, []
+            for local in committed:
+                try:
+                    prev = local + ".prev"
+                    if os.path.isfile(prev):
+                        os.replace(prev, local)
+                        rolled_back += 1
+                    else:
+                        stuck.append(os.path.basename(local))
+                except Exception:
+                    stuck.append(os.path.basename(local))
+            for _rel, _local, tmp in staged:
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+            if stuck:
+                return [], skipped, (f"commit failed ({e}) AND rollback could "
+                                     f"not restore: {', '.join(stuck[:5])} — "
+                                     f"re-run the updater or re-clone from "
+                                     f"GitHub to repair")
+            return [], skipped, (f"commit failed ({e}) — all "
+                                 f"{rolled_back} replaced file(s) were rolled "
+                                 f"back; your current install is intact")
+
+        return updated, skipped, None
+
     def _self_update_files(self, new_ver, dlg=None):
         """Download the new 'ParaKit v4.0.py' AND every dependency file the new
         version needs (per update_manifest.json) from GitHub, replacing them in
@@ -7382,11 +7622,18 @@ class MidiToRlrrApp:
                 return
             log(f"✓ Main app downloaded and validated ({len(data)//1024} KB).", "ok")
 
-            # 2) sync every dependency file the manifest lists (best-effort — a
-            #    pre-v4.5.5.1 repo may lack the manifest, so nothing gets synced).
+            # 2) TRANSACTIONAL dependency sync (audit C): strict manifest fetch
+            #    bound to this release's version, stage-all + hash-verify, then
+            #    commit with rollback. Any fatal outcome ABORTS the update here
+            #    — the main .py below is NOT installed, so the old
+            #    main-file/supporting-file mismatch can no longer be created.
             set_status("Checking supporting files…")
-            updated, skipped, failed = self._sync_manifest_deps(
-                app_dir, progress=dep_progress)
+            updated, skipped, fatal = self._sync_manifest_deps_transactional(
+                app_dir, new_ver, progress=dep_progress)
+            if fatal:
+                log(f"✗ {fatal}", "err")
+                finish(False, f"Update aborted — {fatal}.")
+                return
 
             # 3) write the main .py LAST — so a half-failed dependency set is never
             #    left running under the new .py before the user restarts.
@@ -7414,15 +7661,10 @@ class MidiToRlrrApp:
                 parts.append(f"{len(updated)} file(s) downloaded.")
             if skipped:
                 parts.append(f"{skipped} already up to date.")
-            if failed:
-                parts.append(f"{len(failed)} failed.")
             summary = "  ".join(parts)
-            log(summary, "ok" if not failed else "err")
-            if failed:
-                log("Some files failed — grab them from GitHub if the app "
-                    "misbehaves. Backups saved as *.prev.", "err")
+            log(summary, "ok")
             log("Done. Close and reopen ParaKit to run the new version.", "hdr")
-            finish(not failed, summary + "  Close and reopen ParaKit to finish.")
+            finish(True, summary + "  Close and reopen ParaKit to finish.")
 
         threading.Thread(target=_work, daemon=True).start()
 
@@ -11293,8 +11535,8 @@ demucs.separate.main()
             import traceback
             self._stem_log(f"\nERROR: {e}")
             self._stem_log(traceback.format_exc())
-            self.root.after(0, lambda: messagebox.showerror(
-                "Stem Split Failed", f"An error occurred:\n{e}\n\nCheck the log for details."))
+            self._bg_message(
+                "Stem Split Failed", f"An error occurred:\n{e}\n\nCheck the log for details.")
 
         finally:
             self.root.after(0, lambda: self.stem_btn.configure(
@@ -13830,8 +14072,8 @@ demucs.separate.main()
             import mido
             from mido import MidiFile, MidiTrack, Message
         except ImportError as e:
-            self.root.after(0, lambda: messagebox.showerror(
-                "Missing Dependency", f"Required package missing: {e}"))
+            self._bg_message(
+                "Missing Dependency", f"Required package missing: {e}")
             self.root.after(0, lambda: self.a2m_btn.configure(
                 state="normal", text="🎹  Convert Audio to MIDI"))
             self.root.after(0, lambda: self._a2m_set_controls_locked(False))
@@ -14921,8 +15163,8 @@ demucs.separate.main()
             self._a2m_log(f"\nERROR: {e}")
             self._a2m_log(traceback.format_exc())
             self.root.after(0, lambda: self._set_global_status("Audio to MIDI conversion failed - check the log.", 6000))
-            self.root.after(0, lambda: messagebox.showerror(
-                "Conversion Failed", f"An error occurred:\n{e}\n\nCheck the log for details."))
+            self._bg_message(
+                "Conversion Failed", f"An error occurred:\n{e}\n\nCheck the log for details.")
 
         finally:
             self.root.after(0, lambda: self.a2m_btn.configure(
@@ -15164,6 +15406,229 @@ demucs.separate.main()
         {"name": "Ride",      "midi": [51, 53, 59], "color": "#ffd700", "shape": "circle"},
         {"name": "Kick",      "midi": [35, 36],     "color": "#ff69b4", "shape": "kick"},
     ]
+
+    # Manual MIDI Note Manager (owner 2026-07-09): per-lane output-note variations,
+    # restricted to notes valid in BOTH Paradiddle (MIDI_MAP) and Clone Hero
+    # (_CH_NOTE_MAP). First entry per lane = the current default. Descriptions are
+    # the verified General MIDI Level-1 percussion meanings. Hi-Hat is special:
+    # the Manager sets the DEFAULT, but individual hats are set per-note in the
+    # editor (Closed/Open/Pedal), so the remap EXEMPTS the Hi-Hat lane.
+    MANUAL_NOTE_OPTIONS = {
+        "Kick":   [(35, "Acoustic Bass Drum (deep / boomy)"), (36, "Bass Drum 1 (tight / punchy)")],
+        "Snare":  [(38, "Acoustic Snare"), (40, "Electric Snare (tighter / higher)"),
+                   (37, "Side Stick (cross-stick click)")],
+        "Hi-Hat": [(42, "Closed"), (46, "Open (washy)"), (44, "Pedal (foot chick)")],
+        "Crash":  [(49, 'Crash 15"'), (57, 'Crash 17"'), (55, "Splash")],
+        "Ride":   [(51, 'Ride 17"'), (59, 'Ride 20"'), (53, "Ride Bell")],
+        "Tom 1":  [(48, "Hi-Mid Tom"), (50, "High Tom (higher)")],
+        "Tom 2":  [(45, "Low Tom"), (47, "Low-Mid Tom (higher)")],
+        "Tom 3":  [(41, "Low Floor Tom (deepest)"), (43, "High Floor Tom (higher)")],
+    }
+    MANUAL_NOTE_HHAT_EXEMPT = "Hi-Hat"   # per-note in the editor, not lane-wide
+
+    def _get_manual_note_overrides(self):
+        """Per-lane chosen output note from the Manual MIDI Note Manager (config
+        key ``manual_note_overrides``). Any missing/invalid value falls back to the
+        lane default (first option). Always returns a full lane->note dict."""
+        try:
+            saved = load_config().get("manual_note_overrides", {}) or {}
+        except Exception:
+            saved = {}
+        ov = {}
+        for lane, opts in self.MANUAL_NOTE_OPTIONS.items():
+            valid = [n for n, _ in opts]
+            v = saved.get(lane)
+            ov[lane] = v if v in valid else opts[0][0]
+        return ov
+
+    def _apply_manual_note_overrides(self, notes):
+        """Remap each hit to its lane's chosen output note before export. The
+        Hi-Hat lane is EXEMPT — its notes keep their individual 42/44/46 values
+        (set per-note in the editor) so mixed open/closed charts survive. Returns
+        a NEW list of same-shape tuples; the input is not mutated. Non-protected;
+        run on the note list just before build_rlrr / midi_notes_to_ch / MIDI save."""
+        ov = self._get_manual_note_overrides()
+        note_to_lane = {}
+        for lane in self.MIDI_EDITOR_LANES:
+            for n in lane["midi"]:
+                note_to_lane.setdefault(n, lane["name"])
+        out = []
+        for nd in (notes or []):
+            lane = note_to_lane.get(nd[1] if len(nd) > 1 else None)
+            if lane and lane != self.MANUAL_NOTE_HHAT_EXEMPT:
+                chosen = ov.get(lane)
+                if chosen is not None and chosen != nd[1]:
+                    t = list(nd); t[1] = chosen; out.append(tuple(t)); continue
+            out.append(tuple(nd) if not isinstance(nd, tuple) else nd)
+        return out
+
+    def _me_set_hihat_notes(self, indices, new_note, label):
+        """Set the per-note MIDI value (42 Closed / 46 Open / 44 Pedal) on the
+        given hi-hat note indices in the loaded chart. Undo-able; only notes in
+        the Hi-Hat lane are touched, so a mixed selection is safe."""
+        if new_note not in (42, 44, 46):
+            return
+        targets = [i for i in indices
+                   if 0 <= i < len(self.me_notes)
+                   and self.MIDI_EDITOR_LANES[
+                       self.me_notes[i]["lane_idx"]]["name"]
+                   == self.MANUAL_NOTE_HHAT_EXEMPT]
+        if not targets:
+            return
+        self._me_push_undo()
+        for i in targets:
+            self.me_notes[i]["note"] = new_note
+        self._me_redraw()
+        self.me_note_info_var.set(
+            f"🎩  {len(targets)} hi-hat note(s) → {label} ({new_note})")
+        self._me_update_info()
+
+    def _me_open_manual_note_manager(self):
+        """Floating 'Manual MIDI Note Manager' — pick which MIDI note each drum
+        lane writes on export (variations within the same drum piece, verified
+        GM percussion meanings). Persisted via config `manual_note_overrides`
+        and applied by _apply_manual_note_overrides just before every export.
+        Hi-Hat is PER-NOTE (right-click hats in the editor); its row here is a
+        one-time bulk setter for the currently loaded chart only."""
+        existing = getattr(self, "_me_note_mgr_popup", None)
+        if existing is not None:
+            try:
+                existing.deiconify(); existing.lift(); return
+            except Exception:
+                self._me_note_mgr_popup = None
+        pop = tk.Toplevel(self.root)
+        self._me_note_mgr_popup = pop
+        pop.title("🥁  Manual MIDI Note Manager")
+        pop.configure(bg=APP_BG)
+        pop.transient(self.root)
+        pop.resizable(False, False)
+        try:
+            pw, ph = 640, 580
+            px = self.root.winfo_x() + (self.root.winfo_width() - pw) // 2
+            py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
+            pop.geometry(f"{pw}x{ph}+{px}+{py}")
+        except Exception:
+            pass
+
+        def _close():
+            self._me_note_mgr_popup = None
+            try:
+                pop.destroy()
+            except Exception:
+                pass
+        pop.protocol("WM_DELETE_WINDOW", _close)
+
+        frame = ttk.Frame(pop, padding=14)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="🥁  Manual MIDI Note Manager",
+                  font=("Segoe UI", 12, "bold"),
+                  foreground="#b388ff").pack(anchor="w")
+        ttk.Label(frame,
+                  text=("Choose which MIDI note each lane writes on export "
+                        "(.mid / .rlrr / .chart).\n"
+                        "Crash & Ride switch the actual drum piece in Paradiddle. "
+                        "The other lanes keep their\n"
+                        "single Paradiddle pad — their choice sets the note "
+                        "e-kits / DAWs receive from the\n"
+                        "exported MIDI. Saved between sessions; applies on the "
+                        "next export."),
+                  style="Sub.TLabel", justify=tk.LEFT).pack(anchor="w", pady=(2, 10))
+
+        ov = self._get_manual_note_overrides()
+        status_var = tk.StringVar(value="")
+        combos = {}
+
+        def _save_lane(lane_name):
+            def _cb(_e=None):
+                sel = combos[lane_name].get()
+                try:
+                    chosen = int(sel.split("—")[0].strip())
+                except Exception:
+                    return
+                cur = self._get_manual_note_overrides()
+                cur[lane_name] = chosen
+                cur.pop(self.MANUAL_NOTE_HHAT_EXEMPT, None)  # hats = per-note
+                try:
+                    save_config({"manual_note_overrides": cur})
+                except Exception:
+                    pass
+                status_var.set(f"✓  {lane_name}  →  {sel}    "
+                               f"(saved — applies on the next export)")
+            return _cb
+
+        rows = ttk.Frame(frame)
+        rows.pack(fill=tk.X)
+        for lane in self.MIDI_EDITOR_LANES:
+            lname = lane["name"]
+            opts = self.MANUAL_NOTE_OPTIONS.get(lname)
+            if not opts:
+                continue
+            row = ttk.Frame(rows)
+            row.pack(fill=tk.X, pady=3)
+            sw = tk.Frame(row, bg=lane["color"], width=16, height=16,
+                          highlightthickness=1, highlightbackground="#000000")
+            sw.pack(side=tk.LEFT, padx=(0, 8))
+            sw.pack_propagate(False)
+            ttk.Label(row, text=lname, width=8,
+                      font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+            values = [f"{n} — {d}" for n, d in opts]
+            cb = ttk.Combobox(row, state="readonly", width=36, values=values)
+            combos[lname] = cb
+            if lname == self.MANUAL_NOTE_HHAT_EXEMPT:
+                cb.set(values[0])
+                cb.pack(side=tk.LEFT, padx=(4, 6))
+
+                def _hh_apply(cb=cb):   # bind NOW — `cb` rebinds next loop pass
+                    sel = cb.get()
+                    try:
+                        chosen = int(sel.split("—")[0].strip())
+                    except Exception:
+                        return
+                    lbl = sel.split("—", 1)[1].strip()
+                    n_before = len(self.me_notes)
+                    if not n_before:
+                        status_var.set("ℹ  No chart loaded — nothing to set.")
+                        return
+                    self._me_set_hihat_notes(range(n_before), chosen, lbl)
+                    status_var.set(f"✓  ALL loaded hi-hats → {sel}    "
+                                   f"(one-time on this chart; Ctrl+Z undoes)")
+                ttk.Button(row, text="Set all hats now",
+                           command=_hh_apply).pack(side=tk.LEFT)
+            else:
+                cur_note = ov.get(lname, opts[0][0])
+                cur_val = next((v for v in values
+                                if v.startswith(f"{cur_note} ")), values[0])
+                cb.set(cur_val)
+                cb.bind("<<ComboboxSelected>>", _save_lane(lname))
+                cb.pack(side=tk.LEFT, padx=(4, 0))
+
+        ttk.Label(frame,
+                  text=("Hi-Hat is PER-NOTE: right-click any hi-hat note in the "
+                        "editor to set it Closed (42) /\nOpen (46) / Pedal (44) — "
+                        "mixed open/closed charts are preserved on export. The "
+                        "row\nabove only bulk-sets the currently loaded chart "
+                        "(not a saved default)."),
+                  style="Sub.TLabel", foreground="#00d4d4",
+                  justify=tk.LEFT).pack(anchor="w", pady=(10, 0))
+
+        btns = ttk.Frame(frame)
+        btns.pack(fill=tk.X, pady=(12, 0))
+
+        def _reset():
+            try:
+                save_config({"manual_note_overrides": {}})
+            except Exception:
+                pass
+            for lname2, cb2 in combos.items():
+                opts2 = self.MANUAL_NOTE_OPTIONS[lname2]
+                cb2.set(f"{opts2[0][0]} — {opts2[0][1]}")
+            status_var.set("✓  All lanes reset to defaults  (saved)")
+        ttk.Button(btns, text="↺  Reset to defaults",
+                   command=_reset).pack(side=tk.LEFT)
+        ttk.Button(btns, text="Close", command=_close).pack(side=tk.RIGHT)
+        ttk.Label(frame, textvariable=status_var, style="Sub.TLabel",
+                  foreground="#00c853", wraplength=600,
+                  justify=tk.LEFT).pack(anchor="w", pady=(8, 0))
 
     def _make_stepper_control(self, parent, label_text, var, minimum, maximum,
                               step, fmt, command=None, label_width=14):
@@ -16458,6 +16923,13 @@ demucs.separate.main()
 
         ttk.Button(bottom_tools, text="🎵  Tempo Map",
                    command=self._me_open_tempo_map).pack(side=tk.LEFT, padx=(0, 16))
+
+        # Manual MIDI Note Manager (owner 2026-07-09) — per-lane output-note
+        # variations; hi-hats are per-note via right-click in the editor.
+        self._me_note_mgr_popup = None
+        ttk.Button(bottom_tools, text="🥁  Manual MIDI Note Manager",
+                   command=self._me_open_manual_note_manager).pack(
+                       side=tk.LEFT, padx=(0, 16))
 
         self._me_vel_expanded = tk.BooleanVar(value=False)
 
@@ -19178,14 +19650,63 @@ demucs.separate.main()
                              command=lambda: self._me_clear_flag_at(ni))
             menu.add_command(label="🗑  Delete note",
                              command=lambda: self._me_delete_note_rclick(ni))
+            self._me_add_hihat_menu_items(menu, ni)   # variations, if a hi-hat
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+                self.root.after(300, menu.destroy)
+        elif (self.MIDI_EDITOR_LANES[note["lane_idx"]]["name"]
+                == self.MANUAL_NOTE_HHAT_EXEMPT):
+            # Hi-hat — variation menu (Closed/Open/Pedal per-note, owner
+            # 2026-07-09) with delete kept inside it, mirroring the flagged-note
+            # menu pattern above.
+            menu = tk.Menu(self.root, tearoff=0,
+                           bg=APP_BG, fg="#c0c0d0",
+                           activebackground="#2a2a5e", activeforeground="#ffffff",
+                           relief="flat", bd=1)
+            menu.add_command(
+                label=f"Hi-Hat  @  {self._me_fmt_time(note['time'])}",
+                state="disabled", font=("Segoe UI", 8, "italic"))
+            menu.add_separator()
+            self._me_add_hihat_menu_items(menu, ni, with_separator=False)
+            menu.add_separator()
+            menu.add_command(label="🗑  Delete note",
+                             command=lambda: self._me_delete_note_rclick(ni))
             try:
                 menu.tk_popup(event.x_root, event.y_root)
             finally:
                 menu.grab_release()
                 self.root.after(300, menu.destroy)
         else:
-            # Non-flagged note — original delete behaviour
+            # Non-flagged, non-hi-hat note — original delete behaviour
             self._me_delete_note_rclick(ni)
+
+    def _me_add_hihat_menu_items(self, menu, ni, with_separator=True):
+        """Append Closed/Open/Pedal variation commands to *menu* when note *ni*
+        is a hi-hat. Applies to the whole selection when the clicked note is
+        part of a multi-selection (only hi-hat notes in it are changed)."""
+        try:
+            note = self.me_notes[ni]
+            if (self.MIDI_EDITOR_LANES[note["lane_idx"]]["name"]
+                    != self.MANUAL_NOTE_HHAT_EXEMPT):
+                return
+        except Exception:
+            return
+        sel = getattr(self, "_me_selected_notes", set())
+        targets = tuple(sorted(sel)) if (ni in sel and len(sel) > 1) else (ni,)
+        if with_separator:
+            menu.add_separator()
+        cur = note.get("note")
+        for n_val, lbl in self.MANUAL_NOTE_OPTIONS[self.MANUAL_NOTE_HHAT_EXEMPT]:
+            mark = "●  " if n_val == cur else "     "
+            txt = f"{mark}{lbl}  ({n_val})"
+            if len(targets) > 1:
+                txt += f"   →  {len(targets)} selected"
+            menu.add_command(
+                label=txt,
+                command=lambda v=n_val, l=lbl, t=targets:
+                    self._me_set_hihat_notes(t, v, l))
 
     def _me_delete_note_rclick(self, ni):
         """Delete note at index ni (right-click delete, single note only)."""
@@ -19375,6 +19896,24 @@ demucs.separate.main()
         self._me_selected_notes   = {note_pos[id(n)] for n in sel_n if id(n) in note_pos}
         self._me_selected_markers = {mark_pos[id(m)] for m in sel_m if id(m) in mark_pos}
         self._me_last_clicked_note = note_pos.get(id(last), -1)
+
+    def _me_transfer_flags(self, moves):
+        """Move ``me_flagged`` entries along with their notes (audit A2 —
+        quantize changed note["time"] but left the flag keyed at the OLD time:
+        the flag vanished from the note, stayed in the count, and Next-Flag
+        navigated to an empty timestamp). *moves* = [(old_time, new_time)].
+        Two-phase so chained moves can't clobber each other; when two notes
+        land on the same timestamp the flag already there wins (explicit
+        collision policy — flags are time-keyed, one flag per timestamp)."""
+        flagged = getattr(self, "me_flagged", None)
+        if not flagged or not moves:
+            return
+        popped = {}
+        for old_t, new_t in moves:
+            if old_t != new_t and old_t in flagged:
+                popped[old_t] = (flagged.pop(old_t), new_t)
+        for _old_t, (val, new_t) in popped.items():
+            flagged.setdefault(new_t, val)
 
     def _me_mark_edit_started(self):
         """Set the dirty flag + lock the in-place/copy mode radios on first edit.
@@ -20179,9 +20718,13 @@ demucs.separate.main()
         self._me_push_undo()
         beat = 60.0 / self.me_bpm
         sub  = beat / 4.0  # 16th note grid
+        _moves = []
         for i in targets:
             t = self.me_notes[i]["time"]
-            self.me_notes[i]["time"] = round(t / sub) * sub
+            new_t = round(t / sub) * sub
+            self.me_notes[i]["time"] = new_t
+            _moves.append((t, new_t))
+        self._me_transfer_flags(_moves)   # flags follow their notes (audit A2)
         _sel = self._me_capture_selection()
         self.me_notes.sort(key=lambda n: n["time"])
         self._me_restore_selection(_sel)
@@ -20224,21 +20767,17 @@ demucs.separate.main()
                 else getattr(self, '_me_last_canvas_t', 0.0)
         self._me_push_undo()
         new_notes = [dict(n, time=n["time"] + paste_t) for n in self._me_clipboard]
-        insert_at = len(self.me_notes)
         self.me_notes.extend(new_notes)
         self.me_notes.sort(key=lambda n: n["time"])
-        # Re-find indices of pasted notes after sort
+        # Re-find pasted notes after the sort BY OBJECT IDENTITY (audit A3 —
+        # the old (rounded-time, lane) key matching collapsed exact clipboard
+        # duplicates to one selected note and could select a pre-existing note
+        # sharing the timestamp instead of the pasted one). sort() reorders the
+        # SAME dict objects, so id() is exact here.
         pasted_set = {id(n) for n in new_notes}
-        self._me_selected_notes = set()
-        temp_notes = [dict(n, time=n["time"] + paste_t) for n in self._me_clipboard]
-        # Track by matching time+lane uniquely
-        pasted_keys = [(round(n["time"] + paste_t, 6), n["lane_idx"]) for n in self._me_clipboard]
-        claimed = set()
-        for i, n in enumerate(self.me_notes):
-            key = (round(n["time"], 6), n["lane_idx"])
-            if key in pasted_keys and key not in claimed:
-                self._me_selected_notes.add(i)
-                claimed.add(key)
+        self._me_selected_notes = {
+            i for i, n in enumerate(self.me_notes) if id(n) in pasted_set}
+        self._me_last_clicked_note = -1   # stale positional index after sort
         self.me_duration = max(self.me_duration, max(n["time"] for n in new_notes) + 0.5)
         self._me_redraw()
         self._me_update_info()
@@ -20454,11 +20993,14 @@ demucs.separate.main()
         self.me_notes.extend(new_notes)
         self.me_notes.sort(key=lambda n: n["time"])
         self.me_duration = max(self.me_duration, max(n["time"] for n in new_notes) + 0.5)
-        pasted_keys = {(round(n["time"], 5), n["lane_idx"]) for n in new_notes}
+        # Select ONLY the inserted copies, by object identity (audit A3 — the
+        # old rounded-key matching also selected any pre-existing note that
+        # happened to sit on a repeated destination, so the next Delete /
+        # velocity / reclassify hit notes the user never touched).
+        pasted_set = {id(n) for n in new_notes}
         self._me_selected_notes = {
-            i for i, n in enumerate(self.me_notes)
-            if (round(n["time"], 5), n["lane_idx"]) in pasted_keys
-        }
+            i for i, n in enumerate(self.me_notes) if id(n) in pasted_set}
+        self._me_last_clicked_note = -1   # stale positional index after sort
         self._me_redraw()
         self._me_update_info()
         self.me_status_var.set(
@@ -20654,12 +21196,15 @@ demucs.separate.main()
                 return
             self._me_push_undo()
             moved = 0
+            _moves = []
             for i in targets:
                 t    = self.me_notes[i]["time"]
                 near = round(t / sub) * sub
                 if abs(t - near) <= window_sec:
                     self.me_notes[i]["time"] = near
+                    _moves.append((t, near))
                     moved += 1
+            self._me_transfer_flags(_moves)   # flags follow their notes (A2)
             _sel = self._me_capture_selection()
             self.me_notes.sort(key=lambda n: n["time"])
             self._me_restore_selection(_sel)
@@ -22502,6 +23047,28 @@ demucs.separate.main()
                 except Exception:
                     pass
                 return
+            # Audit D (2026-07-10): the cleanup sidecar's tick->second walk uses
+            # only the LATEST tempo for the whole absolute tick, and its rewrite
+            # flattens to the FIRST tempo — wrong for multi-tempo MIDI. A2M's
+            # own output is always single-tempo (one set_tempo at tick 0), so
+            # this guard changes nothing in the shipped pipeline; it only stops
+            # a multi-tempo file (external/edited input) from being silently
+            # retimed. Skip cleanup, keep the chart as detected.
+            try:
+                import mido as _mido_g
+                _n_tempo = sum(1 for tr in _mido_g.MidiFile(midi_path).tracks
+                               for m in tr if m.type == "set_tempo")
+                if _n_tempo > 1:
+                    try:
+                        self._a2m_log(
+                            f"Cleanup pass:      skipped ({_n_tempo} tempo "
+                            f"events — the cleanup sidecar only supports "
+                            f"single-tempo MIDI; chart kept as detected)")
+                    except Exception:
+                        pass
+                    return
+            except Exception:
+                pass   # unreadable here -> let the sidecar's own guards handle it
             from parakit_cleanup import clean_a2m_midi
             summary = clean_a2m_midi(midi_path, audio_path,
                                      do_cymbal=do_cymbal, do_kick=do_kick,
@@ -23657,6 +24224,11 @@ demucs.separate.main()
                     tmp.write(midi_bytes)
                     tmp.close()
                     midi_path = tmp.name
+                    # Audit A4: registered for delete on app close — downstream
+                    # tabs hold this path for the rest of the session, so it
+                    # can't be removed sooner. Previously leaked one .mid per
+                    # unsaved conversion, permanently.
+                    self._register_session_temp(midi_path)
                 self._sm_log("  Opening in MIDI Editor...")
                 self.root.after(100, lambda p=midi_path: self._me_open_from_a2m(p))
                 self.root.after(150, lambda: self.notebook.select(5))
@@ -23668,6 +24240,11 @@ demucs.separate.main()
                     tmp.write(midi_bytes)
                     tmp.close()
                     midi_path = tmp.name
+                    # Audit A4: registered for delete on app close — downstream
+                    # tabs hold this path for the rest of the session, so it
+                    # can't be removed sooner. Previously leaked one .mid per
+                    # unsaved conversion, permanently.
+                    self._register_session_temp(midi_path)
                 self._sm_log("  Sending to Song Creator (Tab 1)...")
                 self.root.after(200, lambda p=midi_path: self.midi_var.set(p))
                 self.root.after(250, lambda: self.notebook.select(0))
@@ -23678,8 +24255,8 @@ demucs.separate.main()
             import traceback
             self._sm_log(f"\nERROR: {e}")
             self._sm_log(traceback.format_exc())
-            self.root.after(0, lambda: messagebox.showerror(
-                "Conversion Failed", f"An error occurred:\n{e}\n\nCheck the log for details."))
+            self._bg_message(
+                "Conversion Failed", f"An error occurred:\n{e}\n\nCheck the log for details.")
 
         finally:
             self.root.after(0, lambda: self.sm_btn.configure(
@@ -24199,6 +24776,11 @@ demucs.separate.main()
                     tmp.write(midi_bytes)
                     tmp.close()
                     midi_path = tmp.name
+                    # Audit A4: registered for delete on app close — downstream
+                    # tabs hold this path for the rest of the session, so it
+                    # can't be removed sooner. Previously leaked one .mid per
+                    # unsaved conversion, permanently.
+                    self._register_session_temp(midi_path)
                 self._sm_log("  Opening in MIDI Editor...")
                 self.root.after(100, lambda p=midi_path: self._me_open_from_a2m(p))
                 self.root.after(150, lambda: self.notebook.select(5))
@@ -24209,6 +24791,11 @@ demucs.separate.main()
                     tmp.write(midi_bytes)
                     tmp.close()
                     midi_path = tmp.name
+                    # Audit A4: registered for delete on app close — downstream
+                    # tabs hold this path for the rest of the session, so it
+                    # can't be removed sooner. Previously leaked one .mid per
+                    # unsaved conversion, permanently.
+                    self._register_session_temp(midi_path)
                 self._sm_log("  Sending to Song Creator (Tab 1)...")
                 self.root.after(200, lambda p=midi_path: self.midi_var.set(p))
                 self.root.after(250, lambda: self.notebook.select(0))
@@ -24219,8 +24806,8 @@ demucs.separate.main()
             import traceback
             self._sm_log(f"\nERROR: {e}")
             self._sm_log(traceback.format_exc())
-            self.root.after(0, lambda: messagebox.showerror(
-                "Conversion Failed", f"An error occurred:\n{e}\n\nCheck the log for details."))
+            self._bg_message(
+                "Conversion Failed", f"An error occurred:\n{e}\n\nCheck the log for details.")
         finally:
             self.root.after(0, lambda: self.sm_btn.configure(
                 state="normal", text="🎼  Convert Sheet Music to MIDI"))
@@ -37449,6 +38036,7 @@ demucs.separate.main()
                 continue
             try:
                 mid, midi_notes, tpb = parse_midi(midi_path)
+                midi_notes = self._apply_manual_note_overrides(midi_notes)
                 drum_notes = [n for n in midi_notes if n[1] in MIDI_MAP]
                 issues = validate_chart(
                     midi_notes=drum_notes, audio_path=audio_path,
@@ -37626,6 +38214,7 @@ demucs.separate.main()
                     #    helper re-parses, but we need an early "no drums"
                     #    bail-out and the validator inputs anyway).
                     _mid, midi_notes_raw, tpb = parse_midi(midi_path)
+                    midi_notes_raw = self._apply_manual_note_overrides(midi_notes_raw)
                     drum_notes = [n for n in midi_notes_raw if n[1] in MIDI_MAP]
                     if not drum_notes:
                         self._batch_folder_log(
@@ -37929,6 +38518,8 @@ demucs.separate.main()
         self._batch_log(f"  Output folder: {folder_title}")
         try:
             mid, midi_notes, tpb = parse_midi(slot["midi_var"].get())
+            # Manual MIDI Note Manager remap (hi-hats keep per-note values).
+            midi_notes = self._apply_manual_note_overrides(midi_notes)
             drum_notes = [n for n in midi_notes if n[1] in MIDI_MAP]
             if not drum_notes:
                 self._batch_log(f"  ? No drum notes found - skipping.\n")
@@ -37982,6 +38573,7 @@ demucs.separate.main()
 
             event_count = 0
             ch_count = 0
+            rlrr = None   # audit E2: CH derives from the final rlrr events
 
             if fmt in ("paradiddle", "both"):
                 rlrr = build_rlrr(
@@ -38020,11 +38612,37 @@ demucs.separate.main()
                 ch_dir = os.path.join(ch_base, fs_title)
                 os.makedirs(ch_dir, exist_ok=True)
 
-                ch_events = midi_notes_to_ch(drum_notes, tpb, bpm, offset)
+                # Audit E2/E4/E5 — same derivation as the single-song flow:
+                # CH events come from the FINAL rlrr events (post reduction),
+                # the section header is the real difficulty, and ghost/accent
+                # velocity flags are emitted when enabled.
+                if rlrr is None:
+                    # chart-only batch slot — build the equivalent event set
+                    # (incl. reduction, previously skipped for chart-only).
+                    rlrr = build_rlrr(
+                        midi_notes=drum_notes, ticks_per_beat=tpb,
+                        bpm=bpm, offset=offset, title=title, artist=artist,
+                        creator=creator, song_tracks=[], drum_tracks=[],
+                        cover_image="",
+                        complexity=int(slot["comp_var"].get()),
+                        difficulty=diff,
+                        description=slot.get("_desc_captured", ""))
+                    if slot["reduce_var"].get() and diff != "Expert":
+                        rlrr["events"] = reduce_notes_for_difficulty(
+                            rlrr["events"], bpm, diff)
+                _want_vel_flags = bool(
+                    getattr(self, "ghost_notes_var", None)
+                    and (self.ghost_notes_var.get()
+                         or self.accent_notes_var.get()))
+                ch_events = rlrr_events_to_ch_events(
+                    rlrr["events"], bpm, emit_velocity_flags=_want_vel_flags)
                 audio_path = slot["audio_var"].get()
                 _ch_audio_ext = os.path.splitext(audio_path)[1].lower()
-                chart_str = build_chart(
-                    ch_events=ch_events, bpm=bpm,
+                _diff_key = str(diff).title()
+                if _diff_key not in ("Easy", "Medium", "Hard", "Expert"):
+                    _diff_key = "Expert"
+                chart_str = build_chart_multi_difficulty(
+                    events_by_difficulty={_diff_key: ch_events}, bpm=bpm,
                     title=title, artist=artist,
                     album="", year="", charter=creator,
                     music_stream=f"song{_ch_audio_ext}",
@@ -39087,6 +39705,9 @@ demucs.separate.main()
         # Parse MIDI
         self.log("\nParsing MIDI file...")
         mid, midi_notes, ticks_per_beat = parse_midi(midi_path)
+        # Manual MIDI Note Manager: remap each lane to its chosen output note
+        # (hi-hats keep their per-note 42/44/46 values) before ANY export use.
+        midi_notes = self._apply_manual_note_overrides(midi_notes)
         drum_notes = [n for n in midi_notes if n[1] in MIDI_MAP]
         self.log(f"  Total MIDI notes: {len(midi_notes)}")
         self.log(f"  Drum notes (mapped): {len(drum_notes)}")
@@ -39236,13 +39857,37 @@ demucs.separate.main()
             ch_dir = os.path.join(ch_base, fs_title)
             os.makedirs(ch_dir, exist_ok=True)
 
-            ch_events = midi_notes_to_ch(drum_notes, ticks_per_beat, bpm, offset)
+            # Audit E2/E4/E5 (2026-07-10): the .chart is now derived from the
+            # FINAL .rlrr events (post difficulty-reduction) so both formats
+            # share ONE hit set; the difficulty section header is real (was
+            # hardcoded [ExpertDrums]); and ghost/accent velocity flags are
+            # actually emitted (the checkboxes previously only logged).
+            if rlrr is None:
+                # chart-only export — build the same event set the .rlrr path
+                # would produce (incl. reduction, previously SKIPPED entirely
+                # for chart-only) without writing a .rlrr file.
+                rlrr = build_rlrr(
+                    midi_notes=drum_notes, ticks_per_beat=ticks_per_beat,
+                    bpm=bpm, offset=offset, title=title, artist=artist,
+                    creator=creator, song_tracks=[], drum_tracks=[],
+                    cover_image="", complexity=complexity,
+                    difficulty=difficulty, description=description)
+                if self.reduce_difficulty_var.get() and difficulty != "Expert":
+                    rlrr["events"] = reduce_notes_for_difficulty(
+                        rlrr["events"], bpm, difficulty)
+            _want_vel_flags = bool(self.ghost_notes_var.get()
+                                   or self.accent_notes_var.get())
+            ch_events = rlrr_events_to_ch_events(
+                rlrr["events"], bpm, emit_velocity_flags=_want_vel_flags)
             if not ch_events:
                 self.log("\nERROR: No Clone Hero drum events generated. Check MIDI file and BPM.")
                 return
             _ch_audio_ext = os.path.splitext(audio_path)[1].lower()
-            chart_str = build_chart(
-                ch_events=ch_events, bpm=bpm,
+            _diff_key = str(difficulty).title()
+            if _diff_key not in ("Easy", "Medium", "Hard", "Expert"):
+                _diff_key = "Expert"   # never emit a section-less chart
+            chart_str = build_chart_multi_difficulty(
+                events_by_difficulty={_diff_key: ch_events}, bpm=bpm,
                 title=title, artist=artist,
                 album=self.sc_album_var.get().strip(),
                 year=self.sc_year_var.get().strip(),

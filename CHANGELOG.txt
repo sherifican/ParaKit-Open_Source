@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.9.5  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.6.0  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -27,8 +27,42 @@
 ==============================================================================
 
 ------------------------------------------------------------------------------
-  v4.5.9.5   --   2026-07-09
+  v4.6.0   --   2026-07-10
 ------------------------------------------------------------------------------
+  - NEW: Manual MIDI Note Manager (MIDI Editor, next to the Tempo Map button).
+    Pick which MIDI note each drum lane writes on export -- e.g. Electric vs
+    Acoustic Snare, Crash 15"/17"/Splash, Ride 17"/20"/Bell, high vs low toms.
+    Crash & Ride switch the actual drum piece in Paradiddle; every lane's
+    choice sets the note e-kits/DAWs receive from the exported MIDI. Saved
+    between sessions, with a reset-to-defaults button.
+  - NEW: Per-note hi-hat control. Right-click any hi-hat note in the MIDI
+    Editor to set it Closed (42) / Open (46) / Pedal (44) -- works on multi-
+    selections too, and mixed open/closed charts survive export. The Note
+    Manager also has a one-click "set all hats" bulk action.
+  - Clone Hero export fixes:
+      * Easy/Medium/Hard charts now export with the CORRECT difficulty section
+        (everything used to be written as Expert).
+      * Ghost/accent notes now actually write to the .chart when enabled (the
+        checkboxes previously did nothing to the direct export).
+      * With difficulty reduction on, the .chart now matches the reduced .rlrr
+        instead of keeping every note (chart-only exports were also skipping
+        reduction entirely).
+      * Extended e-kit hi-hat notes (21/22/23/26) are no longer silently
+        dropped from Paradiddle exports.
+      * The Paradiddle->CH converter now uses ONE BPM for the whole chart so
+        mixed-BPM difficulty files can't corrupt earlier sections' timing.
+  - Safer in-app updates: "Download update now" is now all-or-nothing -- it
+    verifies the update manifest matches the release, downloads and checks
+    every file BEFORE replacing anything, and rolls back if a step fails.
+    A failed update can no longer leave a half-updated install.
+  - MIDI Editor fixes: flags now follow notes through Quantize/Soft-Quantize
+    (they used to silently vanish off the note); paste/repeat now select
+    exactly the pasted copies (duplicate or overlapping notes could confuse
+    the selection and later edits could hit the wrong notes).
+  - Sheet Music -> MIDI no longer permanently leaks a temporary .mid file per
+    conversion when "Save file" is off; temp files are cleaned up on exit.
+  - Stem-splitter model downloads finalize atomically (a failed finalize can
+    no longer delete your existing model file).
   - Detection Troubleshooter improvements (Quick Start & FAQ tab):
       * More built-in answers -- a kick de-bunching tip (~55 ms dedup) when your
         log/checkboxes point to doubled kicks, tom detection-sensitivity guidance,

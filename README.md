@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.5.9.5`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.6.0`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -148,7 +148,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.5.9.5`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.6.0`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -545,6 +545,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.6.0**<br>2026-07-10 | <ul><li>**NEW — Manual MIDI Note Manager** (MIDI Editor, next to the Tempo Map button): pick which MIDI note each drum lane writes on export — e.g. Electric vs Acoustic Snare, Crash 15″/17″/Splash, Ride 17″/20″/Bell, high vs low toms. Crash and Ride switch the actual piece in Paradiddle; every lane's choice sets the note e‑kits/DAWs receive. Saved between sessions.</li><li>**NEW — per‑note hi‑hats**: right‑click any hi‑hat note (or a selection) to set it **Closed / Open / Pedal**; mixed open‑closed charts survive export.</li><li>**Clone Hero export fixes**: Easy/Medium/Hard now export with the correct difficulty section (was always Expert); ghost/accent notes now actually write; with reduction on, the `.chart` matches the reduced `.rlrr`; extended e‑kit hi‑hat notes are no longer dropped from Paradiddle exports.</li><li>**Safer in‑app updates**: "Download update now" is now all‑or‑nothing — it verifies every file before replacing anything and rolls back on failure, so a failed update can't leave a half‑updated install.</li><li>**MIDI Editor**: flags now follow notes through Quantize/Soft‑Quantize; paste/repeat select exactly the pasted copies.</li><li>Sheet Music→MIDI no longer leaks a temp file per conversion; stem‑model downloads finalize atomically.</li></ul> |
 | **v4.5.9.5**<br>2026-07-09 | <ul><li>**Detection Troubleshooter — more built-in answers** (kick de-bunching ≈55 ms, tom detection-sensitivity guidance, cleanup-pass note) and **honest "reality check" advice**: it now tells you when a setting has hit its useful limit and the real fix is manual (in the MIDI Editor), instead of nudging a value back and forth forever. The results box is taller and the "What's New" panel moved left to give it room.</li></ul> |
 | **v4.5.9.4**<br>2026-07-09 | <ul><li>**New Dark / Light theme toggle** next to "Check for Updates". **Dark** is a new deep-purple look (now the default); **Light** is ParaKit's original gray. It switches instantly — no restart — and remembers your choice.</li><li>**Fixed inconsistent log colors** — some tabs' activity logs showed up lighter/gray while others were black. Every log now uses the same background and follows the theme you're in.</li></ul> |
 | **v4.5.9.3**<br>2026-07-08 | <ul><li>**"Download update now" now shows its work.** When you let ParaKit install an update for you, a progress window opens with a live log of every file as it goes — downloaded, already up to date, or failed — plus a progress bar and a clear "done, close and reopen ParaKit" summary. Before, the button just went quiet until it finished, so it looked like nothing was happening.</li></ul> |

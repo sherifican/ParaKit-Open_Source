@@ -223,14 +223,18 @@ def download_with_progress(url: str,
                 f"got {actual}. The downloaded file has been removed; "
                 f"please retry.")
 
-    # Atomic rename so a partial download never gets mistaken for a
+    # Atomic replace so a partial download never gets mistaken for a
     # complete one (resolve() looks at non-zero size, which a partial would
-    # also pass).
+    # also pass). os.replace is a single atomic op — unlike unlink()+rename(),
+    # it can't leave the destination deleted if the rename then fails (audit #7).
     try:
-        if dest_path.exists():
-            dest_path.unlink()
-        tmp_path.rename(dest_path)
+        os.replace(tmp_path, dest_path)
     except OSError as e:
+        # finalize failed — drop the temp so a stale .part can't be picked up
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise DownloadError(f"Failed to finalize download: {e}") from e
 
     return dest_path
