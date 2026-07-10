@@ -106,11 +106,17 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 *Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
 
-**v4.5.6.1**<br>2026-07-05
+**v4.7.0**<br>2026-07-10
 
-Audio → MIDI
+Single Song Creator
 
-+ HOTFIX: the Cancel button on the Neural Stem Isolation model download was a silent no-op since the feature shipped — the ~417 MB download always ran to completion. Cancel now aborts within a moment, never falls through to the fallback mirror, and cleans up the partial file. (Found while byte-auditing the ParaKit v5 rebuild's port of this dialog.)
++ Full-tab redesign — every setting grouped into side-by-side cards (Files / Song Info / Output + Export Format / Tools + BPM/Timing), reflowing to two rows on a narrower window so the whole tab fits on screen
++ Advanced Options is now an always-visible card (was a hidden drop-down); Offset moved directly under Manual BPM
++ "Your Songs" library — finished songs scanned live from your Paradiddle + Clone Hero folders, with RLRR / CHART badges, E / M / H / X difficulty badges, Delete, right-click Rename, and Extract → MIDI Extractor
+
+<img src="screenshots/app-01-single-song-creator.png?v=20260710" width="900" alt="Single Song Creator (full-tab card redesign + Your Songs library)">
+
+---
 
 **v4.5.6**<br>2026-07-04
 
