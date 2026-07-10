@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.5.9.4`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.9.5`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -148,7 +148,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.5.9.4`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.5.9.5`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -545,6 +545,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.5.9.5**<br>2026-07-09 | <ul><li>**Detection Troubleshooter — more built-in answers** (kick de-bunching ≈55 ms, tom detection-sensitivity guidance, cleanup-pass note) and **honest "reality check" advice**: it now tells you when a setting has hit its useful limit and the real fix is manual (in the MIDI Editor), instead of nudging a value back and forth forever. The results box is taller and the "What's New" panel moved left to give it room.</li></ul> |
 | **v4.5.9.4**<br>2026-07-09 | <ul><li>**New Dark / Light theme toggle** next to "Check for Updates". **Dark** is a new deep-purple look (now the default); **Light** is ParaKit's original gray. It switches instantly — no restart — and remembers your choice.</li><li>**Fixed inconsistent log colors** — some tabs' activity logs showed up lighter/gray while others were black. Every log now uses the same background and follows the theme you're in.</li></ul> |
 | **v4.5.9.3**<br>2026-07-08 | <ul><li>**"Download update now" now shows its work.** When you let ParaKit install an update for you, a progress window opens with a live log of every file as it goes — downloaded, already up to date, or failed — plus a progress bar and a clear "done, close and reopen ParaKit" summary. Before, the button just went quiet until it finished, so it looked like nothing was happening.</li></ul> |
 | **v4.5.9.2**<br>2026-07-08 | <ul><li>**The "Update Available" popup now shows what's new.** When a newer version is found, it previews that version's changelog right in the popup — so you can see what the update fixes and changes without opening GitHub or downloading first. If you've skipped a few versions, it lists every change since the one you're running. *(Because the preview is drawn by the app you're running, it starts appearing once you're on this version or later.)*</li><li>Fixed the update popup's **"Open GitHub" button** — it now opens the repo's main page instead of the raw code view of the app file.</li></ul> |

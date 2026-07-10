@@ -5474,7 +5474,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.5.9.4"
+    VERSION = "4.5.9.5"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -28612,8 +28612,12 @@ demucs.separate.main()
         # costs no widgets -> no lag), capped at the 30 most recent versions in-app;
         # the full history lives in CHANGELOG.txt. (Owner 2026-06-30.)
         # ════════════════════════════════════════════════════════════════════════════
-        whats_new_frame = ttk.Frame(main)
-        whats_new_frame.pack(fill=tk.X, pady=(0, 12))
+        # v4.5.9.x: What's New now lives at the BOTTOM of the LEFT column (packed
+        # after the left sections, just before the RIGHT COLUMN block) so it stays
+        # confined to the left half — freeing the right column for a much taller
+        # Detection Troubleshooter output box. Created here (its helpers +
+        # _populate_whats_new build the children) but PACKED later.
+        whats_new_frame = ttk.Frame(left)
         def wn_entry(parent, text, color="#c0c0d0"):
             """Release-note entry with readable section breaks."""
             card = tk.Frame(parent, bg=APP_BG)
@@ -30139,6 +30143,11 @@ demucs.separate.main()
                                "Every apply is fully undoable with Ctrl+Z.")
         s2_lbl.pack(anchor="w", padx=4, pady=(4, 0))
 
+        # What's New — packed here, at the BOTTOM of the LEFT column (see its
+        # creation above). Confined to the left half so the right column's
+        # Detection Troubleshooter output box can extend down beside it.
+        whats_new_frame.pack(fill=tk.X, pady=(10, 12))
+
         # ══════════════════════════════════════════════════════════════════════
         # RIGHT COLUMN — Problems, Tools & Reference
         # ══════════════════════════════════════════════════════════════════════
@@ -30754,6 +30763,8 @@ demucs.separate.main()
             ("too_few_hihats",     "Not enough hi-hat hits"),
             ("too_many_crashes",   "Too many crash hits"),
             ("too_few_crashes",    "Not enough crash hits"),
+            ("too_many_toms",      "Too many tom hits"),
+            ("too_few_toms",       "Not enough tom hits"),
             ("lots_of_duplicates", "Lots of duplicate / stacked hits"),
             ("cymbal_misclass",    "Cymbals misclassified (crash/hi-hat/ride)"),
             ("snare_tom_misclass", "Snares/toms/kicks misclassified"),
@@ -30777,7 +30788,7 @@ demucs.separate.main()
         dt_btn_row.pack(fill=tk.X, pady=(10, 4))
 
         dt_out = scrolledtext.ScrolledText(
-            s, height=12, bg=LOG_BG, fg="#c0c0d0",
+            s, height=28, bg=LOG_BG, fg="#c0c0d0",
             relief="flat", font=("Consolas", 8),
             wrap=tk.WORD, state="disabled")
         dt_out.pack(fill=tk.X, pady=(4, 0))
@@ -31122,6 +31133,43 @@ demucs.separate.main()
                          lambda: self.a2m_engine_var.set("hybrid"))
 
             # ── Symptom-specific (engine-agnostic) ────────────────────────
+            # Doubled / clustered kicks: the targeted fix is a KICK-lane dedup
+            # around 50–65 ms (where the 55 ms kick default came from), NOT a
+            # small global bump — it de-bunches fast double-kicks without thinning
+            # any other lane. (owner 2026-07-09)
+            if "too_many_kicks" in checked:
+                _kick_dbl = "lots_of_duplicates" in checked
+                _add(1 if _kick_dbl else 2,
+                    f"🦵 {'Doubled / clustered' if _kick_dbl else 'Too many'} kick hits:\n"
+                    f"   → Raise the KICK dedup gap to ~55ms  (50–65ms de-bunches fast\n"
+                    f"     double-kicks; this is where the 55ms kick default came from)\n"
+                    f"   → Kick-lane only — it never thins snare / hi-hat / cymbal hits\n"
+                    f"   Why: two kick transients within ~55ms are one hit, not two")
+                _act("Set KICK dedup gap to ~55ms (de-bunch doubled kicks)",
+                     "kick dedup → 55ms",
+                     lambda: _dt_apply_setting_dedup("kick", 55))
+                _flg("Flag kick-lane notes in MIDI Editor",
+                     "orange outline on kick notes (check for doubled hits)",
+                     lambda: _flag_notes_in_lanes([7]))
+
+            # Detection cleanup pass OFF while symptoms it fixes are present —
+            # point the user back to it (removes phantom kicks + reclassifies
+            # crash/hi-hat/ride after detection; default ON).
+            _cleanup_on = bool(getattr(self, "a2m_cleanup_pass_var", None)
+                               and self.a2m_cleanup_pass_var.get())
+            if (not _cleanup_on) and ("too_many_kicks" in checked
+                                      or "cymbal_misclass" in checked):
+                _add(2,
+                    "🧹 Detection cleanup pass is OFF:\n"
+                    "   → Turn it back ON  (Audio→MIDI ▸ Advanced ▸ Detection cleanup pass)\n"
+                    "   It removes phantom (false) kick hits and reclassifies\n"
+                    "   crash / hi-hat / ride AFTER detection — exactly these symptoms.\n"
+                    "   Why: safe post-detection pass (default ON); re-enabling it often\n"
+                    "        clears phantom kicks and cymbal mislabels for free")
+                _act("Turn ON the detection cleanup pass",
+                     "cleanup pass → ON",
+                     lambda: self.a2m_cleanup_pass_var.set(True))
+
             if "lots_of_duplicates" in checked:
                 sug_dedup = cur_dedup + 12
                 _add(2,
@@ -31155,6 +31203,63 @@ demucs.separate.main()
                 _flg("Flag misclassified snare/tom/kick notes in MIDI Editor",
                      "yellow/lime outline on suspicious onset-overlap notes",
                      _flag_misclass_notes)
+
+            # Tom count off → the Tom detection sensitivity dropdown (v4.5.2-1) is
+            # the exact recall lever (Strict → Conservative → Balanced → Aggressive).
+            # Setting the var mirrors the dropdown (trace persists it; it applies on
+            # the next conversion). (owner 2026-07-09)
+            if "too_few_toms" in checked or "too_many_toms" in checked:
+                _order = ["Strict", "Conservative", "Balanced", "Aggressive"]
+                _sv = getattr(self, "a2m_tom_sensitivity_var", None)
+                _cur = _sv.get() if _sv else "Conservative"
+                try:
+                    _ci = _order.index(_cur)
+                except ValueError:
+                    _ci = 1
+                if "too_few_toms" in checked:
+                    _nxt = _order[min(_ci + 1, len(_order) - 1)]
+                    if _nxt == _cur:   # already at Aggressive — max recall reached
+                        _add(2,
+                            f"🥁 Not enough tom hits  (Tom sensitivity: {_cur}):\n"
+                            f"   → Already at Aggressive — the detector has surfaced every\n"
+                            f"     tom it can find; raising sensitivity further isn't possible.\n"
+                            f"   → Add the still-missing toms by hand in the MIDI Editor, or\n"
+                            f"     load the over-eager .alt_detector.mid as a Ghost Overlay\n"
+                            f"     to spot candidates. Past here it's a manual add, not a setting.")
+                    else:
+                        _add(2,
+                            f"🥁 Not enough tom hits  (Tom sensitivity: {_cur}):\n"
+                            f"   → Raise Tom detection sensitivity:  {_cur}  →  {_nxt}\n"
+                            f"     (Audio→MIDI ▸ Advanced ▸ Tom detection sensitivity)\n"
+                            f"   → Takes effect on the next conversion\n"
+                            f"   Why: toms are gated conservatively to avoid snare bleed;\n"
+                            f"        Balanced / Aggressive recover more real toms")
+                        if _sv:
+                            _act("Raise Tom detection sensitivity",
+                                 f"{_cur} → {_nxt}",
+                                 lambda n=_nxt: self.a2m_tom_sensitivity_var.set(n))
+                if "too_many_toms" in checked:
+                    _prv = _order[max(_ci - 1, 0)]
+                    if _prv == _cur:   # already at Strict — fewest toms
+                        _add(2,
+                            f"🥁 Too many tom hits  (Tom sensitivity: {_cur}):\n"
+                            f"   → Already at Strict (fewest toms) — lowering it further isn't\n"
+                            f"     possible. The extras are the detector's genuine mistakes:\n"
+                            f"     reclassify or delete them in the MIDI Editor.\n"
+                            f"   Why: past here it's a manual fix, not a setting")
+                    else:
+                        _add(2,
+                            f"🥁 Too many tom hits  (Tom sensitivity: {_cur}):\n"
+                            f"   → Lower Tom detection sensitivity:  {_cur}  →  {_prv}\n"
+                            f"   → Or reclassify stray toms in the MIDI Editor\n"
+                            f"   Why: higher sensitivity can pick up snare bleed as toms")
+                        if _sv:
+                            _act("Lower Tom detection sensitivity",
+                                 f"{_cur} → {_prv}",
+                                 lambda n=_prv: self.a2m_tom_sensitivity_var.set(n))
+                    _flg("Flag misclassified tom notes in MIDI Editor",
+                         "yellow/lime outline on suspicious onset-overlap notes",
+                         _flag_misclass_notes)
 
             if "timing_messy" in checked:
                 bpm_str = f"{bpm:.1f}" if bpm else "unknown"
@@ -31212,7 +31317,10 @@ demucs.separate.main()
                     sug = 0.45
                     _add(8,
                         f"⚠ ML threshold ({ml_thresh:.2f}) is very low — expect frequent false hits.\n"
-                        f"   Consider raising to {sug:.2f} as a baseline.")
+                        f"   Consider raising to {sug:.2f} as a baseline.\n"
+                        f"   You're near the useful FLOOR: lowering it further to catch a\n"
+                        f"   few more hits invites many false ones — add the stragglers by\n"
+                        f"   hand in the MIDI Editor rather than chasing them with settings.")
                     _act("Raise ML threshold to safe baseline",
                          f"{ml_thresh:.2f} → {sug:.2f}",
                          lambda v=sug: self.a2m_ml_thresh_var.set(v))
@@ -31220,7 +31328,10 @@ demucs.separate.main()
                     sug = 0.60
                     _add(8,
                         f"⚠ ML threshold ({ml_thresh:.2f}) is very high — expect missed hits.\n"
-                        f"   Consider lowering to {sug:.2f} as a baseline.")
+                        f"   Consider lowering to {sug:.2f} as a baseline.\n"
+                        f"   You're near the useful CEILING: raising it further to kill a\n"
+                        f"   few false hits also drops real ones — delete the last false\n"
+                        f"   hits in the MIDI Editor rather than chasing them with settings.")
                     _act("Lower ML threshold to safe baseline",
                          f"{ml_thresh:.2f} → {sug:.2f}",
                          lambda v=sug: self.a2m_ml_thresh_var.set(v))
@@ -31266,6 +31377,21 @@ demucs.separate.main()
             lines.append("-" * 54)
             for i, (_, text) in enumerate(suggestions, 1):
                 lines.append(f"\n[{i}]  {text}")
+            # Honest diminishing-returns framing so the troubleshooter never
+            # ping-pongs a user between "too many" → raise → "too few" → lower.
+            # Shown whenever they're actively troubleshooting (symptoms checked).
+            if checked:
+                lines.append("")
+                lines.append("-" * 54)
+                lines.append("  REALITY CHECK — settings only go so far:")
+                lines.append("  • Detection settings trade off: pushing one to remove")
+                lines.append("    false hits starts dropping real ones, and vice-versa.")
+                lines.append("  • If a round or two of tweaks doesn't converge, stop")
+                lines.append("    tuning and finish in the MIDI Editor (Reclassify /")
+                lines.append("    Dedup / add + remove notes) — it's faster and exact.")
+                lines.append("  • Some things no setting can fix — crash-vs-ride, tom")
+                lines.append("    separation, and any single wrong hit. Those are manual")
+                lines.append("    by design; the auto-detector is a draft, not the finish.")
             lines.append("")
             lines.append("-" * 54)
             if _dt_actions or _dt_flag_actions:

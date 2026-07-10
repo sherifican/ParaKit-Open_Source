@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.9.4  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.5.9.5  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,20 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.5.9.5   --   2026-07-09
+------------------------------------------------------------------------------
+  - Detection Troubleshooter improvements (Quick Start & FAQ tab):
+      * More built-in answers -- a kick de-bunching tip (~55 ms dedup) when your
+        log/checkboxes point to doubled kicks, tom detection-sensitivity guidance,
+        and a note about the detection cleanup pass.
+      * Honest "reality check" guidance: it now tells you when a setting has hit
+        its useful limit and the fix is manual (in the MIDI Editor) instead of
+        endlessly nudging a value back and forth. Some problems (crash-vs-ride,
+        tom separation, single wrong hits) are called out as manual by design.
+      * The results box is much taller so long suggestion lists are readable, and
+        the "What's New" panel was moved to the left so it stops crowding it.
 
 ------------------------------------------------------------------------------
   v4.5.9.4   --   2026-07-09
