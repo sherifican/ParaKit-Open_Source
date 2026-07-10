@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.2  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,20 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.2   --   2026-07-10
+------------------------------------------------------------------------------
+  Stem Splitter "Your Songs" library — right-click additions:
+  - NEW: Rename song — renames the song's WHOLE file set together (the audio,
+    its drum stems, and its MIDI), so the name-based links between them stay
+    intact. It's all-or-nothing: if it can't finish, it undoes what it started.
+  - NEW: Delete song — permanently deletes that whole set from disk (audio +
+    stems + MIDI). It lists the files and asks first; there's no undo.
+    (Rename/Delete look in your configured Stem-output and Audio-MIDI-output
+    folders; a stem you moved elsewhere may not be caught.)
+  - Fix: a song's album art in this library now updates if the file is
+    re-tagged, instead of showing the old thumbnail.
 
 ------------------------------------------------------------------------------
   v4.7.1   --   2026-07-10

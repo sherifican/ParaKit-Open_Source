@@ -5577,7 +5577,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.1"
+    VERSION = "4.7.2"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -11324,9 +11324,9 @@ class MidiToRlrrApp:
         # Prune cached PhotoImage refs to currently-rendered rows so the dict
         # doesn't grow unbounded across refreshes/sessions (UI-audit MINOR).
         try:
-            rendered = {getattr(r, "_yt_path", None) for r in self._stem_lib_rows}
+            rendered = {getattr(r, "_stem_art_key", None) for r in self._stem_lib_rows}
             self._stem_lib_art_refs = {
-                p: v for p, v in self._stem_lib_art_refs.items() if p in rendered}
+                k: v for k, v in self._stem_lib_art_refs.items() if k in rendered}
         except Exception:
             pass
 
@@ -11526,12 +11526,22 @@ class MidiToRlrrApp:
         # PhotoImage in _stem_lib_art_refs (False = decoded but no art) so a
         # refresh never re-decodes it. Falls back to the ♪ glyph when the file
         # has no embedded art.
+        # Cache key is (path, mtime) so a re-tagged file (mtime bumps) re-decodes
+        # instead of showing the stale tile / a stale "no art" sentinel — art
+        # comes from embedded tags, so any rewrite that could change it bumps
+        # mtime (fixes a path-only cache that never invalidated).
         _artc = self._stem_lib_art_refs
-        if path in _artc:
-            photo = _artc[path] or None
+        try:
+            _mt = os.path.getmtime(path)
+        except Exception:
+            _mt = 0
+        _art_key = (path, _mt)
+        row._stem_art_key = _art_key
+        if _art_key in _artc:
+            photo = _artc[_art_key] or None
         else:
             photo = self._stem_lib_art_photo(path, size=40)
-            _artc[path] = photo or False
+            _artc[_art_key] = photo or False
         if photo is not None:
             art_lbl = tk.Label(row, image=photo, bg=rest_bg, bd=0)
         else:
@@ -11695,6 +11705,8 @@ class MidiToRlrrApp:
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Split this song",
                          command=lambda: self._stem_lib_on_split(path))
+        menu.add_command(label="Rename song…",
+                         command=lambda: self._stem_lib_rename(path))
         menu.add_command(label="Edit artist…",
                          command=lambda: self._stem_lib_edit_artist(path))
         menu.add_command(label="Open file location",
@@ -11703,10 +11715,217 @@ class MidiToRlrrApp:
             menu.add_separator()
             menu.add_command(label="Open stems folder",
                              command=lambda: self._stem_lib_on_open_stems(path))
+        menu.add_separator()
+        menu.add_command(label="Delete song…",
+                         command=lambda: self._stem_lib_delete(path))
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    # ── File-set rename / delete (v4.7.2) ────────────────────────────────────
+    # A stem-library "song" is the source audio PLUS its scattered products —
+    # the drum stems (<song>_drums.ogg etc. under the stem-output bases + their
+    # subfolders), the lossless .flac, and the A2M MIDI (<song> MIDI.mid /
+    # <song>_drums MIDI.mid under <a2m_out>/MIDIs). Rename/Delete act on the
+    # WHOLE set so the name-based links survive (a bare file rename would break
+    # them — which is exactly why the YouTube tab's rename is label-only).
+    def _stem_song_scan_dirs(self, path):
+        """The directories that can hold this song's files: the audio's own
+        folder, each stem-output base + its immediate subfolders, and the A2M
+        MIDIs folder. Deduped, existing-only, order-preserving."""
+        dirs = []
+        d = os.path.dirname(path)
+        if d and os.path.isdir(d):
+            dirs.append(d)
+        for var_name in ("stem_output_var", "stem_iso_output_var"):
+            vv = getattr(self, var_name, None)
+            try:
+                b = vv.get().strip() if vv is not None else ""
+            except Exception:
+                b = ""
+            if b and os.path.isdir(b):
+                dirs.append(b)
+                try:
+                    for sub in os.listdir(b):
+                        full = os.path.join(b, sub)
+                        if os.path.isdir(full):
+                            dirs.append(full)
+                except Exception:
+                    pass
+        av = getattr(self, "a2m_output_var", None)
+        try:
+            ab = av.get().strip() if av is not None else ""
+        except Exception:
+            ab = ""
+        if ab:
+            midd = os.path.join(ab, "MIDIs")
+            if os.path.isdir(midd):
+                dirs.append(midd)
+        seen, out = set(), []
+        for x in dirs:
+            nc = os.path.normcase(os.path.abspath(x))
+            if nc not in seen:
+                seen.add(nc)
+                out.append(x)
+        return out
+
+    def _stem_song_members(self, path):
+        """Every file belonging to this song across `_stem_song_scan_dirs`.
+        Boundary-safe match on the file stem so a sibling song that merely
+        shares a prefix (e.g. 'Song' vs 'Song 2') is never swept in:
+          stem == song            → '<song>.flac' / '<song>.ogg'
+          stem startswith song+'_' → '<song>_drums.ogg', '<song>_drums MIDI.mid'
+          stem == song+' MIDI'     → '<song> MIDI.mid'
+        Every match's filename starts with `song`, so a rename is the uniform
+        transform new + fn[len(song):]."""
+        song = os.path.splitext(os.path.basename(path))[0]
+        if not song:
+            return []
+
+        def _belongs(fn):
+            stem = os.path.splitext(fn)[0]
+            return (stem == song
+                    or stem.startswith(song + "_")
+                    or stem == song + " MIDI")
+
+        members, seen = [], set()
+        for d in self._stem_song_scan_dirs(path):
+            try:
+                for fn in os.listdir(d):
+                    full = os.path.join(d, fn)
+                    try:
+                        if not os.path.isfile(full) or not _belongs(fn):
+                            continue
+                    except Exception:
+                        continue
+                    nc = os.path.normcase(os.path.abspath(full))
+                    if nc not in seen:
+                        seen.add(nc)
+                        members.append(full)
+            except Exception:
+                pass
+        return members
+
+    def _stem_lib_rename(self, path):
+        """File-set rename: renames the song's audio + all its drum stems +
+        its MIDI together (keeping the name-based links intact). All-or-nothing
+        with rollback; honest if the rollback itself fails."""
+        from tkinter import simpledialog
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning(
+                "File not found", "That song is no longer on disk:\n" + str(path))
+            return
+        song = os.path.splitext(os.path.basename(path))[0]
+        new = simpledialog.askstring(
+            "Rename song",
+            "New name for this song:\n(renames the audio, its drum stems, and "
+            "its MIDI together)",
+            initialvalue=song, parent=self.root)
+        if new is None:
+            return
+        new = new.strip()
+        if not new or new == song:
+            return
+        if any(c in set('\\/:*?"<>|') for c in new):
+            messagebox.showerror(
+                "Invalid name",
+                'A song name can\'t contain any of these characters:\n'
+                '   \\ / : * ? " < > |')
+            return
+
+        members = self._stem_song_members(path)
+        renames = []   # (src, dst)
+        for src in members:
+            d, fn = os.path.split(src)
+            dst = os.path.join(d, new + fn[len(song):])
+            if os.path.normcase(dst) == os.path.normcase(src):
+                continue
+            if os.path.exists(dst):
+                messagebox.showerror(
+                    "Rename failed",
+                    f"A file named “{os.path.basename(dst)}” already exists "
+                    f"here:\n{d}\n\nNothing was renamed.")
+                return
+            renames.append((src, dst))
+        if not renames:
+            return
+
+        done = []   # (dst, src) — rollback newest-first
+        try:
+            for src, dst in renames:
+                os.rename(src, dst)
+                done.append((dst, src))
+        except Exception as e:
+            stuck = []
+            for dd, ss in reversed(done):
+                try:
+                    os.rename(dd, ss)
+                except Exception:
+                    stuck.append(dd)
+            if stuck:
+                messagebox.showerror(
+                    "Rename failed",
+                    "The rename failed and the partial change could NOT be fully "
+                    "undone. These files are still under the new name — rename "
+                    "them back by hand:\n\n" + "\n".join(stuck) + f"\n\n({e})")
+            else:
+                messagebox.showerror(
+                    "Rename failed",
+                    f"Could not rename — no changes were made:\n{e}")
+            self._stem_library_refresh()
+            return
+        self._stem_library_refresh()
+
+    def _stem_lib_delete(self, path):
+        """PERMANENTLY delete the song's whole file set (audio + stems + MIDI)
+        from disk — no Recycle Bin, ask-first with the file list (matches the
+        Single Song Creator library's Delete)."""
+        if not path:
+            return
+        song = os.path.splitext(os.path.basename(path))[0] or os.path.basename(path)
+        members = self._stem_song_members(path)
+        if not members:
+            self._stem_library_refresh()
+            return
+        preview = "\n".join("   " + os.path.basename(m) for m in members[:12])
+        if len(members) > 12:
+            preview += f"\n   … and {len(members) - 12} more"
+        if not messagebox.askyesno(
+                "Delete song",
+                f"Permanently delete “{song}” and its {len(members)} file(s) "
+                "from disk?\n\nThis includes the audio, its drum stems, and its "
+                "MIDI:\n\n" + preview
+                + "\n\nThere is no undo."):
+            return
+        # Stop the shared preview if it's THIS song playing (can't delete a
+        # file that's open on the mixer).
+        if getattr(self, "_yt_preview_path", None) == path:
+            try:
+                self._yt_preview_stop()
+            except Exception:
+                pass
+        import stat
+        failed = []
+        for f in members:
+            for _attempt in range(2):
+                try:
+                    os.remove(f)
+                    break
+                except Exception:
+                    try:
+                        os.chmod(f, stat.S_IWRITE)
+                    except Exception:
+                        pass
+            if os.path.exists(f):
+                failed.append(f)
+        if failed:
+            messagebox.showerror(
+                "Delete failed",
+                "Could not delete these files (one may be open in another "
+                "program, or blocked by OneDrive sync):\n\n"
+                + "\n".join(failed))
+        self._stem_library_refresh()
 
     def _stem_lib_edit_artist(self, path):
         """Right-click → Edit artist for the Stem Splitter 'Your Songs' library.
@@ -31025,6 +31244,27 @@ demucs.separate.main()
               "    ⚠  Model must be downloaded before first use (~200MB).")
         warn(s, "DrumSep requires a drums-only stem as input, not a full mix.\n"
                 "Always run Standard Split first, then run DrumSep on the DRUMS ONLY result.")
+        divider(s)
+        entry(s,
+              "Your Songs library (bottom of the Stem Splitter tab)\n"
+              "  Lists the songs in your Songs Folder with album art and\n"
+              "  FLAC / OGG / STEMS / MIDI badges showing what already exists for\n"
+              "  each. Each row has Split (loads it into the splitter), Play\n"
+              "  (preview), and — once split — Open Stems. Search and sort are at\n"
+              "  the top.\n\n"
+              "  Right-click a song for:\n"
+              "    Split this song / Edit artist / Open file location / Open stems\n"
+              "    Rename song… — renames the song's whole file set together: the\n"
+              "      audio, its drum stems (<song>_drums.ogg etc.), and its MIDI,\n"
+              "      so the name-based links between them stay intact. (A plain\n"
+              "      file rename would break those links — that's why it renames\n"
+              "      the whole set.) If it can't finish it undoes what it started.\n"
+              "    Delete song… — PERMANENTLY deletes that whole set from disk\n"
+              "      (audio + stems + MIDI). It lists the files and asks first;\n"
+              "      there is no undo, and it does not use the Recycle Bin.\n\n"
+              "  Note: Rename/Delete find files in your configured Stem-output and\n"
+              "  Audio-MIDI-output folders; a stem you moved elsewhere or a custom\n"
+              "  output folder may not be caught.")
         divider(s)
         entry(s,
               "Project Save / Load:\n"

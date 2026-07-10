@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.7.1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.2`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -154,7 +154,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.7.1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.2`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -551,6 +551,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.7.2**<br>2026-07-10 | <ul><li>**Stem Splitter "Your Songs" library** — right‑click a song for two new actions:</li><li>**Rename song** — renames the song's *whole file set together* (the audio, its drum stems, and its MIDI) so the links between them stay intact; all‑or‑nothing (it undoes itself if it can't finish).</li><li>**Delete song** — permanently deletes that whole set from disk (audio + stems + MIDI); it lists the files and asks first, no undo.</li><li>Fix: a song's album art in this library now updates if the file is re‑tagged, instead of showing the old thumbnail.</li></ul> |
 | **v4.7.1**<br>2026-07-10 | <ul><li>Follow‑up fixes to the v4.7.0 Single Song Creator.</li><li>**Rename song** now also updates the title *inside* the files, so a renamed song shows the new name in‑game too (Paradiddle + Clone Hero), not just in the library — and it's now all‑or‑nothing so a song can't get split into two rows.</li><li>**Clone Hero export:** enabling only ghost notes (or only accents) no longer also emits the other kind.</li><li>**"Your Songs" library:** faster on large libraries, refreshes when you change the Output/CH folder, album art updates when replaced in place, difficulty badges read more precisely, and a song whose Paradiddle + Clone Hero files share one folder is handled correctly by Delete/Rename.</li></ul> |
 | **v4.7.0**<br>2026-07-10 | <ul><li>**Single Song Creator — full‑tab redesign**: every setting is now grouped into side‑by‑side cards (Files · Song Info · Output + Export Format · Tools + BPM/Timing) so the whole tab fits on screen with little or no scrolling; on a narrower window the cards reflow into two rows.</li><li>**Advanced Options** (ghost/accent notes) is now an always‑visible card under Export Format instead of a hidden drop‑down, and **Offset (seconds)** sits directly under Manual BPM.</li><li>**"Your Songs" library**: **Play was replaced with Delete** (a finished song's folder only holds backing/drums stems); Delete permanently removes the song's folder(s) after asking and is resilient to Windows/OneDrive locks. **NEW right‑click → Rename song** renames the song's folder(s) on disk. Format badges are now all‑caps **RLRR / CHART**, and the Paradiddle source row uses a 🥁 icon.</li><li>Extra stem rows say **"Drums" / "Song"** (were "Drum audio"/"Song audio") so nothing gets cut off, and the **Album Art Preview** has a cyan border matching the other thumbnails.</li></ul> |
 | **v4.6.2**<br>2026-07-10 | <ul><li>**NEW — "Your Songs" library in the Single Song Creator**: the tab now shows all your finished songs, scanned live from up to two folders — Source 1 defaults to your Output Folder, Source 2 to your Clone Hero folder (or `Output Folder\Clone Hero Songs`, the same default the CH export uses). Both are pickable and resettable, and songs already on disk appear immediately — nothing needs re‑converting.</li><li>**Library rows**: `rlrr` (purple, Paradiddle Ready) and `chart` (cyan, Clone Hero Ready) badges, full‑song **Play/Pause** preview, an **Extract →** button that sends the song's best `.rlrr` straight to the MIDI Extractor, and **E/M/H/X** badges (green/yellow/orange/red) showing which difficulties exist. A song's `.rlrr` folder and its same‑named Clone Hero folder merge into one row; search + sort included; right‑click opens the song's folders. Every finished conversion refreshes the list automatically.</li><li>**Single Song Creator layout refresh**: the Output / action‑buttons / Export Format sections are now three side‑by‑side cards (like the YouTube tab), with the new library beside a taller log below the Convert button.</li></ul> |
