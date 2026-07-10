@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.6.2`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.0`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -148,7 +148,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.6.2`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.0`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -310,7 +310,7 @@ with hands-on testing on real songs, **with sources listed**, and the experiment
 ## 📸 Screenshots
 
 <div align="center">
-  <img src="screenshots/app-01-single-song-creator.png" width="820" alt="ParaKit — Single Song Creator">
+  <img src="screenshots/app-01-single-song-creator.png?v=20260710" width="820" alt="ParaKit — Single Song Creator">
 </div>
 
 <details>
@@ -319,7 +319,7 @@ with hands-on testing on real songs, **with sources listed**, and the experiment
 <br>
 
 ### 1 · Single Song Creator
-<img src="screenshots/app-01-single-song-creator.png" width="900" alt="Single Song Creator">
+<img src="screenshots/app-01-single-song-creator.png?v=20260710" width="900" alt="Single Song Creator">
 
 ### 2 · Create Multiple Songs
 <img src="screenshots/app-02-create-multiple-songs.png" width="900" alt="Create Multiple Songs">
@@ -545,6 +545,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.7.0**<br>2026-07-10 | <ul><li>**Single Song Creator — full‑tab redesign**: every setting is now grouped into side‑by‑side cards (Files · Song Info · Output + Export Format · Tools + BPM/Timing) so the whole tab fits on screen with little or no scrolling; on a narrower window the cards reflow into two rows.</li><li>**Advanced Options** (ghost/accent notes) is now an always‑visible card under Export Format instead of a hidden drop‑down, and **Offset (seconds)** sits directly under Manual BPM.</li><li>**"Your Songs" library**: **Play was replaced with Delete** (a finished song's folder only holds backing/drums stems); Delete permanently removes the song's folder(s) after asking and is resilient to Windows/OneDrive locks. **NEW right‑click → Rename song** renames the song's folder(s) on disk. Format badges are now all‑caps **RLRR / CHART**, and the Paradiddle source row uses a 🥁 icon.</li><li>Extra stem rows say **"Drums" / "Song"** (were "Drum audio"/"Song audio") so nothing gets cut off, and the **Album Art Preview** has a cyan border matching the other thumbnails.</li></ul> |
 | **v4.6.2**<br>2026-07-10 | <ul><li>**NEW — "Your Songs" library in the Single Song Creator**: the tab now shows all your finished songs, scanned live from up to two folders — Source 1 defaults to your Output Folder, Source 2 to your Clone Hero folder (or `Output Folder\Clone Hero Songs`, the same default the CH export uses). Both are pickable and resettable, and songs already on disk appear immediately — nothing needs re‑converting.</li><li>**Library rows**: `rlrr` (purple, Paradiddle Ready) and `chart` (cyan, Clone Hero Ready) badges, full‑song **Play/Pause** preview, an **Extract →** button that sends the song's best `.rlrr` straight to the MIDI Extractor, and **E/M/H/X** badges (green/yellow/orange/red) showing which difficulties exist. A song's `.rlrr` folder and its same‑named Clone Hero folder merge into one row; search + sort included; right‑click opens the song's folders. Every finished conversion refreshes the list automatically.</li><li>**Single Song Creator layout refresh**: the Output / action‑buttons / Export Format sections are now three side‑by‑side cards (like the YouTube tab), with the new library beside a taller log below the Convert button.</li></ul> |
 | **v4.6.1**<br>2026-07-10 | <ul><li>**Note choices now tied to each MIDI chart** (not one global setting): a fresh MIDI starts at the defaults, and re‑loading a MIDI you tuned before restores its choices — so you never re‑tune the same chart twice.</li><li>**Lane‑note readout**: the MIDI Editor's left lane strip now shows each lane's current output note under its name; the Hi‑Hat lane shows its note plus "& per note" (hats can still be Closed/Open/Pedal individually), and now picks its note like the other lanes.</li><li>**Open hi‑hats look distinct**: an Open hi‑hat (note 46) renders hollow with a thin yellow outline in the piano roll (filled cyan + yellow outline in the velocity lane).</li><li>**Velocity lane**: same‑beat notes in different lanes now sit side by side instead of stacking on top of each other.</li><li>**Clone Hero export**: crashes now map to the green cymbal (not the hi‑hat's yellow lane), so a simultaneous hi‑hat + crash no longer collapses; accent/ghost markers now use the correct per‑lane note numbers.</li><li>Fixed the Note Manager's colour swatches showing as empty boxes, and the header sometimes coming up in light mode on launch.</li></ul> |
 | **v4.6.0**<br>2026-07-10 | <ul><li>**NEW — Manual MIDI Note Manager** (MIDI Editor, next to the Tempo Map button): pick which MIDI note each drum lane writes on export — e.g. Electric vs Acoustic Snare, Crash 15″/17″/Splash, Ride 17″/20″/Bell, high vs low toms. Crash and Ride switch the actual piece in Paradiddle; every lane's choice sets the note e‑kits/DAWs receive. Saved between sessions.</li><li>**NEW — per‑note hi‑hats**: right‑click any hi‑hat note (or a selection) to set it **Closed / Open / Pedal**; mixed open‑closed charts survive export.</li><li>**Clone Hero export fixes**: Easy/Medium/Hard now export with the correct difficulty section (was always Expert); ghost/accent notes now actually write; with reduction on, the `.chart` matches the reduced `.rlrr`; extended e‑kit hi‑hat notes are no longer dropped from Paradiddle exports.</li><li>**Safer in‑app updates**: "Download update now" is now all‑or‑nothing — it verifies every file before replacing anything and rolls back on failure, so a failed update can't leave a half‑updated install.</li><li>**MIDI Editor**: flags now follow notes through Quantize/Soft‑Quantize; paste/repeat select exactly the pasted copies.</li><li>Sheet Music→MIDI no longer leaks a temp file per conversion; stem‑model downloads finalize atomically.</li></ul> |

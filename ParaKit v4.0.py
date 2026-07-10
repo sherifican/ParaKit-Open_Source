@@ -5563,7 +5563,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.6.2"
+    VERSION = "4.7.0"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -8550,9 +8550,20 @@ class MidiToRlrrApp:
 
         self._refresh_recent_combo()
 
-        # ── Files ─────────────────────────────────────────────────────────────
-        files_frame = ttk.LabelFrame(main, text=" Files ", padding=10)
-        files_frame.pack(fill=tk.X, pady=(0, 10))
+        # ── v4.6.3 — TOP CARD BAND (owner layout) ─────────────────────────────
+        # The whole top half becomes ONE horizontal band of four columns so the
+        # tab fits on screen with little/no scrolling (like the YouTube tab):
+        #   col0 Files | col1 Song Info | col2 Output + Export Format
+        #   | col3 Tools + BPM/Timing.
+        # _sc_relayout_top (defined once every card exists) reflows to a 2×2
+        # grid when the tab is narrow so no card overflows its column.
+        sc_top_band = ttk.Frame(main)
+        sc_top_band.pack(fill=tk.X, pady=(0, 8))
+        mid_stack = ttk.Frame(sc_top_band)     # col2: Output over Export Format
+        right_stack = ttk.Frame(sc_top_band)   # col3: Tools over BPM / Timing
+
+        # ── Files (band col 0) ────────────────────────────────────────────────
+        files_frame = ttk.LabelFrame(sc_top_band, text=" Files ", padding=10)
 
         self.midi_var       = tk.StringVar()
         self.audio_var      = tk.StringVar()
@@ -8561,10 +8572,10 @@ class MidiToRlrrApp:
 
         self._file_row(files_frame, "MIDI File *",  self.midi_var,       0,
                        [("MIDI files", "*.mid *.midi"), ("All files", "*.*")],
-                       config_key="recent_midi")
+                       config_key="recent_midi", entry_width=22)
         self._file_row(files_frame, "Song Audio *", self.audio_var,      1,
                        [("Audio files", "*.ogg *.mp3 *.wav *.flac"), ("All files", "*.*")],
-                       config_key="recent_audio")
+                       config_key="recent_audio", entry_width=22)
         # ── Extra Stems ───────────────────────────────────────────────────────
         self._single_extra_stems = []
         _stems_outer = ttk.Frame(files_frame)
@@ -8586,18 +8597,20 @@ class MidiToRlrrApp:
             row_f.pack(fill="x", pady=1)
             ttk.Label(row_f, text=f"Extra Stem {idx}:", width=14,
                       anchor="w").pack(side=tk.LEFT, padx=(0, 4))
-            ent = ttk.Entry(row_f, textvariable=var, width=32)
+            ent = ttk.Entry(row_f, textvariable=var, width=14)
             ent.pack(side=tk.LEFT, padx=(0, 4), fill="x", expand=True)
             ttk.Button(row_f, text="Browse…",
                        command=lambda v=var: self._browse_file(
                            v, [("Audio files", "*.ogg *.mp3 *.wav *.flac"),
                                ("All files", "*.*")], None)
                        ).pack(side=tk.LEFT, padx=(0, 4))
-            ttk.Checkbutton(row_f, text="Drum audio", variable=is_drum_var,
+            # Short "Drums"/"Song" labels (not "Drum audio"/"Song audio") so the
+            # second toggle + clear button aren't clipped in the narrow card.
+            ttk.Checkbutton(row_f, text="Drums", variable=is_drum_var,
                             command=lambda isd=is_drum_var, iss=is_song_var: (
                                 isd.set(True), iss.set(False))
                             ).pack(side=tk.LEFT, padx=(0, 2))
-            ttk.Checkbutton(row_f, text="Song audio", variable=is_song_var,
+            ttk.Checkbutton(row_f, text="Song", variable=is_song_var,
                             command=lambda isd=is_drum_var, iss=is_song_var: (
                                 isd.set(False), iss.set(True))
                             ).pack(side=tk.LEFT, padx=(0, 4))
@@ -8619,11 +8632,11 @@ class MidiToRlrrApp:
         _single_add_btn.pack(anchor="w", pady=(0, 2))
         self._file_row(files_frame, "Drum Audio",   self.drum_audio_var, 3,
                        [("Audio files", "*.ogg *.mp3 *.wav *.flac"), ("All files", "*.*")],
-                       config_key="recent_drum_audio")
+                       config_key="recent_drum_audio", entry_width=22)
         self._cover_widgets = self._file_row(
             files_frame, "Cover Image", self.cover_var, 5,
             [("Images", "*.jpg *.jpeg *.png"), ("All files", "*.*")],
-            config_key="recent_cover")
+            config_key="recent_cover", entry_width=22)
         # Auto-metadata art indicator — shows when Asset Manager found art.
         # (The label now lives inside the Album Art Preview block below.)
         self._am_auto_art_path = None
@@ -8645,7 +8658,8 @@ class MidiToRlrrApp:
                             pady=(2, 4))
         _art_box = tk.Frame(art_prev_frame, width=self._COVER_PREVIEW_PX,
                             height=self._COVER_PREVIEW_PX, bg="#17172d",
-                            highlightbackground="#3a2e5e", highlightthickness=1)
+                            highlightbackground="#00d4d4",
+                            highlightcolor="#00d4d4", highlightthickness=2)
         _art_box.pack(side=tk.LEFT)
         _art_box.pack_propagate(False)
         self._cover_preview_label = tk.Label(_art_box, bg="#17172d",
@@ -8679,16 +8693,18 @@ class MidiToRlrrApp:
             value=load_config().get("use_metadata_art", False))
         self._metadata_art_temp_path = None
         meta_art_row = ttk.Frame(files_frame)
-        meta_art_row.grid(row=4, column=0, columnspan=4, sticky="w", pady=(2, 0))
+        meta_art_row.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(2, 0))
         ttk.Checkbutton(
             meta_art_row,
             text="🎨  Use album art from audio file metadata (auto-cropped 512×512)",
             variable=self.use_metadata_art_var,
-            command=self._on_metadata_art_toggle).pack(side=tk.LEFT)
+            command=self._on_metadata_art_toggle).pack(anchor="w")
+        # Status sits BELOW the checkbox (was squeezed beside it and clipped in
+        # the narrow card) so it wraps cleanly across the card's full width.
         self.metadata_art_status_var = tk.StringVar(value="")
         ttk.Label(meta_art_row, textvariable=self.metadata_art_status_var,
                   style="Sub.TLabel", foreground="#888888",
-                  wraplength=600).pack(side=tk.LEFT, padx=(8, 0))
+                  wraplength=380, justify=tk.LEFT).pack(anchor="w", pady=(1, 0))
         self.use_metadata_art_var.trace_add(
             "write",
             lambda *_: save_config({"use_metadata_art": self.use_metadata_art_var.get()}))
@@ -8732,7 +8748,7 @@ class MidiToRlrrApp:
         self._preview_clip_widgets = self._file_row(
             files_frame, "Preview Clip", self.preview_audio_var, 8,
             [("Audio files", "*.ogg *.mp3 *.wav *.flac"), ("All files", "*.*")],
-            config_key="recent_preview_audio")
+            config_key="recent_preview_audio", entry_width=22)
 
         preview_note = ttk.Label(
             files_frame,
@@ -8740,20 +8756,19 @@ class MidiToRlrrApp:
                  "'Send clip to Song Creator'. Song Audio is often the backing track "
                  "with no drums, so auto-clipping it can sound wrong.",
             style="Sub.TLabel", foreground="#58a6ff",
-            wraplength=820, justify=tk.LEFT)
+            wraplength=400, justify=tk.LEFT)
         preview_note.grid(row=9, column=1, columnspan=3, sticky="w", pady=(0, 4))
 
-        # ── Song Info ─────────────────────────────────────────────────────────
-        info_frame = ttk.LabelFrame(main, text=" Song Info ", padding=10)
-        info_frame.pack(fill=tk.X, pady=(0, 10))
+        # ── Song Info (band col 1) ────────────────────────────────────────────
+        info_frame = ttk.LabelFrame(sc_top_band, text=" Song Info ", padding=10)
 
         self.title_var   = tk.StringVar(value="Untitled")
         self.artist_var  = tk.StringVar(value="Unknown")
         self.creator_var = tk.StringVar(value="ParaKit")
 
-        self._text_row(info_frame, "Title *",  self.title_var,  0)
-        self._text_row(info_frame, "Artist *", self.artist_var, 1)
-        self._text_row(info_frame, "Creator",  self.creator_var, 2)
+        self._text_row(info_frame, "Title *",  self.title_var,  0, entry_width=22)
+        self._text_row(info_frame, "Artist *", self.artist_var, 1, entry_width=22)
+        self._text_row(info_frame, "Creator",  self.creator_var, 2, entry_width=22)
 
         # v4.5.6.2 — Description embedded into the .rlrr's recordingMetadata.
         # ParaDB reads the description straight from the uploaded .rlrr (there is
@@ -8761,7 +8776,7 @@ class MidiToRlrrApp:
         # is written as a <br>. Optional; blank keeps the old empty-description.
         ttk.Label(info_frame, text="Description:").grid(
             row=3, column=0, sticky="nw", padx=(0, 5), pady=2)
-        self.description_text = tk.Text(info_frame, height=3, width=45, wrap="word",
+        self.description_text = tk.Text(info_frame, height=3, width=22, wrap="word",
                                         bg="#0d1117", fg="#e0e0e0",
                                         insertbackground="#e0e0e0",
                                         selectbackground="#2a1235",
@@ -8811,9 +8826,10 @@ class MidiToRlrrApp:
             "The selected difficulty will directly affect the number\n"
             "of MIDI notes on the converted track.")
 
-        # ── BPM / Timing ──────────────────────────────────────────────────────
-        bpm_frame = ttk.LabelFrame(main, text=" BPM / Timing ", padding=10)
-        bpm_frame.pack(fill=tk.X, pady=(0, 10))
+        # ── BPM / Timing (band col 3, LOWER card — Tools packs above it via
+        # pack(before=) when it's built further down) ─────────────────────────
+        bpm_frame = ttk.LabelFrame(right_stack, text=" BPM / Timing ", padding=10)
+        bpm_frame.pack(fill=tk.BOTH, expand=True)
 
         # v4.4.50 — defaults flipped so "Use BPM from MIDI file" is the
         # default toggled option (was "Auto-detect BPM from audio"). Most
@@ -8828,26 +8844,17 @@ class MidiToRlrrApp:
                         variable=self.auto_bpm_var, command=self._toggle_bpm)
         auto_cb.grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 2))
 
-        ttk.Label(bpm_frame,
-                  text="⚠  Auto-detect requires a drums-only stem for accurate results. "
-                       "Using a full mix or backing track will likely give the wrong BPM (commonly half the real value). "
-                       "If BPM looks wrong, use the Drum Audio field + a drums-only stem, or switch to Manual BPM and enter the correct value. "
-                       "The ÷2 / ×2 buttons can quickly fix a half-time or double-time result.",
-                  style="Sub.TLabel", foreground="#b388ff",
-                  justify=tk.LEFT, wraplength=860).grid(
-                  row=0, column=4, columnspan=2, sticky="w", padx=(16, 0))
-
         midi_bpm_cb = ttk.Checkbutton(
             bpm_frame,
-            text="Use BPM from MIDI file (recommended — avoids redundant BPM detection when MIDI was created in-app)",
+            text="Use BPM from MIDI file (recommended)",
             variable=self.use_midi_bpm_var,
             command=self._toggle_bpm)
         midi_bpm_cb.grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 5))
         self._add_tooltip(midi_bpm_cb,
             "When checked, the BPM embedded in the MIDI file is used directly.\n"
             "This is the most accurate option when the MIDI was generated by\n"
-            "the Audio→MIDI tab, since that tab already detected the correct BPM.\n"
-            "Avoids a second (potentially wrong) BPM detection pass.")
+            "the Audio→MIDI tab, since that tab already detected the correct BPM\n"
+            "— it avoids a second, redundant (and potentially wrong) detection pass.")
 
         ttk.Label(bpm_frame, text="Manual BPM:").grid(row=2, column=0, sticky="w", padx=(0, 5))
         self.bpm_var   = tk.StringVar()
@@ -8882,29 +8889,32 @@ class MidiToRlrrApp:
         self._add_tooltip(self.bpm_double_btn,
             "Double the BPM — use if notes fall at half speed.")
 
-        ttk.Label(bpm_frame, text="Offset (seconds):").grid(row=2, column=3, sticky="w", padx=(20, 5))
+        # Offset now sits DIRECTLY UNDER Manual BPM (own row) instead of beside
+        # it, so the narrow card doesn't clip it (owner 2026-07-10).
+        ttk.Label(bpm_frame, text="Offset (seconds):").grid(row=3, column=0, sticky="w", padx=(0, 5), pady=(4, 0))
         self.offset_var   = tk.StringVar()
         self.offset_entry = ttk.Entry(bpm_frame, textvariable=self.offset_var, width=10, state="disabled")
-        self.offset_entry.grid(row=2, column=4, sticky="w")
+        self.offset_entry.grid(row=3, column=1, sticky="w", pady=(4, 0))
         self._add_tooltip(self.offset_entry,
             "Time in seconds before the first drum hit.\n"
             "Positive = notes start later, negative = notes start earlier.\n"
             "Use the Song Tester to find the best offset automatically.")
 
-        # ── Advanced Options ──────────────────────────────────────────────────
-        self._build_advanced_panel(main)
+        # Auto-detect guidance — full-width wrapped row at the card's bottom
+        # (was a wide side column in the old stacked layout).
+        ttk.Label(bpm_frame,
+                  text="⚠  Auto-detect requires a drums-only stem for accurate results. "
+                       "A full mix or backing track will likely give the wrong BPM "
+                       "(commonly half the real value). If BPM looks wrong, use the "
+                       "Drum Audio field + a drums-only stem, or switch to Manual BPM; "
+                       "the ÷2 / ×2 buttons quickly fix a half/double-time result.",
+                  style="Sub.TLabel", foreground="#b388ff",
+                  justify=tk.LEFT, wraplength=380).grid(
+                  row=4, column=0, columnspan=5, sticky="w", pady=(6, 0))
 
-        # ── v4.6.2 — Bottom-band redesign (owner) ─────────────────────────────
-        # The stacked Output / action-buttons / Export-Format sections are
-        # reorganized into ONE horizontal card band (mirrors the YouTube tab's
-        # top_band: Format / Runtime / Cookies cards). _sc_relayout_band
-        # (defined after the cards exist) reflows to a stacked grid when the
-        # tab is narrow so no card overflows its column.
-        sc_band = ttk.Frame(main)
-        sc_band.pack(fill=tk.X, pady=(0, 8))
-
-        # ── Output (band card 0) ─────────────────────────────────────────────
-        out_frame = ttk.LabelFrame(sc_band, text=" Output ", padding=10)
+        # ── Output (band col 2, upper card) ──────────────────────────────────
+        out_frame = ttk.LabelFrame(mid_stack, text=" Output ", padding=10)
+        out_frame.pack(fill=tk.X, pady=(0, 8))
 
         self.output_var = tk.StringVar()
         _cfg = load_config()
@@ -8950,9 +8960,10 @@ class MidiToRlrrApp:
         if self.zip_output_var.get():
             self.zip_folder_frame.pack(side=tk.LEFT)
 
-        # ── Tools (band card 2) — the old horizontal button strip, now a 2-col
-        # grid inside a card so it stacks beside Output / Export Format.
-        tools_frame = ttk.LabelFrame(sc_band, text=" Tools ", padding=8)
+        # ── Tools (band col 3, upper card) — the old horizontal button strip
+        # as a 2-col grid. Packed ABOVE the already-built BPM/Timing card.
+        tools_frame = ttk.LabelFrame(right_stack, text=" Tools ", padding=8)
+        tools_frame.pack(fill=tk.X, pady=(0, 8), before=bpm_frame)
         _sc_tool_btns = [
             ("🔬  Test Sync Before Converting", self._quick_test_from_converter),
             ("🔍  Check for Issues",            self._pfv_run_single_button),
@@ -8968,10 +8979,11 @@ class MidiToRlrrApp:
                 padx=(0, 6) if (_i % 2 == 0) else 0, pady=(0, 4))
         tools_frame.columnconfigure(0, weight=1)
         tools_frame.columnconfigure(1, weight=1)
-        # ── Export Format (band card 1) — radios stacked vertically; the Clone
-        # Hero extras (Album / Year / CH Folder) live INSIDE this card now and
-        # reveal below the radios when CH / Both is selected.
-        fmt_frame = ttk.LabelFrame(sc_band, text=" Export Format ", padding=8)
+        # ── Export Format (band col 2, lower card) — radios stacked vertically;
+        # the Clone Hero extras (Album / Year / CH Folder) live INSIDE this card
+        # and reveal below the radios when CH / Both is selected.
+        fmt_frame = ttk.LabelFrame(mid_stack, text=" Export Format ", padding=8)
+        fmt_frame.pack(fill=tk.X, pady=(0, 8))
 
         self.sc_export_fmt = tk.StringVar(
             value=load_config().get("export_format", "paradiddle"))
@@ -9040,39 +9052,45 @@ class MidiToRlrrApp:
             except Exception:
                 pass
 
-        # ── Band relayout (mirrors _yt_relayout_band) — 3 cards in one row when
-        # the tab is wide; Output full-width + [Format | Tools] when narrow.
-        def _sc_relayout_band(_e=None):
+        # ── Advanced Options (band col 2, bottom card) — always visible now
+        # (was a hidden collapsible menu); fills the rest of the mid column.
+        self._build_advanced_panel(mid_stack)
+
+        # ── Top-band relayout — four columns when the tab is wide (owner's
+        # drawn layout: Files | Song Info | Output+Export | Tools+BPM), a 2×2
+        # grid when narrow so no card overflows its column.
+        def _sc_relayout_top(_e=None):
             try:
-                w = sc_band.winfo_width()
+                w = sc_top_band.winfo_width()
             except Exception:
                 return
             if w <= 1:
                 return
-            mode = "wide" if w >= 980 else "narrow"
-            if getattr(self, "_sc_band_mode", None) == mode:
+            mode = "wide" if w >= 1500 else "narrow"
+            if getattr(self, "_sc_top_mode", None) == mode:
                 return
-            self._sc_band_mode = mode
-            for f in (out_frame, fmt_frame, tools_frame):
+            self._sc_top_mode = mode
+            for f in (files_frame, info_frame, mid_stack, right_stack):
                 f.grid_forget()
-            for c in range(3):
-                sc_band.columnconfigure(c, weight=0)
+            for c in range(4):
+                sc_top_band.columnconfigure(c, weight=0, uniform="")
             if mode == "wide":
-                out_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-                fmt_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 8))
-                tools_frame.grid(row=0, column=2, sticky="nsew")
-                sc_band.columnconfigure(0, weight=3)
-                sc_band.columnconfigure(1, weight=2)
-                sc_band.columnconfigure(2, weight=3)
+                files_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+                info_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 8))
+                mid_stack.grid(row=0, column=2, sticky="nsew", padx=(0, 8))
+                right_stack.grid(row=0, column=3, sticky="nsew")
+                for c, wt in enumerate((6, 5, 5, 5)):
+                    sc_top_band.columnconfigure(c, weight=wt, uniform="sctop")
             else:
-                out_frame.grid(row=0, column=0, columnspan=2,
-                               sticky="nsew", pady=(0, 6))
-                fmt_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
-                tools_frame.grid(row=1, column=1, sticky="nsew")
-                sc_band.columnconfigure(0, weight=1)
-                sc_band.columnconfigure(1, weight=1)
-        sc_band.bind("<Configure>", _sc_relayout_band)
-        self.root.after(60, _sc_relayout_band)
+                files_frame.grid(row=0, column=0, sticky="nsew",
+                                 padx=(0, 8), pady=(0, 8))
+                info_frame.grid(row=0, column=1, sticky="nsew", pady=(0, 8))
+                mid_stack.grid(row=1, column=0, sticky="nsew", padx=(0, 8))
+                right_stack.grid(row=1, column=1, sticky="nsew")
+                sc_top_band.columnconfigure(0, weight=1, uniform="sctop")
+                sc_top_band.columnconfigure(1, weight=1, uniform="sctop")
+        sc_top_band.bind("<Configure>", _sc_relayout_top)
+        self.root.after(60, _sc_relayout_top)
 
         # ?? Convert button ????????????????????????????????????????????????????
         self.convert_btn = ttk.Button(main, text=self._sc_convert_button_text(),
@@ -9130,11 +9148,6 @@ class MidiToRlrrApp:
         lib_col = ttk.Frame(bottom)
         lib_col.grid(row=0, column=0, sticky="nsew")
         self._sc_library_build(lib_col)
-
-        # Stop the library preview whenever the user leaves this tab (mirrors
-        # the YT / Stem Splitter guards; add="+" so it can't clobber theirs).
-        self.notebook.bind("<<NotebookTabChanged>>",
-                           self._sc_lib_on_tab_changed_stop_preview, add="+")
 
     # =====================================================================
     # v4.6.2 — Single Song Creator "Finished Songs" library
@@ -9292,19 +9305,15 @@ class MidiToRlrrApp:
 
     def _sc_lib_scan(self, entry):
         """Live disk scan for one entry: which formats/difficulties exist, plus
-        the preview audio + album art. Cheap (one listdir per folder + one
-        notes.chart header check), run per rendered row on refresh."""
-        _AUD = (".ogg", ".mp3", ".flac", ".wav")
+        the album art. Cheap (one listdir per folder + one notes.chart header
+        check), run per rendered row on refresh."""
         folder = entry.get("folder") or ""
         ch = entry.get("ch_folder") or ""
-        scan = {"rlrr": False, "chart": False, "diffs": set(),
-                "audio": None, "art": None}
+        scan = {"rlrr": False, "chart": False, "diffs": set(), "art": None}
         if folder and os.path.isdir(folder):
-            best_audio, best_size = None, -1
             try:
                 for fn in os.listdir(folder):
                     low = fn.lower()
-                    p = os.path.join(folder, fn)
                     if low.endswith(".rlrr"):
                         scan["rlrr"] = True
                         d = _paradiddle_difficulty_from_filename(fn)
@@ -9312,19 +9321,9 @@ class MidiToRlrrApp:
                             scan["diffs"].add(d)
                     elif (low.startswith("album.")
                           and low.rsplit(".", 1)[-1] in ("png", "jpg", "jpeg")):
-                        scan["art"] = p
-                    elif (low.endswith(_AUD) and not low.startswith("drum")
-                          and "preview" not in low):
-                        # main-mix heuristic: largest non-drums, non-preview audio
-                        try:
-                            sz = os.path.getsize(p)
-                        except Exception:
-                            sz = 0
-                        if sz > best_size:
-                            best_audio, best_size = p, sz
+                        scan["art"] = os.path.join(folder, fn)
             except Exception:
                 pass
-            scan["audio"] = best_audio
         if ch and os.path.isdir(ch):
             chart_path = os.path.join(ch, "notes.chart")
             if os.path.isfile(chart_path):
@@ -9338,12 +9337,6 @@ class MidiToRlrrApp:
                             scan["diffs"].add(d)
                 except Exception:
                     pass
-            if scan["audio"] is None:
-                for ext in _AUD:
-                    p = os.path.join(ch, "song" + ext)
-                    if os.path.isfile(p):
-                        scan["audio"] = p
-                        break
             if scan["art"] is None:
                 p = os.path.join(ch, "album.png")
                 if os.path.isfile(p):
@@ -9366,7 +9359,7 @@ class MidiToRlrrApp:
         self._sc_src_vars = (tk.StringVar(), tk.StringVar())
         self._sc_src_entries = []
         for _si, (_icon, _tip_what, _cfg_key) in enumerate((
-                ("🎵", "Paradiddle songs source — defaults to your Output Folder",
+                ("🥁", "Paradiddle songs source — defaults to your Output Folder",
                  "sc_lib_src1"),
                 ("🎸", "Clone Hero songs source — defaults to your CH Folder "
                        "(or '<Output Folder>\\Clone Hero Songs')",
@@ -9612,21 +9605,16 @@ class MidiToRlrrApp:
 
     def _sc_lib_row(self, parent, entry, scan, idx):
         key = self._sc_entry_key(entry)
-        audio = scan.get("audio")
         rest_bg = "#181830" if (idx % 2) else "#15152a"
         HOVER_BG, SEL_BG, ACCENT = "#22203c", "#2c2748", "#b388ff"
 
         row = tk.Frame(parent, bg=rest_bg)
         row.pack(fill=tk.X)
         # Only the text column (col 2) expands, so the right cluster —
-        # [rlrr][chart] · ▶Play · Extract → · | · [E][M][H][X] — right-aligns
-        # at a consistent position across rows. Reserved minsizes keep the
-        # wider "Pause" glyph / spinner from shifting the cluster.
+        # [RLRR][CHART] · Delete · Extract → · | · [E][M][H][X] — right-aligns
+        # at a consistent position across rows.
         row.columnconfigure(2, weight=1)
-        row.columnconfigure(4, minsize=22)   # braille playback spinner
-        row.columnconfigure(5, minsize=80)   # Play/Pause
         row._sc_key = key
-        row._yt_path = audio          # shared-preview identity (chip/spinner match)
         row._sc_art_path = scan.get("art")
         row._yt_color_targets = []
 
@@ -9676,10 +9664,10 @@ class MidiToRlrrApp:
         badges = tk.Frame(row, bg=rest_bg)
         badges.grid(row=0, column=3, padx=(6, 4))
         row._yt_color_targets.append(badges)
-        self._sc_make_badge(badges, "rlrr", "#b388ff", scan.get("rlrr"),
+        self._sc_make_badge(badges, "RLRR", "#b388ff", scan.get("rlrr"),
                             "Paradiddle Ready ✔",
                             "No .rlrr file in this song's folder ✖", row=row)
-        self._sc_make_badge(badges, "chart", "#00d4d4", scan.get("chart"),
+        self._sc_make_badge(badges, "CHART", "#00d4d4", scan.get("chart"),
                             "Clone Hero Ready ✔",
                             "No notes.chart for this song ✖", row=row)
 
@@ -9695,41 +9683,31 @@ class MidiToRlrrApp:
                 row._yt_color_targets.append(chip)
             return chip
 
-        # Braille playback spinner (col 4) — animates on the playing row.
-        _spinner = tk.Label(row, text="", bg=rest_bg, fg=ACCENT,
-                            font=("Consolas", 11, "bold"), width=2)
-        _spinner.grid(row=0, column=4, padx=(0, 2), sticky="e")
-        row._yt_color_targets.append(_spinner)
-        row._yt_spinner = _spinner
+        # Delete (col 4) — replaces the old Play chip (a finished song's folder
+        # only holds the backing/drums stems, so "playing" it was misleading).
+        delete_chip = _mk_chip("Delete", "#e05650",
+                               self._sc_lib_delete, 4, entry,
+                               border="#e05650")
+        self._add_tooltip(delete_chip,
+                          "Deletes this song's folder(s) from disk — asks first")
 
-        # Play/Pause (col 5) — same shared full-song preview stream as the
-        # YT / Stem Splitter libraries; filled brand-colour chip.
-        _playing = (audio is not None
-                    and audio == getattr(self, "_yt_preview_path", None)
-                    and getattr(self, "_yt_preview_state", None) == "playing")
-        _play_bg = YT_PAUSE_CHIP_BG if _playing else YT_PLAY_CHIP_BG
-        row._yt_play_chip = _mk_chip(
-            "⏸  Pause" if _playing else "▶  Play",
-            "#ffffff", self._sc_lib_play, 5, audio,
-            border=_play_bg, bg=_play_bg, track=False)
-
-        # Extract → (col 6) — send this song's best .rlrr to the MIDI Extractor.
+        # Extract → (col 5) — send this song's best .rlrr to the MIDI Extractor.
         extract_chip = _mk_chip("Extract  →", ACCENT,
-                                self._sc_send_to_extractor, 6,
+                                self._sc_send_to_extractor, 5,
                                 entry.get("folder") or "")
         self._add_tooltip(extract_chip, "Send to MIDI Extractor")
 
-        # "|" divider (col 7) between the actions and the difficulty badges.
+        # "|" divider (col 6) between the actions and the difficulty badges.
         _divider = tk.Label(row, text="|", bg=rest_bg, fg="#5a5a75",
                             font=("Segoe UI", 12))
-        _divider.grid(row=0, column=7, padx=(2, 2), sticky="e")
+        _divider.grid(row=0, column=6, padx=(2, 2), sticky="e")
         row._yt_color_targets.append(_divider)
 
-        # Difficulty badges (col 8): E green / M yellow / H orange / X red —
+        # Difficulty badges (col 7): E green / M yellow / H orange / X red —
         # which difficulties exist in this song's folder.
         diffs = scan.get("diffs") or set()
         diff_frame = tk.Frame(row, bg=rest_bg)
-        diff_frame.grid(row=0, column=8, padx=(2, 6), sticky="e")
+        diff_frame.grid(row=0, column=7, padx=(2, 6), sticky="e")
         row._yt_color_targets.append(diff_frame)
         for _letter, _dname, _dcolor in (("E", "Easy",   "#46d18a"),
                                          ("M", "Medium", "#e6c84a"),
@@ -9814,52 +9792,63 @@ class MidiToRlrrApp:
             except Exception:
                 pass
 
-    def _sc_lib_play(self, audio):
-        """Row Play/Pause — full-song preview through the shared stream."""
-        if not audio or not os.path.isfile(audio):
-            messagebox.showinfo(
-                "No audio found",
-                "Couldn't find a song audio file in this song's folder.")
+    def _sc_lib_delete(self, entry):
+        """Row Delete chip — PERMANENTLY deletes the song's folder(s) from disk
+        (no Recycle Bin, matching the YT library's disk-delete policy), after
+        an explicit confirmation that lists exactly what will be removed. The
+        library is scan-based, so deleting the folders IS removing the row."""
+        folders = [f for f in (entry.get("folder"), entry.get("ch_folder"))
+                   if f and os.path.isdir(f)]
+        if not folders:
+            self._sc_library_refresh()
             return
-        self._yt_preview_toggle(audio)
-
-    def _sc_lib_update_chips(self):
-        """Flip OUR rows' Play/Pause chips to match the shared preview state.
-        Mirrors _stem_lib_update_chips, scoped to self._sc_lib_rows."""
-        cur = getattr(self, "_yt_preview_path", None)
-        state = getattr(self, "_yt_preview_state", None)
-        for r in getattr(self, "_sc_lib_rows", []):
-            chip = getattr(r, "_yt_play_chip", None)
-            if chip is None:
-                continue
-            try:
-                playing = (getattr(r, "_yt_path", None) is not None
-                           and getattr(r, "_yt_path", None) == cur
-                           and state == "playing")
-                _bg = YT_PAUSE_CHIP_BG if playing else YT_PLAY_CHIP_BG
-                chip.configure(text="⏸  Pause" if playing else "▶  Play",
-                               bg=_bg, highlightbackground=_bg,
-                               highlightcolor=_bg)
-            except Exception:
-                pass
-
-    def _sc_lib_on_tab_changed_stop_preview(self, _e=None):
-        """Stop the preview whenever the user leaves the Single Song Creator
-        tab (mirrors the YT / Stem Splitter leave-guards; _yt_preview_stop is
-        idempotent so the three guards coexist)."""
-        try:
-            if self.notebook.index("current") != self._tab_indexes.get("single"):
-                if getattr(self, "_yt_preview_path", None) is not None:
-                    self._yt_preview_stop()
-                self._sc_lib_update_chips()
-        except Exception:
-            pass
+        title = entry.get("title") or os.path.basename(folders[0])
+        if not messagebox.askyesno(
+                "Delete song",
+                f"Permanently delete “{title}” from disk?\n\n"
+                + "\n".join(folders)
+                + "\n\nThis deletes the folder(s) and everything inside them. "
+                  "There is no undo."):
+            return
+        import stat, time
+        for f in folders:
+            # rmtree can raise mid-delete on Windows/OneDrive (a read-only bit
+            # or a transient sync lock) even though the delete then completes.
+            # Try, clear read-only bits + retry once, and only judge success by
+            # whether the folder is actually GONE afterward — NOT by whether
+            # rmtree raised (a false "cannot delete" was firing on folders that
+            # were in fact removed).
+            for _attempt in range(2):
+                try:
+                    shutil.rmtree(f)
+                    break
+                except Exception:
+                    for _root, _dirs, _files in os.walk(f):
+                        for _n in _files + _dirs:
+                            try:
+                                os.chmod(os.path.join(_root, _n), stat.S_IWRITE)
+                            except Exception:
+                                pass
+                    time.sleep(0.1)
+        remaining = [f for f in folders if os.path.isdir(f)]
+        if remaining:
+            messagebox.showerror(
+                "Delete failed",
+                "Could not fully delete:\n\n" + "\n\n".join(remaining)
+                + "\n\n(A file may be open in another program, or blocked by "
+                  "OneDrive sync — close it and try again.)")
+        if self._sc_lib_selected_key == self._sc_entry_key(entry):
+            self._sc_lib_selected_key = None
+        self._sc_library_refresh()
 
     def _sc_lib_context_menu(self, event, entry):
         """Right-click menu for a library row."""
         menu = tk.Menu(self.root, tearoff=0)
         folder = entry.get("folder") or ""
         ch = entry.get("ch_folder") or ""
+        menu.add_command(label="Rename song…",
+                         command=lambda: self._sc_lib_rename(entry))
+        menu.add_separator()
         if folder and os.path.isdir(folder):
             menu.add_command(label="Open song folder",
                              command=lambda: self._sc_lib_open_folder(folder))
@@ -9870,6 +9859,75 @@ class MidiToRlrrApp:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _sc_lib_rename(self, entry):
+        """Rename this song ON DISK. Because the library is scan-based, the
+        song FOLDER name IS the displayed title — so a rename renames the
+        .rlrr folder AND the same-named Clone Hero folder, plus the
+        '<name>_<Difficulty>.rlrr' files inside so their names stay consistent
+        with what ParaKit generates (the difficulty suffix is preserved). The
+        audio/album/notes.chart files use fixed or relative names, so playback
+        and Paradiddle/Clone Hero references are unaffected."""
+        from tkinter import simpledialog
+        old = (entry.get("title") or "").strip()
+        new = simpledialog.askstring(
+            "Rename song", "New name for this song:",
+            initialvalue=old, parent=self.root)
+        if new is None:
+            return
+        new = new.strip()
+        if not new or new == old:
+            return
+        bad = set('\\/:*?"<>|')
+        if any(c in bad for c in new):
+            messagebox.showerror(
+                "Invalid name",
+                'A song name can\'t contain any of these characters:\n'
+                '   \\ / : * ? " < > |')
+            return
+
+        # Collect the folders to rename (skip a target that already exists so a
+        # rename never clobbers another song).
+        moves = []   # (which, old_dir, new_dir)
+        for which in ("folder", "ch_folder"):
+            d = entry.get(which)
+            if not d or not os.path.isdir(d):
+                continue
+            new_dir = os.path.join(os.path.dirname(d), new)
+            if os.path.normcase(new_dir) == os.path.normcase(d):
+                continue
+            if os.path.exists(new_dir):
+                messagebox.showerror(
+                    "Rename failed",
+                    f"A folder named “{new}” already exists here:\n"
+                    f"{os.path.dirname(d)}")
+                return
+            moves.append((which, d, new_dir))
+        if not moves:
+            return
+
+        try:
+            for which, old_dir, new_dir in moves:
+                os.rename(old_dir, new_dir)
+                # Keep the inner .rlrr filenames in step with the folder name
+                # (best-effort — a failure here doesn't undo the folder rename;
+                # the difficulty suffix parsing works regardless of prefix).
+                if which == "folder" and old:
+                    try:
+                        for fn in os.listdir(new_dir):
+                            if not fn.lower().endswith(".rlrr"):
+                                continue
+                            if fn == old + ".rlrr" or fn.startswith(old + "_"):
+                                dst = os.path.join(new_dir, new + fn[len(old):])
+                                if not os.path.exists(dst):
+                                    os.rename(os.path.join(new_dir, fn), dst)
+                    except Exception:
+                        pass
+        except Exception as e:
+            messagebox.showerror("Rename failed", f"Could not rename:\n{e}")
+
+        self._sc_lib_selected_key = None
+        self._sc_library_refresh()
 
     def _sc_lib_open_folder(self, folder):
         try:
@@ -10214,7 +10272,7 @@ class MidiToRlrrApp:
         drum_audio = _v("drum_audio_var")
         if not song_audio and not drum_audio:
             try: self.metadata_art_status_var.set(
-                "⚠  Load a Song Audio or Drum Audio file to extract album art")
+                "⚠  Load Song or Drum Audio to extract art")
             except Exception: pass
             return False
 
@@ -27033,12 +27091,6 @@ demucs.separate.main()
             self._stem_lib_update_chips()
         except Exception:
             pass
-        # The Single Song Creator "Finished Songs" library shares the same
-        # preview stream too — refresh ITS chips from the same central point.
-        try:
-            self._sc_lib_update_chips()
-        except Exception:
-            pass
         # Drive the per-row braille playback spinner (the loop self-clears when
         # nothing is playing, so calling it on every state change is enough).
         try:
@@ -27066,7 +27118,7 @@ demucs.separate.main()
             frame = self._BRAILLE_SPINNER[self._yt_spinner_idx]
         else:
             frame = ""
-        for rows_attr in ("_yt_lib_rows", "_stem_lib_rows", "_sc_lib_rows"):
+        for rows_attr in ("_yt_lib_rows", "_stem_lib_rows"):
             for r in (getattr(self, rows_attr, []) or []):
                 sp = getattr(r, "_yt_spinner", None)
                 if sp is None:
@@ -30845,6 +30897,38 @@ demucs.separate.main()
               "Send to Batch:\n"
               "  📋 Copy to Batch — copies current files to the Create Multiple\n"
               "  Songs tab to convert up to 3 songs at once.")
+        divider(s)
+        entry(s,
+              "Your Songs library (bottom-left of the tab)\n"
+              "  Shows every finished song, scanned live from up to two source\n"
+              "  folders — nothing needs re-converting to appear here:\n"
+              "    🥁 Source 1 — your Paradiddle songs. Defaults to the Output\n"
+              "       Folder setting.\n"
+              "    🎸 Source 2 — your Clone Hero songs. Defaults to the CH Folder\n"
+              "       setting, or 'Output Folder\\Clone Hero Songs' (the same\n"
+              "       default the Clone Hero export uses).\n"
+              "  Use 📂 to point a source somewhere else and ↺ to go back to the\n"
+              "  default. Your picks are remembered between sessions.\n\n"
+              "  Each song row shows:\n"
+              "    RLRR badge (purple)  — Paradiddle Ready ✔ (.rlrr exists)\n"
+              "    CHART badge (cyan)   — Clone Hero Ready ✔ (notes.chart exists)\n"
+              "    Delete — permanently deletes the song's folder(s) from disk\n"
+              "    (it always asks first; there is no undo).\n"
+              "    Extract → — sends the song's best .rlrr (Expert first) to the\n"
+              "    MIDI Extractor so you can pull an editable MIDI back out of it.\n"
+              "    E / M / H / X badges — which difficulties exist for the song\n"
+              "    (green Easy / yellow Medium / orange Hard / red Expert).\n\n"
+              "  A song's .rlrr folder and its same-named Clone Hero folder are\n"
+              "  merged into ONE row with both badges. Search and sort live above\n"
+              "  the list; right-click a row to Rename the song or open its\n"
+              "  folders. Rename renames the song's folder(s) on disk (and the\n"
+              "  .rlrr files inside), since the folder name is the song's title.\n"
+              "  Every finished conversion refreshes the library automatically.\n\n"
+              "Card layout\n"
+              "  The tab's settings are grouped into side-by-side cards — Files,\n"
+              "  Song Info, Output + Export Format, Tools + BPM/Timing — so the\n"
+              "  whole tab fits on screen with little or no scrolling. On a\n"
+              "  narrower window the cards reflow into two rows automatically.")
         divider(s)
         entry(s,
               "Extra Stems\n"
@@ -39946,37 +40030,15 @@ demucs.separate.main()
 
 
     def _build_advanced_panel(self, parent):
-        """Build a collapsible Advanced Options panel."""
-        # Outer container so the toggle button and content stay together
-        container = ttk.Frame(parent)
-        container.pack(fill=tk.X, pady=(0, 10))
+        """Build the always-visible Advanced Options card (owner 2026-07-10 —
+        was a hidden collapsible menu). Ghost/accent notes for hand-authored
+        MIDI; the 'hand-authored only' note lives inline as the card subtitle."""
+        adv_content = ttk.LabelFrame(parent, text=" Advanced Options ", padding=10)
+        adv_content.pack(fill=tk.BOTH, expand=True)
 
-        # Toggle button row
-        toggle_row = ttk.Frame(container)
-        toggle_row.pack(fill=tk.X)
-
-        self._adv_open = tk.BooleanVar(value=False)
-
-        def toggle_advanced():
-            if self._adv_open.get():
-                adv_content.pack(fill=tk.X, padx=(10, 0), pady=(4, 0))
-                toggle_btn.configure(text="▼  Advanced Options")
-            else:
-                adv_content.pack_forget()
-                toggle_btn.configure(text="▶  Advanced Options")
-
-        toggle_btn = ttk.Button(
-            toggle_row, text="▶  Advanced Options",
-            command=lambda: [self._adv_open.set(not self._adv_open.get()), toggle_advanced()]
-        )
-        toggle_btn.pack(side=tk.LEFT)
-
-        ttk.Label(toggle_row, text="  (for hand-authored MIDI only)",
-                  style="Sub.TLabel").pack(side=tk.LEFT, padx=(6, 0))
-
-        # Content frame — hidden by default
-        adv_content = ttk.LabelFrame(container, text=" Advanced Options ", padding=10)
-        # Not packed yet — shown on toggle
+        ttk.Label(adv_content, text="For hand-authored MIDI only",
+                  style="Sub.TLabel", foreground="#8a8aa2").grid(
+                  row=0, column=0, sticky="w", pady=(0, 4))
 
         # Ghost notes checkbox
         self.ghost_notes_var = tk.BooleanVar(value=False)
@@ -39985,7 +40047,7 @@ demucs.separate.main()
             text="Enable ghost notes",
             variable=self.ghost_notes_var
         )
-        ghost_cb.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ghost_cb.grid(row=1, column=0, sticky="w", pady=(0, 4))
         self._add_tooltip(
             ghost_cb,
             "⚠  Only use this option if your MIDI was created by hand.\n"
@@ -40003,7 +40065,7 @@ demucs.separate.main()
             text="Enable accent notes",
             variable=self.accent_notes_var
         )
-        accent_cb.grid(row=1, column=0, sticky="w", pady=(0, 2))
+        accent_cb.grid(row=2, column=0, sticky="w", pady=(0, 2))
         self._add_tooltip(
             accent_cb,
             "⚠  Only use this option if your MIDI was created by hand.\n"
@@ -40017,11 +40079,11 @@ demucs.separate.main()
         # Info label
         ttk.Label(
             adv_content,
-            text="ℹ  These options rely on velocity data in the MIDI file.\n"
-            "   Most MIDIs exported from DAWs use flat velocity (96) and\n"
-            "   will not benefit from these settings.",
-            style="Sub.TLabel"
-        ).grid(row=2, column=0, sticky="w", pady=(8, 0))
+            text="ℹ  These options rely on velocity data in the MIDI file. "
+            "Most MIDIs exported from DAWs use flat velocity (96) and "
+            "will not benefit from these settings.",
+            style="Sub.TLabel", wraplength=280, justify=tk.LEFT
+        ).grid(row=3, column=0, sticky="w", pady=(8, 0))
 
     def _make_collapsible_tips(self, parent, title="💡  Click for Tips", start_open=False, pack_kw=None):
         """Returns (toggle_btn, content_frame). Pack content inside content_frame."""
@@ -40405,16 +40467,19 @@ demucs.separate.main()
         widget.drop_target_register(DND_FILES)
         widget.dnd_bind('<<Drop>>', on_drop)
 
-    def _file_row(self, parent, label, var, row, filetypes, config_key=None):
+    def _file_row(self, parent, label, var, row, filetypes, config_key=None,
+                  entry_width=45):
         """Standard file input row with browse, drop, optional recent dropdown, and clear.
 
         Returns a dict {label, entry, browse, recent, clear} so callers that need
         to lock/unlock the row (e.g. when an auto-fill source takes ownership of
         the field) can reach the underlying widgets without grid_slaves lookups.
+        entry_width is only the REQUESTED width — the entry has sticky=ew so it
+        stretches; a small value lets narrow card layouts squeeze the row.
         """
         lbl = ttk.Label(parent, text=f"{label}:")
         lbl.grid(row=row, column=0, sticky="w", padx=(0, 5), pady=2)
-        entry = ttk.Entry(parent, textvariable=var, width=45)
+        entry = ttk.Entry(parent, textvariable=var, width=entry_width)
         entry.grid(row=row, column=1, sticky="ew", padx=(0, 5), pady=2)
 
         btn_frame = ttk.Frame(parent)
@@ -40440,9 +40505,9 @@ demucs.separate.main()
         return {"label": lbl, "entry": entry, "browse": browse_btn,
                 "recent": rec_btn, "clear": clear_btn}
 
-    def _text_row(self, parent, label, var, row):
+    def _text_row(self, parent, label, var, row, entry_width=45):
         ttk.Label(parent, text=f"{label}:").grid(row=row, column=0, sticky="w", padx=(0, 5), pady=2)
-        ttk.Entry(parent, textvariable=var, width=45).grid(row=row, column=1, columnspan=2, sticky="ew", pady=2)
+        ttk.Entry(parent, textvariable=var, width=entry_width).grid(row=row, column=1, columnspan=2, sticky="ew", pady=2)
         parent.columnconfigure(1, weight=1)
 
     def _browse_file(self, var, filetypes, config_key=None):

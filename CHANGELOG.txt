@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.6.2  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.0  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,32 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.0   --   2026-07-10
+------------------------------------------------------------------------------
+  - Single Song Creator — full-tab redesign. All the settings are now grouped
+    into side-by-side cards instead of one long stacked column: Files, Song
+    Info, Output + Export Format, and Tools + BPM/Timing. On a narrower window
+    the cards reflow into two rows. The goal: fit the whole tab on screen with
+    little or no scrolling.
+  - Advanced Options (ghost / accent notes) is now an always-visible card
+    under Export Format, instead of being tucked inside a hidden drop-down.
+  - Offset (seconds) now sits directly under Manual BPM so it isn't clipped.
+  - "Your Songs" library polish:
+      • Play was removed and replaced with Delete (a finished song's folder
+        only holds backing/drums stems, so "playing" it was misleading).
+        Delete permanently removes the song's folder(s) after asking, and is
+        now resilient to Windows/OneDrive locks (clears read-only + retries,
+        and only reports a failure if the folder is genuinely still there).
+      • NEW: right-click → Rename song — renames the song's folder(s) on disk
+        (and the .rlrr files inside), since the folder name is the title.
+      • The format badges are now all-caps RLRR / CHART to match the app's
+        other badges, and the Paradiddle source row uses a 🥁 icon.
+  - Extra stem rows: the "Drum audio" / "Song audio" toggles are now just
+    "Drums" / "Song" so the second toggle and clear button aren't cut off.
+  - Album Art Preview now has a cyan border matching the other thumbnail
+    previews, and its "load audio to extract art" hint no longer gets clipped.
 
 ------------------------------------------------------------------------------
   v4.6.2   --   2026-07-10
