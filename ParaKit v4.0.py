@@ -1879,18 +1879,22 @@ def reduce_notes_for_difficulty(events, bpm, difficulty):
 # ---------------------------------------------------------------------------
 
 # Standard MIDI note -> (CH pad note, cymbal flag or None)
-# Cymbal flag: 66=yellow cymbal, 67=blue cymbal, 68=orange cymbal
-# No flag = tom pad hit
+# Cymbal flag: 66=yellow cymbal, 67=blue cymbal, 68=green cymbal
+# No flag = tom pad hit. Layout follows the 4-lane Pro convention (verified
+# against the .chart spec + real human charts, 2026-07-10): Yellow=hi-hat,
+# Blue=ride, Green=crash. Keeping the three cymbal families on THREE distinct
+# lanes means no cymbal-vs-cymbal same-tick collapse (Sol #7 fix: crash used
+# to share Yellow with hi-hat, so a simultaneous hat+crash lost the crash).
 _CH_NOTE_MAP = {
     35: (0, None), 36: (0, None),                 # Kick
-    37: (1, None), 38: (1, None), 40: (1, None),  # Snare
+    37: (1, None), 38: (1, None), 40: (1, None),  # Snare  -> red
     42: (2, 66),   44: (2, 66),   46: (2, 66),   # Hi-Hat -> yellow cymbal
     26: (2, 66),   21: (2, 66),   22: (2, 66),   23: (2, 66),   # Hi-Hat alt/extended-kit notes -> yellow cymbal
-    49: (2, 66),   55: (2, 66),   57: (2, 66),   # Crash  -> yellow cymbal
+    49: (4, 68),   55: (4, 68),   57: (4, 68),   # Crash  -> green cymbal
     51: (3, 67),   53: (3, 67),   59: (3, 67),   # Ride   -> blue cymbal
     48: (2, None), 50: (2, None),                 # Tom 1  -> yellow pad
     45: (3, None), 47: (3, None),                 # Tom 2  -> blue pad
-    41: (4, None), 43: (4, None),                 # Floor Tom -> orange pad
+    41: (4, None), 43: (4, None),                 # Floor Tom -> green pad
 }
 
 
@@ -1916,8 +1920,7 @@ def midi_notes_to_ch(midi_notes, ticks_per_beat, bpm, offset, resolution=192):
         ch_note, cymbal_flag = _CH_NOTE_MAP[note]
         ch_tick = int(round(time_sec * bpm / 60.0 * resolution))
         ch_events.append((ch_tick, ch_note, cymbal_flag))
-    ch_events.sort(key=lambda e: (e[0], e[1]))
-    return ch_events
+    return _ch_dedupe_same_pad(ch_events)
 
 
 def _ch_escape(value):
@@ -2087,22 +2090,54 @@ def _paradiddle_detect_audio_files(folder_path, rlrr_audio_filename=None):
 # velocity to 0-127 int in note['vel'].
 _CH_VELOCITY_ACCENT_THRESHOLD = 100   # vel > 100 → accent
 _CH_VELOCITY_GHOST_THRESHOLD = 50     # vel < 50  → ghost
-_CH_FLAG_ACCENT = 33
-_CH_FLAG_GHOST = 34
+# .chart accent/ghost modifiers are PER-LANE (verified against the .chart spec
+# 2026-07-10): accents 34/35/36/37 and ghosts 40/41/42/43 for Red/Yellow/Blue/
+# Green. Kick (pad 0) has no accent/ghost modifier. The pre-2026-07-10 code
+# emitted a fixed accent=33 (not a valid modifier at all) and ghost=34 (which
+# the spec defines as RED ACCENT) regardless of lane — so every ghost note was
+# written as a red accent and every accent silently dropped. This maps them
+# correctly by pad.
+_CH_ACCENT_BY_PAD = {1: 34, 2: 35, 3: 36, 4: 37}
+_CH_GHOST_BY_PAD = {1: 40, 2: 41, 3: 42, 4: 43}
 
 
-def _ch_velocity_flag(vel_int_0_127):
-    """Return CH flag note number for the given velocity, or None if
-    velocity is in the normal band. 33=accent, 34=ghost."""
+def _ch_velocity_flag(vel_int_0_127, ch_pad):
+    """Return the CH per-lane accent/ghost modifier note number for the given
+    velocity + pad, or None if velocity is in the normal band or the pad is the
+    kick (which has no accent/ghost modifier)."""
     try:
         v = int(vel_int_0_127)
     except (TypeError, ValueError):
         return None
+    if ch_pad == 0:
+        return None
     if v > _CH_VELOCITY_ACCENT_THRESHOLD:
-        return _CH_FLAG_ACCENT
+        return _CH_ACCENT_BY_PAD.get(ch_pad)
     if v < _CH_VELOCITY_GHOST_THRESHOLD:
-        return _CH_FLAG_GHOST
+        return _CH_GHOST_BY_PAD.get(ch_pad)
     return None
+
+
+def _ch_dedupe_same_pad(events):
+    """Collapse events that fall on the same (tick, CH pad) and return the list
+    re-sorted. The .chart format cannot represent a cymbal and a tom of the same
+    colour on one tick (spec: 4-Lane Note Mechanics), and ParaKit collapses
+    several distinct Paradiddle articulations onto one CH pad (e.g. closed/open
+    hats -> yellow cymbal), so two source hits can land on the same (tick, pad).
+    Policy: a cymbal beats a tom on the same lane; otherwise keep the first hit.
+    Accepts 3-tuples (tick, pad, cymbal_flag) and 4-tuples (+ vel_flag)."""
+    best = {}
+    for ev in events:
+        key = (ev[0], ev[1])
+        has_cymbal = len(ev) > 2 and ev[2] is not None
+        cur = best.get(key)
+        if cur is None:
+            best[key] = ev
+        elif has_cymbal and not (len(cur) > 2 and cur[2] is not None):
+            best[key] = ev  # cymbal wins over a same-lane tom
+    out = list(best.values())
+    out.sort(key=lambda e: (e[0], e[1]))
+    return out
 
 
 def _paradiddle_rlrr_to_ch_events(rlrr_notes_list, bpm,
@@ -2124,12 +2159,11 @@ def _paradiddle_rlrr_to_ch_events(rlrr_notes_list, bpm,
         ch_pad, cymbal_flag = _CH_NOTE_MAP[midi_note]
         ch_tick = int(round(time_sec * bpm / 60.0 * resolution))
         if emit_velocity_flags:
-            vel_flag = _ch_velocity_flag(n.get("vel", 80))
+            vel_flag = _ch_velocity_flag(n.get("vel", 80), ch_pad)
             events.append((ch_tick, ch_pad, cymbal_flag, vel_flag))
         else:
             events.append((ch_tick, ch_pad, cymbal_flag))
-    events.sort(key=lambda e: (e[0], e[1]))
-    return events
+    return _ch_dedupe_same_pad(events)
 
 
 def build_chart_multi_difficulty(events_by_difficulty, bpm, title, artist,
@@ -5512,7 +5546,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.6.0"
+    VERSION = "4.6.1"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -5652,6 +5686,17 @@ class MidiToRlrrApp:
         self.root.option_add("*highlightBackground",     APP_BG)
 
         self._apply_theme()
+
+        # Re-assert the theme once after the first paint settles. ttkbootstrap
+        # can leave some widgets (and the root/header background) with its
+        # default light styling on the very first paint, before our overrides
+        # fully take — that was the "header comes up light until you click the
+        # Dark/Light toggle" bug. after_idle fires once the initial layout is
+        # done, running the same normalisation the toggle does. (owner 2026-07-10)
+        try:
+            self.root.after_idle(self._normalize_theme_on_startup)
+        except Exception:
+            pass
 
         BG     = APP_BG
         PURPLE = "#b388ff"
@@ -8097,6 +8142,30 @@ class MidiToRlrrApp:
         # of stripping the global handler.
 
         return inner
+
+    def _normalize_theme_on_startup(self):
+        """Re-assert the active theme after the first paint — the same work the
+        Dark/Light toggle does, minus the mode flip. ttkbootstrap can leave the
+        root/header (and any widget built with the other palette's colour) in a
+        light state until a style pass runs post-settle; this closes the
+        'header stuck on light until you click the toggle' bug. Idempotent and
+        safe to call once at launch. (owner 2026-07-10)"""
+        try:
+            self.root.configure(bg=APP_BG)
+        except Exception:
+            pass
+        try:
+            self._apply_theme()
+        except Exception:
+            pass
+        try:
+            other = "light" if self._theme_mode == "dark" else "dark"
+            self._recolor_tk_tree(
+                self.root,
+                THEME_PALETTES[other]["app_bg"], APP_BG,
+                THEME_PALETTES[other]["log_bg"], LOG_BG)
+        except Exception:
+            pass
 
     def _toggle_theme(self):
         """Flip between the purple 'dark' theme and the original-gray 'light'
@@ -15426,28 +15495,107 @@ demucs.separate.main()
     }
     MANUAL_NOTE_HHAT_EXEMPT = "Hi-Hat"   # per-note in the editor, not lane-wide
 
-    def _get_manual_note_overrides(self):
-        """Per-lane chosen output note from the Manual MIDI Note Manager (config
-        key ``manual_note_overrides``). Any missing/invalid value falls back to the
-        lane default (first option). Always returns a full lane->note dict."""
+    # Compact per-note labels for the editor lane-strip readout (feature: show
+    # each lane's current output note at a glance). Keyed by MIDI note number.
+    _MANUAL_NOTE_SHORT = {
+        35: "Deep",  36: "Tight",
+        38: "Snare", 40: "E.Snr", 37: "Stick",
+        42: "Closed", 46: "Open", 44: "Pedal",
+        49: 'Cr15"', 57: 'Cr17"', 55: "Splash",
+        51: 'Rd17"', 59: 'Rd20"', 53: "Bell",
+        48: "Hi-Mid", 50: "High",
+        45: "Low",   47: "Lo-Mid",
+        41: "Floor", 43: "Hi-Flr",
+    }
+
+    # Per-CHART override store (owner 2026-07-10): the Manual Note Manager's
+    # choices are tied to the SPECIFIC source MIDI, not global. Loading a fresh
+    # MIDI (or one with no saved choices) shows defaults; re-loading a MIDI
+    # restores its saved choices. Config key holds {norm_path: {lane: note}}.
+    # The editor keeps the ACTIVE chart's choices in memory (_me_note_overrides)
+    # so the lane strip + Manager read them without re-hitting disk; export
+    # paths look up the store by the file being converted. The old global
+    # `manual_note_overrides` key is retired (silently ignored henceforth).
+    _MANUAL_NOTE_STORE_KEY = "manual_note_overrides_by_chart"
+
+    @staticmethod
+    def _norm_chart_key(path):
+        """Canonical dict key for a source MIDI path (case/slash-insensitive on
+        Windows). None for an empty path."""
+        if not path:
+            return None
         try:
-            saved = load_config().get("manual_note_overrides", {}) or {}
+            return os.path.normcase(os.path.abspath(str(path)))
         except Exception:
-            saved = {}
+            return str(path)
+
+    def _manual_note_defaults(self):
+        """{lane: default note} — the first option of every lane."""
+        return {lane: opts[0][0]
+                for lane, opts in self.MANUAL_NOTE_OPTIONS.items()}
+
+    def _manual_note_store(self):
+        """The full per-chart override store from config (never None)."""
+        try:
+            s = load_config().get(self._MANUAL_NOTE_STORE_KEY, {}) or {}
+            return s if isinstance(s, dict) else {}
+        except Exception:
+            return {}
+
+    def _get_manual_note_overrides(self, midi_path=None):
+        """Resolved per-lane output notes. With ``midi_path`` given, reads THAT
+        chart's saved choices from the per-chart store (lane defaults if it has
+        none). Without it, reads the editor's ACTIVE in-memory choices
+        (``_me_note_overrides``). Missing/invalid lanes fall back to the lane
+        default. Always returns a full lane->note dict."""
+        if midi_path is not None:
+            key = self._norm_chart_key(midi_path)
+            raw = self._manual_note_store().get(key, {}) if key else {}
+        else:
+            raw = getattr(self, "_me_note_overrides", {}) or {}
+        if not isinstance(raw, dict):
+            raw = {}
         ov = {}
         for lane, opts in self.MANUAL_NOTE_OPTIONS.items():
             valid = [n for n, _ in opts]
-            v = saved.get(lane)
+            v = raw.get(lane)
             ov[lane] = v if v in valid else opts[0][0]
         return ov
 
-    def _apply_manual_note_overrides(self, notes):
+    def _set_active_chart_overrides(self, midi_path):
+        """Point the editor's ACTIVE override set at ``midi_path``'s saved
+        choices (or defaults if it has none). Called whenever a MIDI is loaded
+        into the editor so the Manager + lane strip reflect that chart, and a
+        fresh/untouched MIDI shows defaults."""
+        key = self._norm_chart_key(midi_path)
+        self._manual_note_active_key = key
+        raw = self._manual_note_store().get(key, {}) if key else {}
+        clean = {}
+        for lane, opts in self.MANUAL_NOTE_OPTIONS.items():
+            # Hi-Hat is INCLUDED here (it has a persisted lane note too, used as
+            # the default for new hats + the strip readout); it's only exempt
+            # from the export flatten so mixed open/closed hats survive.
+            valid = [n for n, _ in opts]
+            if isinstance(raw, dict) and raw.get(lane) in valid:
+                clean[lane] = raw[lane]
+        self._me_note_overrides = clean
+        # Refresh an open Manager + the lane-strip readout for the new chart.
+        refresh = getattr(self, "_me_note_mgr_refresh", None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception:
+                pass
+
+    def _apply_manual_note_overrides(self, notes, midi_path=None):
         """Remap each hit to its lane's chosen output note before export. The
         Hi-Hat lane is EXEMPT — its notes keep their individual 42/44/46 values
-        (set per-note in the editor) so mixed open/closed charts survive. Returns
-        a NEW list of same-shape tuples; the input is not mutated. Non-protected;
-        run on the note list just before build_rlrr / midi_notes_to_ch / MIDI save."""
-        ov = self._get_manual_note_overrides()
+        (set per-note in the editor) so mixed open/closed charts survive. With
+        ``midi_path`` the choices come from that chart's saved entry; without it
+        from the editor's active in-memory set. Returns a NEW list of same-shape
+        tuples; the input is not mutated. Non-protected; run just before
+        build_rlrr / midi_notes_to_ch / MIDI save."""
+        ov = self._get_manual_note_overrides(midi_path)
         note_to_lane = {}
         for lane in self.MIDI_EDITOR_LANES:
             for n in lane["midi"]:
@@ -15461,6 +15609,20 @@ demucs.separate.main()
                     t = list(nd); t[1] = chosen; out.append(tuple(t)); continue
             out.append(tuple(nd) if not isinstance(nd, tuple) else nd)
         return out
+
+    def _me_default_place_note(self, lane_idx):
+        """MIDI note for a NEWLY placed note in a lane. Non-Hi-Hat lanes use the
+        lane's canonical note; the Hi-Hat lane uses the Manager's current
+        Closed/Open/Pedal choice so 'selecting the note' works like the other
+        lanes — while existing hats keep their own individual values."""
+        lane = self.MIDI_EDITOR_LANES[lane_idx]
+        if lane["name"] == self.MANUAL_NOTE_HHAT_EXEMPT:
+            valid = [n for n, _ in
+                     self.MANUAL_NOTE_OPTIONS[self.MANUAL_NOTE_HHAT_EXEMPT]]
+            v = self._get_manual_note_overrides().get(
+                self.MANUAL_NOTE_HHAT_EXEMPT)
+            return v if v in valid else lane["midi"][0]
+        return lane["midi"][0]
 
     def _me_set_hihat_notes(self, indices, new_note, label):
         """Set the per-note MIDI value (42 Closed / 46 Open / 44 Pedal) on the
@@ -15512,6 +15674,7 @@ demucs.separate.main()
 
         def _close():
             self._me_note_mgr_popup = None
+            self._me_note_mgr_refresh = None
             try:
                 pop.destroy()
             except Exception:
@@ -15530,8 +15693,10 @@ demucs.separate.main()
                         "The other lanes keep their\n"
                         "single Paradiddle pad — their choice sets the note "
                         "e-kits / DAWs receive from the\n"
-                        "exported MIDI. Saved between sessions; applies on the "
-                        "next export."),
+                        "exported MIDI. Choices are tied to the loaded MIDI: a "
+                        "fresh MIDI starts at defaults,\n"
+                        "and re-loading a MIDI restores the choices you saved "
+                        "for it."),
                   style="Sub.TLabel", justify=tk.LEFT).pack(anchor="w", pady=(2, 10))
 
         ov = self._get_manual_note_overrides()
@@ -15545,15 +15710,30 @@ demucs.separate.main()
                     chosen = int(sel.split("—")[0].strip())
                 except Exception:
                     return
-                cur = self._get_manual_note_overrides()
+                # Update the ACTIVE (in-memory) choices for the loaded chart…
+                cur = dict(getattr(self, "_me_note_overrides", {}) or {})
                 cur[lane_name] = chosen
                 cur.pop(self.MANUAL_NOTE_HHAT_EXEMPT, None)  # hats = per-note
+                self._me_note_overrides = cur
+                # …and persist under the loaded MIDI's key (per-chart). With no
+                # MIDI loaded the choice applies this session only.
+                key = getattr(self, "_manual_note_active_key", None)
+                if key:
+                    store = self._manual_note_store()
+                    store[key] = dict(cur)
+                    try:
+                        save_config({self._MANUAL_NOTE_STORE_KEY: store})
+                    except Exception:
+                        pass
+                    where = "saved to this chart"
+                else:
+                    where = "this session only — no MIDI loaded"
                 try:
-                    save_config({"manual_note_overrides": cur})
+                    self._me_redraw()   # refresh the lane-strip readout
                 except Exception:
                     pass
                 status_var.set(f"✓  {lane_name}  →  {sel}    "
-                               f"(saved — applies on the next export)")
+                               f"({where}; applies on the next export)")
             return _cb
 
         rows = ttk.Frame(frame)
@@ -15565,18 +15745,58 @@ demucs.separate.main()
                 continue
             row = ttk.Frame(rows)
             row.pack(fill=tk.X, pady=3)
-            sw = tk.Frame(row, bg=lane["color"], width=16, height=16,
-                          highlightthickness=1, highlightbackground="#000000")
+            # Colour swatch — a filled Canvas rectangle, NOT a tk.Frame(bg=…):
+            # under the ttkbootstrap 'darkly' theme a bare Frame's bg is forced
+            # to the theme default (#222222), which swallowed every lane colour
+            # so all eight swatches rendered as identical empty boxes. A Canvas
+            # fill is immune to the theme override (verified 2026-07-10) — same
+            # pattern the MIDI-editor lane strip already uses.
+            sw = tk.Canvas(row, width=15, height=15, highlightthickness=1,
+                           highlightbackground="#000000", bd=0)
+            sw.create_rectangle(0, 0, 15, 15, fill=lane["color"],
+                                outline=lane["color"])
             sw.pack(side=tk.LEFT, padx=(0, 8))
-            sw.pack_propagate(False)
             ttk.Label(row, text=lname, width=8,
                       font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
             values = [f"{n} — {d}" for n, d in opts]
             cb = ttk.Combobox(row, state="readonly", width=36, values=values)
             combos[lname] = cb
             if lname == self.MANUAL_NOTE_HHAT_EXEMPT:
-                cb.set(values[0])
+                cur_hh = ov.get(lname, opts[0][0])
+                cb.set(next((v for v in values
+                             if v.startswith(f"{cur_hh} ")), values[0]))
                 cb.pack(side=tk.LEFT, padx=(4, 6))
+
+                def _hh_save(cb=cb):    # persist the lane default (per-chart),
+                                        # like the other lanes; existing hats keep
+                                        # their own per-note values
+                    sel = cb.get()
+                    try:
+                        chosen = int(sel.split("—")[0].strip())
+                    except Exception:
+                        return
+                    cur = dict(getattr(self, "_me_note_overrides", {}) or {})
+                    cur[self.MANUAL_NOTE_HHAT_EXEMPT] = chosen
+                    self._me_note_overrides = cur
+                    key = getattr(self, "_manual_note_active_key", None)
+                    if key:
+                        store = self._manual_note_store()
+                        store[key] = dict(cur)
+                        try:
+                            save_config({self._MANUAL_NOTE_STORE_KEY: store})
+                        except Exception:
+                            pass
+                        where = "saved to this chart"
+                    else:
+                        where = "this session only — no MIDI loaded"
+                    try:
+                        self._me_redraw()
+                    except Exception:
+                        pass
+                    status_var.set(
+                        f"✓  Hi-Hat default  →  {sel}    ({where}; new hats use "
+                        f"it — existing hats keep their own value)")
+                cb.bind("<<ComboboxSelected>>", lambda e, f=_hh_save: f())
 
                 def _hh_apply(cb=cb):   # bind NOW — `cb` rebinds next loop pass
                     sel = cb.get()
@@ -15605,24 +15825,50 @@ demucs.separate.main()
         ttk.Label(frame,
                   text=("Hi-Hat is PER-NOTE: right-click any hi-hat note in the "
                         "editor to set it Closed (42) /\nOpen (46) / Pedal (44) — "
-                        "mixed open/closed charts are preserved on export. The "
-                        "row\nabove only bulk-sets the currently loaded chart "
-                        "(not a saved default)."),
+                        "mixed open/closed charts are preserved on export. Open "
+                        "hats\nshow up hollow with a yellow outline in the editor "
+                        "so you can spot them\nat a glance. The row above only "
+                        "bulk-sets the currently loaded chart (not a saved "
+                        "default)."),
                   style="Sub.TLabel", foreground="#00d4d4",
                   justify=tk.LEFT).pack(anchor="w", pady=(10, 0))
+
+        # Refresh combos to the ACTIVE chart's choices — called when a new MIDI
+        # is loaded while the Manager is open (see _set_active_chart_overrides).
+        def _refresh_combos():
+            ov2 = self._get_manual_note_overrides()
+            for lname2, cb2 in combos.items():
+                opts2 = self.MANUAL_NOTE_OPTIONS[lname2]
+                vals2 = [f"{n} — {d}" for n, d in opts2]
+                cur2 = ov2.get(lname2, opts2[0][0])
+                cb2.set(next((v for v in vals2
+                              if v.startswith(f"{cur2} ")), vals2[0]))
+        self._me_note_mgr_refresh = _refresh_combos
 
         btns = ttk.Frame(frame)
         btns.pack(fill=tk.X, pady=(12, 0))
 
         def _reset():
-            try:
-                save_config({"manual_note_overrides": {}})
-            except Exception:
-                pass
+            # Clear this CHART's saved choices (or the transient set if no MIDI
+            # is loaded) — back to per-lane defaults.
+            self._me_note_overrides = {}
+            key = getattr(self, "_manual_note_active_key", None)
+            if key:
+                store = self._manual_note_store()
+                if key in store:
+                    store.pop(key, None)
+                    try:
+                        save_config({self._MANUAL_NOTE_STORE_KEY: store})
+                    except Exception:
+                        pass
             for lname2, cb2 in combos.items():
                 opts2 = self.MANUAL_NOTE_OPTIONS[lname2]
                 cb2.set(f"{opts2[0][0]} — {opts2[0][1]}")
-            status_var.set("✓  All lanes reset to defaults  (saved)")
+            try:
+                self._me_redraw()
+            except Exception:
+                pass
+            status_var.set("✓  All lanes reset to defaults for this chart")
         ttk.Button(btns, text="↺  Reset to defaults",
                    command=_reset).pack(side=tk.LEFT)
         ttk.Button(btns, text="Close", command=_close).pack(side=tk.RIGHT)
@@ -15689,7 +15935,7 @@ demucs.separate.main()
         if compact:
             ttk.Label(
                 lc,
-                text="🎼  MIDI Editor — left-click empty space to place notes. Ghosts are hollow; accents use hot-pink outlines.",
+                text="🎼  MIDI Editor — left-click empty space to place notes. Ghosts are hollow; accents use hot-pink outlines; open hi-hats are hollow with a yellow outline.",
                 style="Sub.TLabel", foreground="#b388ff").pack(anchor="w", pady=(0, 2))
         else:
             ttk.Label(lc, text="🎼  MIDI Editor",
@@ -15700,6 +15946,7 @@ demucs.separate.main()
                       style="Sub.TLabel").pack(anchor="w", pady=(2, 2))
             ttk.Label(lc,
                       text="👻 Ghost notes (vel < 40) = hollow   ⚡ Accent notes (vel ≥ 115) = hot pink outline   "
+                           "🔓 Open hi-hats (note 46) = hollow + yellow outline   "
                            "🔍 Troubleshooter flags = orange outline   Velocity Lane (in Tempo Map section) to edit",
                       style="Sub.TLabel", foreground="#888").pack(anchor="w", pady=(0, 6))
 
@@ -17413,7 +17660,7 @@ demucs.separate.main()
             self._me_push_undo()
             self.me_notes.append({
                 "time":     t,
-                "note":     lane["midi"][0],
+                "note":     self._me_default_place_note(lane_idx),
                 "lane_idx": lane_idx,
                 "vel":      100,
             })
@@ -17761,6 +18008,8 @@ demucs.separate.main()
         self._me_last_clicked_note = -1
         self._me_sel_start      = None
         self._me_sel_rect       = None
+        # No chart loaded → Manual Note Manager choices return to defaults.
+        self._set_active_chart_overrides(None)
         self.me_midi_var.set("")
         self.me_info_var.set("No MIDI loaded")
         self.me_zoom_var.set(1.0)
@@ -18306,6 +18555,11 @@ demucs.separate.main()
             self._me_timing_from_midi_ticks = False
             self._me_loaded_midi_end = 0.0
             self._me_last_clicked_note = -1
+            # Manual MIDI Note Manager: switch to THIS chart's saved note choices
+            # (defaults if it has none), refreshing an open Manager + the lane
+            # strip. Keeps note choices tied to the specific MIDI, not global
+            # (owner 2026-07-10).
+            self._set_active_chart_overrides(fpath)
             self._add_recent_file("recent_midi_editor", fpath)
 
             # Stop any running playback and reset playhead
@@ -18791,6 +19045,10 @@ demucs.separate.main()
         _bg_x0 = max(0, self._me_secs_to_x(_vis_t0))
         _bg_x1 = min(total_w, self._me_secs_to_x(_vis_t1))
 
+        # Current per-lane output note (Manual MIDI Note Manager) for the label
+        # readout — one lookup per redraw, so the strip shows each lane's note.
+        _active_ov = self._get_manual_note_overrides()
+
         # ── Draw lane backgrounds and grid ────────────────────────────────────
         for i, lane in enumerate(lanes):
             y1 = self._me_lane_y(i)
@@ -18815,8 +19073,31 @@ demucs.separate.main()
                 lc.create_rectangle(8, mid_y - 7, 26, mid_y + 7,
                                     fill=color, outline=color)
 
-            lc.create_text(34, mid_y, text=lane["name"],
-                           fill=color, font=("Segoe UI", 8, "bold"), anchor="w")
+            # Lane name + current output MIDI note (Manual Note Manager) so the
+            # user sees at a glance what each lane exports / sounds like. The
+            # Hi-Hat lane shows its default note AND "& per note" because
+            # individual hats can be Closed/Open/Pedal within one chart.
+            _n = _active_ov.get(lane["name"])
+            _short = self._MANUAL_NOTE_SHORT.get(_n, "")
+            _val_txt = f"{_n} {_short}".strip() if _n is not None else ""
+            if lane["name"] == self.MANUAL_NOTE_HHAT_EXEMPT:
+                lc.create_text(34, mid_y - 10, text=lane["name"],
+                               fill=color, font=("Segoe UI", 8, "bold"),
+                               anchor="w")
+                if _val_txt:
+                    lc.create_text(34, mid_y + 1, text=_val_txt,
+                                   fill="#9aa0b8", font=("Segoe UI", 7),
+                                   anchor="w")
+                lc.create_text(34, mid_y + 11, text="& per note",
+                               fill="#7a80a0", font=("Segoe UI", 7), anchor="w")
+            else:
+                lc.create_text(34, mid_y - 6, text=lane["name"],
+                               fill=color, font=("Segoe UI", 8, "bold"),
+                               anchor="w")
+                if _val_txt:
+                    lc.create_text(34, mid_y + 8, text=_val_txt,
+                                   fill="#9aa0b8", font=("Segoe UI", 7),
+                                   anchor="w")
 
         # ── Grid lines ────────────────────────────────────────────────────────
         # Drive by integer subdivision index to avoid float drift skipping beats.
@@ -19013,14 +19294,23 @@ demucs.separate.main()
         # Accent note (vel >= 115): brighter, thicker outline
         is_ghost  = vel < 40
         is_accent = vel >= 115
+        # Open hi-hat (note 46): drawn hollow with a thin YELLOW outline — the
+        # same hollow look as a low-velocity note but highlighted yellow — so an
+        # open hat reads as visually distinct from a closed/pedal hat at a glance
+        # (owner 2026-07-10). Applies at any velocity; selection + flags still
+        # take priority so those interactive states stay visible.
+        is_open_hat = (lane["name"] == self.MANUAL_NOTE_HHAT_EXEMPT
+                       and note.get("note") == 46)
+        OPEN_HAT_OUTLINE = "#ffe000"
+        is_hollow = is_ghost or is_open_hat
         flag_type = None
 
         # Determine outline - selection takes priority over flags
         has_special_outline = False
         if ni in self._me_selected_notes:
-            outline_color = "#aaff00" if is_ghost else "#ffffff"
+            outline_color = "#aaff00" if is_hollow else "#ffffff"
             outline_w     = 3
-            fill_color    = "" if is_ghost else color
+            fill_color    = "" if is_hollow else color
             has_special_outline = True
         else:
             flag_type = self.me_flagged.get(t)
@@ -19034,6 +19324,10 @@ demucs.separate.main()
                 }.get(flag_type, "#333355")
                 outline_w = 4
                 has_special_outline = True
+            elif is_open_hat:
+                outline_color = OPEN_HAT_OUTLINE   # yellow — open hi-hat
+                outline_w = 1
+                has_special_outline = True
             elif is_accent:
                 outline_color = "#ff69b4"
                 outline_w = 2
@@ -19045,7 +19339,7 @@ demucs.separate.main()
             else:
                 outline_color = NOTE_BORDER_COLOR
                 outline_w = 1
-            fill_color = "" if is_ghost else color
+            fill_color = "" if is_hollow else color
 
         # Low-confidence ML notes keep their lane color and get hot-pink stripes.
         CONF_SHADE_COLOR  = "#ff1493"
@@ -19554,7 +19848,8 @@ demucs.separate.main()
                 t = self._me_snap_time(self._me_x_to_secs(pcx))
                 t = max(0.0, t)
                 lane = self.MIDI_EDITOR_LANES[lane_idx]
-                new_note = {"time": t, "note": lane["midi"][0],
+                new_note = {"time": t,
+                            "note": self._me_default_place_note(lane_idx),
                             "vel": 100, "lane_idx": lane_idx}
                 self._me_push_undo()
                 self.me_notes.append(new_note)
@@ -20140,6 +20435,18 @@ demucs.separate.main()
                     if not saved_path:
                         return
                     path = saved_path
+        # Carry the active Manual Note Manager choices onto the path being sent,
+        # so the Song Creator converts with the SAME note choices even when a
+        # copy was saved to a new filename (choices are keyed per MIDI path).
+        try:
+            active = getattr(self, "_me_note_overrides", {}) or {}
+            if active:
+                store = self._manual_note_store()
+                store[self._norm_chart_key(path)] = dict(active)
+                save_config({self._MANUAL_NOTE_STORE_KEY: store})
+        except Exception:
+            pass
+
         self.midi_var.set(path)
         self.use_midi_bpm_var.set(True)
         self._toggle_bpm()
@@ -20591,17 +20898,47 @@ demucs.separate.main()
             self.me_vel_hscroll.set(x0_frac, x1_frac)
 
         sel    = getattr(self, '_me_selected_notes', set())
-        bar_w  = max(2, int(3 * zoom))  # scale bar width with zoom
+        bar_w  = max(2, int(3 * zoom))  # half-width; full bar span = 2*bar_w
         GAP    = 1                       # 1px visual gap each side — separates close notes
+        HHAT   = self.MANUAL_NOTE_HHAT_EXEMPT
+        OPEN_HAT_OUTLINE = "#ffe000"
 
+        # Group notes that share the same time so their bars sit SIDE BY SIDE
+        # instead of stacking on top of each other (owner 2026-07-10). Notes at
+        # different times keep their exact x; same-time notes each get a slot
+        # (2*bar_w wide) across a span centred on the shared x, ordered by lane.
+        groups = {}
         for ni, note in enumerate(self.me_notes):
-            x     = self._me_secs_to_x(note["time"])
-            vel   = note.get("vel", 100)
-            bar_h = max(2, int((vel / 127.0) * (h - 4)))
-            y1    = h - bar_h
-            col   = "#ffffff" if ni in sel else self.MIDI_EDITOR_LANES[note.get("lane_idx", 0)]["color"]
-            c.create_rectangle(x - bar_w + GAP, y1, x + bar_w - GAP, h,
-                                fill=col, outline="", tags=f"vel_{ni}")
+            groups.setdefault(round(note["time"], 4), []).append(ni)
+
+        slot = 2 * bar_w                 # full horizontal slot per bar
+        self._me_vel_bar_cx = {}         # ni -> drawn centre x (for click hit-test)
+        for nis in groups.values():
+            k = len(nis)
+            nis_sorted = sorted(nis,
+                                key=lambda i: self.me_notes[i].get("lane_idx", 0))
+            x_center = self._me_secs_to_x(self.me_notes[nis_sorted[0]]["time"])
+            start = x_center - (k * slot) / 2.0
+            for j, ni in enumerate(nis_sorted):
+                note  = self.me_notes[ni]
+                vel   = note.get("vel", 100)
+                bar_h = max(2, int((vel / 127.0) * (h - 4)))
+                y1    = h - bar_h
+                cx    = start + slot * (j + 0.5)
+                self._me_vel_bar_cx[ni] = cx
+                lane_idx = note.get("lane_idx", 0)
+                col   = ("#ffffff" if ni in sel
+                         else self.MIDI_EDITOR_LANES[lane_idx]["color"])
+                # Open hi-hats: keep the regular filled cyan bar but add a thin
+                # yellow outline so they read as open — matching the piano roll's
+                # open-hat highlight (filled here, not hollow). (owner 2026-07-10)
+                is_open_hat = (self.MIDI_EDITOR_LANES[lane_idx]["name"] == HHAT
+                               and note.get("note") == 46)
+                outline_col = OPEN_HAT_OUTLINE if is_open_hat else ""
+                outline_wd  = 1 if is_open_hat else 0
+                c.create_rectangle(cx - bar_w + GAP, y1, cx + bar_w - GAP, h,
+                                    fill=col, outline=outline_col,
+                                    width=outline_wd, tags=f"vel_{ni}")
 
         # Reference line at velocity 100
         ref_y = h - int((100 / 127.0) * (h - 4))
@@ -20611,11 +20948,17 @@ demucs.separate.main()
                       font=("Consolas", 7), anchor="sw")
 
     def _me_vel_x_to_note(self, cx):
-        """Find note index closest to canvas x within threshold."""
+        """Find the note whose DRAWN velocity bar is closest to canvas x. Uses
+        the per-note centre-x cache from _me_vel_draw so same-time notes that
+        are spread side by side each hit-test to their own bar (falls back to
+        the time-x if the cache isn't built yet)."""
         thresh = 8
         best_d, best_i = thresh, None
+        bar_cx = getattr(self, '_me_vel_bar_cx', None)
         for ni, note in enumerate(self.me_notes):
-            nx = self._me_secs_to_x(note["time"])
+            nx = bar_cx.get(ni) if bar_cx else None
+            if nx is None:
+                nx = self._me_secs_to_x(note["time"])
             d  = abs(cx - nx)
             if d < best_d:
                 best_d, best_i = d, ni
@@ -30263,6 +30606,41 @@ demucs.separate.main()
               "  Ctrl+Z undoes any reclassification.")
         divider(s)
         entry(s,
+              "🥁 Manual MIDI Note Manager  (button next to Tempo Map):\n\n"
+              "  Choose which MIDI note each drum lane writes on export\n"
+              "  (.mid / .rlrr / .chart). Every choice is restricted to notes\n"
+              "  that are valid for that piece in both Paradiddle and Clone Hero,\n"
+              "  with the General MIDI sound named in the dropdown.\n\n"
+              "    • Crash & Ride actually switch the drum piece in Paradiddle\n"
+              "      (e.g. Crash 15\" vs 17\", Ride 17\" vs 20\" vs Bell).\n"
+              "    • The other lanes keep their single Paradiddle pad — the\n"
+              "      choice sets the note that e-kits / DAWs receive from the\n"
+              "      exported MIDI.\n\n"
+              "  Tied to the loaded MIDI (per-chart, NOT global): a fresh MIDI\n"
+              "  starts at the defaults, and re-loading a MIDI you tuned before\n"
+              "  restores the choices you saved for it — so you never have to\n"
+              "  re-tune the same chart twice. 'Reset to defaults' clears just\n"
+              "  the loaded chart. Each lane's current note is shown under its\n"
+              "  name in the editor's left lane strip so you can see at a glance\n"
+              "  what every lane will export.\n\n"
+              "  Hi-Hat works like the other lanes — pick its MIDI note in the\n"
+              "  Manager (Closed 42 / Open 46 / Pedal 44) and new hats you place\n"
+              "  use it. But hi-hats can ALSO be changed individually, because a\n"
+              "  song mixes open and closed hits: right-click any hi-hat note in\n"
+              "  the editor to set it Closed / Open / Pedal on its own. Those\n"
+              "  per-note choices are preserved on export (the Hi-Hat lane is the\n"
+              "  one lane that is not flattened to a single note), which is why\n"
+              "  its readout shows the lane note '& per note'. 'Set all hats now'\n"
+              "  bulk-applies the dropdown value to every hat already in the\n"
+              "  chart (undoable with Ctrl+Z).\n\n"
+              "  Open hats are drawn DIFFERENTLY in the piano roll so you can see\n"
+              "  them at a glance: an Open hi-hat (note 46) renders hollow with a\n"
+              "  thin yellow outline, while Closed (42) and Pedal (44) hats render\n"
+              "  as normal filled notes. (The open/closed distinction lives in the\n"
+              "  exported MIDI for e-kits/DAWs; Paradiddle and Clone Hero each have\n"
+              "  a single hi-hat lane, so in those charts all hats play one sound.)")
+        divider(s)
+        entry(s,
               "📋 Send to Song Creator  (handoff button):\n\n"
               "  The Song Creator button at the top of the MIDI Editor tab\n"
               "  hands the current chart off to Single Song Creator (Tab 1)\n"
@@ -30412,6 +30790,10 @@ demucs.separate.main()
               "                               even when selected — white outline when selected)\n"
               "    Normal notes (vel 40–114) — solid filled shape\n"
               "    Accent notes (vel ≥ 115)  — solid fill + hot pink outline\n"
+              "    Open hi-hats (note 46)    — hollow + thin YELLOW outline, at any\n"
+              "                               velocity, so open hats stand out from\n"
+              "                               closed/pedal hats at a glance (see the\n"
+              "                               Manual MIDI Note Manager entry above)\n"
               "  This matches how Paradiddle renders them in-game.\n\n"
               "  How to place a ghost note:\n"
               "    1.  Place the note normally (click canvas or use 1–8 hotkeys)\n"
@@ -30432,7 +30814,12 @@ demucs.separate.main()
               "    Drag to a specific value, click Apply to Selected.\n"
               "    Use this for precise control outside the three presets.\n\n"
               "  The velocity lane scrolls in sync with the piano roll.\n"
-              "  Open it by checking the Tempo Map + Velocity Lane toggle.")
+              "  Open it by checking the Tempo Map + Velocity Lane toggle.\n\n"
+              "  Notes that fall on the same beat but in different lanes show up\n"
+              "  side by side in the velocity lane (never stacked on top of each\n"
+              "  other), so you can see and grab every one. Open hi-hats (note 46)\n"
+              "  keep their filled cyan bar but get a thin yellow outline to match\n"
+              "  their open-hat highlight in the piano roll.")
         tip(s, "Reclassify mode is the fastest fix for misclassified notes — especially "
                "for rapid roll hits that showed up as hi-hats or crashes.")
         divider(s)
@@ -38036,7 +38423,7 @@ demucs.separate.main()
                 continue
             try:
                 mid, midi_notes, tpb = parse_midi(midi_path)
-                midi_notes = self._apply_manual_note_overrides(midi_notes)
+                midi_notes = self._apply_manual_note_overrides(midi_notes, midi_path)
                 drum_notes = [n for n in midi_notes if n[1] in MIDI_MAP]
                 issues = validate_chart(
                     midi_notes=drum_notes, audio_path=audio_path,
@@ -38214,7 +38601,7 @@ demucs.separate.main()
                     #    helper re-parses, but we need an early "no drums"
                     #    bail-out and the validator inputs anyway).
                     _mid, midi_notes_raw, tpb = parse_midi(midi_path)
-                    midi_notes_raw = self._apply_manual_note_overrides(midi_notes_raw)
+                    midi_notes_raw = self._apply_manual_note_overrides(midi_notes_raw, midi_path)
                     drum_notes = [n for n in midi_notes_raw if n[1] in MIDI_MAP]
                     if not drum_notes:
                         self._batch_folder_log(
@@ -38517,9 +38904,11 @@ demucs.separate.main()
         self._batch_log(f"[Song {slot_num}] {title} - {artist} [{diff}]")
         self._batch_log(f"  Output folder: {folder_title}")
         try:
-            mid, midi_notes, tpb = parse_midi(slot["midi_var"].get())
-            # Manual MIDI Note Manager remap (hi-hats keep per-note values).
-            midi_notes = self._apply_manual_note_overrides(midi_notes)
+            _slot_midi_path = slot["midi_var"].get()
+            mid, midi_notes, tpb = parse_midi(_slot_midi_path)
+            # Manual MIDI Note Manager remap (hi-hats keep per-note values);
+            # choices are tied to THIS slot's source MIDI (per-chart, not global).
+            midi_notes = self._apply_manual_note_overrides(midi_notes, _slot_midi_path)
             drum_notes = [n for n in midi_notes if n[1] in MIDI_MAP]
             if not drum_notes:
                 self._batch_log(f"  ? No drum notes found - skipping.\n")
@@ -39707,7 +40096,8 @@ demucs.separate.main()
         mid, midi_notes, ticks_per_beat = parse_midi(midi_path)
         # Manual MIDI Note Manager: remap each lane to its chosen output note
         # (hi-hats keep their per-note 42/44/46 values) before ANY export use.
-        midi_notes = self._apply_manual_note_overrides(midi_notes)
+        # Choices are tied to THIS source MIDI file (per-chart, not global).
+        midi_notes = self._apply_manual_note_overrides(midi_notes, midi_path)
         drum_notes = [n for n in midi_notes if n[1] in MIDI_MAP]
         self.log(f"  Total MIDI notes: {len(midi_notes)}")
         self.log(f"  Drum notes (mapped): {len(drum_notes)}")

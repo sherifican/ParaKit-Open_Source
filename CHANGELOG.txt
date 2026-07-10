@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.6.0  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.6.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,48 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.6.1   --   2026-07-10
+------------------------------------------------------------------------------
+  - Manual MIDI Note Manager -- your note choices are now tied to each MIDI
+    chart instead of one global setting. A fresh MIDI starts at the defaults,
+    and re-loading a MIDI you tuned before restores the choices you saved for
+    it, so you never have to re-tune the same chart twice. "Reset to defaults"
+    now clears just the loaded chart.
+  - The MIDI Editor's left lane strip now shows each lane's current output note
+    under its name (e.g. "38 Snare", "49 Cr15\""), so you can see at a glance
+    what every lane will export. The Hi-Hat lane shows its note plus
+    "& per note" because individual hats can still be Closed / Open / Pedal.
+  - The Hi-Hat lane now works like the other lanes in the Note Manager: pick
+    its MIDI note (Closed 42 / Open 46 / Pedal 44) and new hats you place use
+    it -- while existing hats keep their own individual values, and mixed
+    open/closed charts still survive to the exported MIDI.
+  - Open hi-hats now look distinct in the MIDI Editor: an Open hi-hat (note 46)
+    renders hollow with a thin yellow outline, so you can tell open from closed
+    hats at a glance. Closed and Pedal hats render as normal filled notes. In
+    the velocity lane, open hats keep their filled cyan bar with a thin yellow
+    outline (the velocity bars are never hollow).
+  - Velocity lane: notes that land on the same beat in different lanes now sit
+    side by side instead of stacking on top of each other, so every bar is
+    visible and clickable.
+  - Fixed the header sometimes coming up in light mode on launch (until you
+    clicked the Dark/Light toggle) -- the saved theme is now fully applied from
+    the first paint.
+  - Fixed the Note Manager's lane colour swatches rendering as empty boxes
+    under the dark theme (they now show each lane's colour).
+  - Clone Hero export fixes:
+      * Crashes now map to the GREEN cymbal instead of sharing the YELLOW
+        (hi-hat) lane, so a simultaneous hi-hat + crash no longer collapses into
+        one note. Hi-hat = yellow, ride = blue, crash = green, matching standard
+        4-lane Pro Drums.
+      * Accent and ghost markers now use the correct per-lane note numbers --
+        previously a fixed, out-of-spec value was written, so ghost notes could
+        read as accents and accents were silently dropped.
+      * When a cymbal and a same-colour tom would land on the same tick (which
+        .chart can't represent), ParaKit now keeps the cymbal.
+  - Help tab: documented the Manual MIDI Note Manager, the per-chart behaviour,
+    the lane-strip readout, and how the Hi-Hat lane works.
 
 ------------------------------------------------------------------------------
   v4.6.0   --   2026-07-10
