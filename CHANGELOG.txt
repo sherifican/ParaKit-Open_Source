@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.2  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.8.5  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,56 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.8.5   --   2026-07-12
+------------------------------------------------------------------------------
+  A large stability + correctness pass across the whole app, from three
+  independent code audits. The big ones:
+
+  Stem Splitter "Your Songs" library:
+  - Fix (important): Delete / Rename could also match a DIFFERENT song whose
+    name starts the same (acting on "Song" could catch "Song_Remix"). It now
+    matches only the exact song's own file set.
+  - Typing in the library search no longer re-scans your drive on every
+    keystroke, and the ".ogg files exist" badge is more reliable.
+
+  MIDI Editor:
+  - NEW: MIDI Input (BETA) button — record drum hits straight into the editor
+    from a connected MIDI kit (the same device the Practice tab uses).
+  - Fix (data-loss): loading or clearing over unsaved edits now warns first.
+  - Fix (data-loss): saving over an original MIDI that contains notes the
+    editor can't display now warns you and writes a one-time backup
+    (.parakit_bak) beside the file.
+  - Fix: flags now follow their notes when you move them, and undo is reliable.
+  - Fix: applying a multi-row tempo map no longer scrambles note timing.
+  - Fix: "remove duplicates" now respects the "Selected notes only" scope.
+  - Fix: audio is released after Stop/Pause, so you can immediately re-split,
+    re-tag, or delete that file (no more "file in use" errors).
+
+  Audio -> MIDI:
+  - Fix: converting no longer silently overwrites an existing MIDI — it asks.
+  - Fix: Auto-Detect BPM now fits the offset to the timeline the chart
+    actually plays on, so foreign MIDIs stop drifting out of sync.
+
+  Single Song Creator:
+  - Fix: "Use BPM from MIDI" now reads the song's real starting tempo (it
+    could previously pick the wrong tempo off a later track).
+  - Fix: a typo in the manual Offset field is now caught instead of silently
+    becoming 0.
+
+  Preview / Practice:
+  - Fix: pausing shows the correct position, and playback no longer drifts
+    out of sync over a long song.
+  - Smoother playback on very dense charts.
+
+  Song Tester:
+  - Fix: now measures against the song's real starting tempo.
+
+  Under the hood:
+  - Preference / settings saves are now atomic and report failures instead of
+    silently losing data; library renames surface problems instead of faking
+    success.
 
 ------------------------------------------------------------------------------
   v4.7.2   --   2026-07-10

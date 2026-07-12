@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.7.2`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.8.5`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -106,6 +106,14 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 *Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
 
+**v4.7.8.5**<br>2026-07-12
+
+Stability & correctness pass — whole app
+
++ 24 fixes from three independent code audits. Highlights: Stem Splitter library Delete/Rename now targets only the exact song (never a same-prefixed one); the MIDI Editor gains unsaved-edit and lossy-overwrite guards, reliable flags/undo, and a new **MIDI Input (BETA)** button to record drum hits from a connected kit; Audio→MIDI asks before overwriting a MIDI and fixes Auto-Detect offset drift; Single Song Creator tempo/offset correctness; Preview/Practice pause-position and drift fixes; atomic, failure-surfacing settings/config saves. Full list in **CHANGELOG.txt**.
+
+---
+
 **v4.7.0**<br>2026-07-10
 
 Single Song Creator
@@ -154,7 +162,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.7.2`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.8.5`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
