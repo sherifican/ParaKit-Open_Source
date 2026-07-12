@@ -13266,31 +13266,19 @@ demucs.separate.main()
 
         reality_col = ttk.LabelFrame(header_cols, text=" Reality Check ", padding=10)
         reality_col.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        # v4.4.61-1 — two-column row inside the box: keep the orange reality note
-        # at col 0; add a medium-red overwrite disclaimer at col 1. This box is
-        # the LEFT half of header_cols, so each inner column is ~half-of-half; a
-        # fixed wraplength either under-fills (roomy) or overflows (compact/1080p).
-        # Fix (UI-audit): make wraplength RESPONSIVE — recompute per column from
-        # the box's measured width on <Configure>, so roomy gets the plan's wider
-        # wrap and compact never forces the columns past their share.
-        reality_col.columnconfigure(0, weight=1, uniform="rc")
-        reality_col.columnconfigure(1, weight=1, uniform="rc")
+        # v4.7.8.5 — removed the medium-red "MIDI silently overwrites" disclaimer:
+        # Convert now PROMPTS before overwriting an existing MIDI (the a2m-overwrite
+        # fix), so the warning is no longer true. The orange reality note now spans
+        # the whole box, with a responsive wraplength recomputed on <Configure>.
+        reality_col.columnconfigure(0, weight=1)
         reality_orange = ttk.Label(reality_col,
                   text="Audio detection gets you a strong first draft, not a finished chart. Always check the generated MIDI in the MIDI Editor before building the song.",
                   style="Sub.TLabel", foreground="#e09a3a",
                   justify=tk.LEFT, wraplength=230)
-        reality_orange.grid(row=0, column=0, sticky="nw", padx=(0, 8))
-        reality_red = ttk.Label(reality_col,
-                  text="Heads up: running a song whose MIDI already exists (same output filename) "
-                       "SILENTLY OVERWRITES the old MIDI — check the output filename before you hit Convert.",
-                  style="Sub.TLabel", foreground="#e05650",
-                  justify=tk.LEFT, wraplength=230)
-        reality_red.grid(row=0, column=1, sticky="nw")
+        reality_orange.grid(row=0, column=0, sticky="nw")
 
-        def _reality_resize(event, _o=reality_orange, _r=reality_red):
-            wl = max(150, (event.width // 2) - 22)
-            _o.configure(wraplength=wl)
-            _r.configure(wraplength=wl)
+        def _reality_resize(event, _o=reality_orange):
+            _o.configure(wraplength=max(150, event.width - 22))
         reality_col.bind("<Configure>", _reality_resize)
 
         engine_col = ttk.LabelFrame(header_cols, text=" Engine Cheat Sheet ", padding=10)
@@ -13615,9 +13603,6 @@ demucs.separate.main()
         ttk.Label(settings_frame, text="🤖  Detection Engine  (v4.0)",
                   font=("Segoe UI", 9, "bold")).grid(
             row=15, column=0, columnspan=2, sticky="w", pady=(0, 2))
-        ttk.Label(settings_frame, text="✨ NEW!",
-                  font=("Segoe UI", 9, "bold"), foreground="#00c853").grid(
-            row=15, column=2, sticky="w", pady=(0, 2))
 
         ttk.Label(settings_frame,
                   text="Choose between classic spectral analysis, AI/ML detection using an "
@@ -13774,8 +13759,6 @@ demucs.separate.main()
         alt_hdr.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(alt_hdr, text="Choose what to enhance:",
                   style="Sub.TLabel", foreground="#c9d1d9").pack(side=tk.LEFT)
-        ttk.Label(alt_hdr, text="✨ NEW!",
-                  font=("Segoe UI", 9, "bold"), foreground="#00c853").pack(side=tk.RIGHT)
 
         alt_mode_frame = ttk.Frame(alt_frame)
         alt_mode_frame.pack(anchor="w", fill=tk.X, pady=(0, 5))
@@ -33821,7 +33804,7 @@ demucs.separate.main()
         # ── Detection Troubleshooter ──────────────────────────────────────────
         s = section("🔬  Detection Troubleshooter", right, expanded=True,
                     summary="Paste your Audio→MIDI log + check symptoms for targeted setting suggestions.",
-                    badge="New!")
+                    badge="⭐")
 
         note(s, "How to use: Before converting, enable 'Show diagnostic log' in the Audio→MIDI tab — "
                 "this gives the troubleshooter the detailed detection numbers it needs for accurate suggestions. "
