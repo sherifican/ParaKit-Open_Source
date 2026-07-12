@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-late-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.7.8.5`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.8.6`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -106,6 +106,16 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 *Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
 
+**v4.7.8.6**<br>2026-07-12
+
+Difficulty & timing correctness
+
++ Difficulty reduction now keeps notes across the whole song — Easy/Medium/Hard charts made with note-reduction no longer thin out toward the end (kick/snare could drop from the back of longer songs). Expert is unchanged.
++ MIDI timing rounds to the nearest tick — removes a small drift (~8 ms over ~10 saves) when repeatedly saving in the MIDI Editor; also applied to the Audio→MIDI and Sheet-Music→MIDI writers.
++ Fixed a rare doubled note when the Advanced Peak Detection / Trigger Align options were used together.
+
+---
+
 **v4.7.8.5**<br>2026-07-12
 
 Stability & correctness pass — whole app
@@ -162,7 +172,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.7.8.5`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.8.6`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -559,6 +569,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.7.8.6**<br>2026-07-12 | <ul><li>**Difficulty reduction keeps the whole song.** Easy/Medium/Hard charts made with note‑reduction previously thinned toward the end — kick and snare could drop out of the back of longer songs. Reduced charts now spread notes evenly across the full length. Expert is unchanged.</li><li>**MIDI timing rounds to the nearest tick** instead of always rounding down — removes a small drift (~8 ms over ~10 saves) when repeatedly saving the same chart in the MIDI Editor; also applied to the Audio→MIDI and Sheet‑Music→MIDI exports.</li><li>Fixed a rare **doubled note** when the Advanced Peak Detection / Trigger Align options were used together.</li></ul> |
 | **v4.7.8.5**<br>2026-07-12 | <ul><li>**Whole‑app stability & correctness pass** — 24 fixes.</li><li>**Stem Splitter library:** Delete / Rename now targets only the exact song, never a same‑named one (e.g. acting on "Song" no longer also catches "Song_Remix"); faster search; more reliable ".ogg files exist" badge.</li><li>**MIDI Editor:** loading or clearing over unsaved edits now warns first; saving over an original MIDI that holds notes the editor can't display warns you and writes a one‑time backup; flags follow their notes with reliable undo; multi‑row tempo maps no longer scramble timing; "remove duplicates" respects the "Selected notes only" scope; audio is released after Stop/Pause (no more "file in use"). **NEW: MIDI Input (BETA)** — this was supposed to be in the app already but due to an oversight I never added the function into the MIDI Editor tab, it exists now. Record drum hits straight into the editor from a connected kit.</li><li>**Audio → MIDI:** converting asks before overwriting an existing MIDI; Auto‑Detect BPM fits the offset to the timeline the chart plays on, so foreign MIDIs stop drifting.</li><li>**Single Song Creator:** "Use BPM from MIDI" reads the song's real starting tempo; a typo in the Offset field is caught instead of silently becoming 0.</li><li>**Preview / Practice:** correct pause position, no drift over a long song, smoother playback on dense charts.</li><li>**Song Tester:** measures against the song's real starting tempo.</li><li>Preference / settings saves are now atomic and report failures instead of silently losing data.</li></ul> |
 | **v4.7.2**<br>2026-07-10 | <ul><li>**Stem Splitter "Your Songs" library** — right‑click a song for two new actions:</li><li>**Rename song** — renames the song's *whole file set together* (the audio, its drum stems, and its MIDI) so the links between them stay intact; all‑or‑nothing (it undoes itself if it can't finish).</li><li>**Delete song** — permanently deletes that whole set from disk (audio + stems + MIDI); it lists the files and asks first, no undo.</li><li>Fix: a song's album art in this library now updates if the file is re‑tagged, instead of showing the old thumbnail.</li></ul> |
 | **v4.7.1**<br>2026-07-10 | <ul><li>Follow‑up fixes to the v4.7.0 Single Song Creator.</li><li>**Rename song** now also updates the title *inside* the files, so a renamed song shows the new name in‑game too (Paradiddle + Clone Hero), not just in the library — and it's now all‑or‑nothing so a song can't get split into two rows.</li><li>**Clone Hero export:** enabling only ghost notes (or only accents) no longer also emits the other kind.</li><li>**"Your Songs" library:** faster on large libraries, refreshes when you change the Output/CH folder, album art updates when replaced in place, difficulty badges read more precisely, and a song whose Paradiddle + Clone Hero files share one folder is handled correctly by Delete/Rename.</li></ul> |

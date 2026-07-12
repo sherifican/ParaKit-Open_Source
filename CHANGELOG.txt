@@ -27,6 +27,28 @@
 ==============================================================================
 
 ------------------------------------------------------------------------------
+  v4.7.8.6   --   2026-07-12
+------------------------------------------------------------------------------
+  A focused correctness pass on difficulty reduction and MIDI timing.
+
+  Difficulty reduction:
+  - Fix (important): Easy / Medium / Hard charts made with note-reduction now
+    keep notes across the WHOLE song instead of thinning toward the end.
+    Previously, on longer songs, kick and snare could drop out of the back
+    portion of a reduced chart (it played fine, then lanes went quiet). The
+    kept notes are now spread evenly across the full length. Expert charts were
+    never reduced and are unchanged.
+
+  MIDI timing:
+  - Note times now round to the nearest MIDI tick instead of always rounding
+    down. This removes a small drift that used to accumulate when you saved the
+    same chart repeatedly in the MIDI Editor (about 8 ms over ~10 saves). The
+    same rounding was applied to the Audio -> MIDI writer and the
+    Sheet-Music -> MIDI export so all of them agree.
+  - Fixed a rare doubled note that could appear when the Advanced "Peak
+    Detection Interval" and "Trigger Align" options were used together.
+
+------------------------------------------------------------------------------
   v4.7.8.5   --   2026-07-12
 ------------------------------------------------------------------------------
   A large stability + correctness pass across the whole app. The big ones:

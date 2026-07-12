@@ -1947,7 +1947,25 @@ def reduce_notes_for_difficulty(events, bpm, difficulty):
                 s += 0.5
             scored.append((s, t, e))
         scored.sort(key=lambda x: (-x[0], x[1]))       # strongest first, then time-ordered
-        return [e for (_s, _t, e) in scored[:keep]]
+        # Take whole score classes while they fit; spread the cutoff class
+        # EVENLY across time (the old [:keep] slice kept only the earliest
+        # members of that class, emptying the lane over the song's tail).
+        out = []
+        i = 0
+        while i < len(scored) and len(out) < keep:
+            s = scored[i][0]
+            j = i
+            while j < len(scored) and scored[j][0] == s:
+                j += 1
+            cls = scored[i:j]                      # already time-ordered within the class
+            room = keep - len(out)
+            if len(cls) <= room:
+                out.extend(cls)
+            else:
+                step = len(cls) / room
+                out.extend(cls[int(k * step)] for k in range(room))
+            i = j
+        return [e for (_s, _t, e) in out]
 
     by = {}
     for e in events:
@@ -5694,7 +5712,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.8.5"
+    VERSION = "4.7.8.6"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -16400,6 +16418,40 @@ demucs.separate.main()
                 tom_mid_times   = apply_align(tom_mid_times)
                 self._a2m_log(f"  Trigger align applied: {trigger_align_ms:+.0f}ms")
 
+            # ── Re-apply per-instrument dedup after peak-snap / trigger-align ──
+            # Those two post-processors move note times AFTER deduplicate_self
+            # already ran, so they can re-create sub-gap pairs (or identical
+            # times via a shared argmax peak / the clip boundary). Detection is
+            # untouched; this only re-enforces the user's own dedup gaps on the
+            # shifted timestamps. Gated by the same opt-in conditions, so default
+            # runs (peak/align off) are byte-identical — the block never fires.
+            if peak_scan_ms > 0 or abs(trigger_align_ms) > 0.5:
+                # Dedup on the shifted timestamps, keeping each class's ML
+                # confidence array aligned by TIME VALUE (deduplicate_self sorts,
+                # which would otherwise desync the index-paired conf used for
+                # editor shading — cosmetic, but re-pair it so the shade follows
+                # its note). deduplicate_self preserves original time values, so a
+                # {time: conf} lookup survives the sort/drop exactly.
+                def _redup_conf(times, gap, conf_key):
+                    if len(times) == 0:
+                        return times
+                    conf = ml_conf.get(conf_key) if ml_conf is not None else None
+                    if conf is not None and len(conf) == len(times):
+                        cmap = {round(float(t), 8): float(conf[i])
+                                for i, t in enumerate(times)}
+                        new_times = deduplicate_self(times, min_gap=gap)
+                        ml_conf[conf_key] = np.array(
+                            [cmap.get(round(float(t), 8), 0.0) for t in new_times])
+                        return new_times
+                    return deduplicate_self(times, min_gap=gap)
+                kick_times      = _redup_conf(kick_times,      dedup_gaps["kick"],      "kick")
+                snare_times     = _redup_conf(snare_times,     dedup_gaps["snare"],     "snare")
+                hihat_times     = _redup_conf(hihat_times,     dedup_gaps["hihat"],     "hihat")
+                crash_times     = _redup_conf(crash_times,     dedup_gaps["crash"],     "crash")
+                ride_times      = _redup_conf(ride_times,      dedup_gaps["ride"],      "ride")
+                floor_tom_times = _redup_conf(floor_tom_times, dedup_gaps["floor_tom"], "floor_tom")
+                tom_mid_times   = _redup_conf(tom_mid_times,   dedup_gaps["tom"],       "tom_mid")
+
             # ── Alt-detector merge (F-DET-005 Phase 1B) ────────────────────────
             # F2: snapshotted at _a2m_start (main thread) — no Tk reads on the worker.
             _enhanced_mode = self._a2m_run_flags["enhanced_mode"]
@@ -16453,7 +16505,7 @@ demucs.separate.main()
                             time=0))
 
                         def _alt_secs_to_ticks(t):
-                            return int(t * (480 * bpm / 60.0))
+                            return int(round(t * (480 * bpm / 60.0)))
 
                         _alt_events = []
                         _tom_alt_idx = 0
@@ -16599,7 +16651,7 @@ demucs.separate.main()
                                           numerator=4, denominator=4, time=0))
 
             def secs_to_ticks(t):
-                return int(t * (ticks_per_beat * bpm / 60.0))
+                return int(round(t * (ticks_per_beat * bpm / 60.0)))
 
             # GM / Paradiddle drum map:
             # 36 = Kick, 38 = Snare, 41 = Floor Tom,
@@ -22101,7 +22153,7 @@ demucs.separate.main()
                                            numerator=4, denominator=4, time=0))
 
             def secs_to_ticks(t):
-                return int(t * tpb * self.me_bpm / 60.0)
+                return int(round(t * tpb * self.me_bpm / 60.0))
 
             note_len = secs_to_ticks(0.05)
             flat = []
@@ -26478,14 +26530,14 @@ demucs.separate.main()
             if normalize and events:
                 first_tick_raw = sorted(events, key=lambda e: e[0])[0][0]
                 # Shift in ticks: first note becomes offset_ticks exactly
-                offset_ticks = int(audio_offset_secs * bpm / 60 * tpb)
+                offset_ticks = int(round(audio_offset_secs * bpm / 60 * tpb))
                 shift_ticks = offset_ticks - first_tick_raw
                 events = [(max(0, tick + shift_ticks), note, vel) for tick, note, vel in events]
                 self._sm_log(f"  Auto-align: first note tick {first_tick_raw} → {offset_ticks} "
                              f"(shift: {shift_ticks:+d} ticks)")
                 offset_ticks = 0  # already baked in
             else:
-                offset_ticks = int(audio_offset_secs * bpm / 60 * tpb)
+                offset_ticks = int(round(audio_offset_secs * bpm / 60 * tpb))
                 if audio_offset_secs != 0.0:
                     self._sm_log(f"  Audio offset: {audio_offset_secs:+.3f}s ({offset_ticks:+d} ticks)")
 
@@ -27079,7 +27131,7 @@ demucs.separate.main()
                 sorted_evts = sorted(events_list, key=lambda e: e[0])
                 prev_tick = 0
                 for secs, note, vel in sorted_evts:
-                    tick = max(0, int(secs * ref_bpm / 60 * tpb))
+                    tick = max(0, int(round(secs * ref_bpm / 60 * tpb)))
                     delta = max(0, tick - prev_tick)
                     data += encode_varlen(delta)
                     data += bytes([0x99, note, vel])
