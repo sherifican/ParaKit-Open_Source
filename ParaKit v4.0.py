@@ -32476,7 +32476,7 @@ demucs.separate.main()
               "    Check the conversion log for a fallback notice.")
         divider(s)
         entry(s,
-              "🔬  Enhanced Detection  (experimental)  ✨ NEW!\n\n"
+              "🔬  Enhanced Detection  (experimental)\n\n"
               "An optional helper that runs alongside the built-in detector. You\n"
               "choose exactly what it is allowed to improve.\n\n"
               "Options:\n"
@@ -32503,7 +32503,7 @@ demucs.separate.main()
               "This is still experimental, so always review the chart before export.")
         divider(s)
         entry(s,
-              "🧠  Neural Stem Isolation  (experimental)  ✨ NEW!\n\n"
+              "🧠  Neural Stem Isolation  (experimental)\n\n"
               "An optional pre-cleaning step. Before detection runs, ParaKit can "
               "feed your audio into an AI splitter that separates the drums into "
               "kick, snare, hi-hat, toms, and cymbals stems, then mixes those "

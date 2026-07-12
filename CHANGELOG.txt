@@ -29,8 +29,7 @@
 ------------------------------------------------------------------------------
   v4.7.8.5   --   2026-07-12
 ------------------------------------------------------------------------------
-  A large stability + correctness pass across the whole app, from three
-  independent code audits. The big ones:
+  A large stability + correctness pass across the whole app. The big ones:
 
   Stem Splitter "Your Songs" library:
   - Fix (important): Delete / Rename could also match a DIFFERENT song whose
