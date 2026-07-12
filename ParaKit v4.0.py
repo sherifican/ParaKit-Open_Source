@@ -13536,7 +13536,7 @@ demucs.separate.main()
         ride_cb = ttk.Checkbutton(
             settings_frame,
             text="Ride cymbal detection  —  OFF: ride hits appear in Crash lane  "
-                 "/ ON: attempt ride separation  ⚠  unreliable",
+                 "/ ON: attempt ride separation  ⚠  More reliable than it was previously, but still flawed",
             variable=self.a2m_ride_var
         )
         ride_cb.grid(row=10, column=0, columnspan=3, sticky="w", pady=(6, 0))

@@ -74,6 +74,8 @@
   - Preference / settings saves are now atomic and report failures instead of
     silently losing data; library renames surface problems instead of faking
     success.
+  - Ride detection disclaimer updated to show improved reliability compared to
+    earlier versions.
 
 ------------------------------------------------------------------------------
   v4.7.2   --   2026-07-10
