@@ -5241,6 +5241,20 @@ except ImportError:
 # MIDI_MAP exports 57/59 to the distinct Paradiddle instruments.
 _RLRR_EDITOR_VARIANT_NOTE = {"BP_Crash17_C": 57, "BP_Ride20_C": 59}
 
+# Cymbal families real ParaDB charts use that rlrr_parse's CLASS_TO_MIDI does NOT
+# know (library scan 2026-07-12: china + 13" crash + splash = thousands of hits
+# across ~130 charts were silently dropped by the .rlrr loaders / Pd->CH export).
+# Prefix -> MIDI note; consulted ONLY as a fallback AFTER the CLASS_TO_MIDI loop.
+# china / 13"-crash -> Crash lane (49), splash -> Crash lane (55) — matching the
+# difficulty reducer's china/splash -> crash classification. Owner 2026-07-12:
+# unify china to CRASH everywhere. Deliberately NOT added to rlrr_parse.py's
+# CLASS_TO_MIDI (that feeds the extractor ground-truth pipeline).
+_RLRR_SUPPLEMENTAL_CLASS_NOTE = {
+    "BP_Crash13": 49,   # 13" crash -> Crash lane
+    "BP_China":   49,   # china     -> Crash lane (owner: china = crash, unified)
+    "BP_Splash":  55,   # splash    -> Crash lane (GM 55; in _CH_NOTE_MAP + editor Crash lane)
+}
+
 _MIDI_EXT_DIFFS = ["Easy", "Medium", "Hard", "Expert", "Expert+"]
 
 
@@ -5712,7 +5726,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.8.6"
+    VERSION = "4.7.8.7"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -17086,7 +17100,7 @@ demucs.separate.main()
     # tally+warn path and are preserved by the .parakit_bak). Values are lane
     # NAMES; the note is stored as that lane's default (midi[0]). This dict
     # is the single place to extend later.
-    _ME_FOLD_TO_LANE = {39: "Snare", 52: "Ride", 54: "Hi-Hat", 56: "Ride"}
+    _ME_FOLD_TO_LANE = {39: "Snare", 52: "Crash", 54: "Hi-Hat", 56: "Ride"}  # 52 china -> Crash (owner 2026-07-12: unify china=crash)
 
     # Manual MIDI Note Manager (owner 2026-07-09): per-lane output-note variations,
     # restricted to notes valid in BOTH Paradiddle (MIDI_MAP) and Clone Hero
@@ -19366,8 +19380,13 @@ demucs.separate.main()
             self._me_redraw()
 
     def _me_browse(self):
+        # Include *.parakit_bak so the one-time in-place-save backups are visible
+        # here for recovery (they're byte-identical MIDIs; _me_load parses by
+        # content via mido, so the extension doesn't matter once selected).
         path = filedialog.askopenfilename(
-            filetypes=[("MIDI files", "*.mid *.midi"), ("All files", "*.*")])
+            filetypes=[("MIDI files", "*.mid *.midi *.parakit_bak"),
+                       ("ParaKit backup", "*.parakit_bak"),
+                       ("All files", "*.*")])
         if path:
             self.me_midi_var.set(path)
             self._add_recent_file("recent_midi_editor", path)
@@ -20023,10 +20042,22 @@ demucs.separate.main()
                     if isinstance(inst_idx, int) and 0 <= inst_idx < len(instruments):
                         cls = instruments[inst_idx].get("class", "") or ""
                 mapping = CLASS_TO_MIDI.get(cls)
-                if not mapping:
-                    continue
-                # Prefer distinct Crash17/Ride20 notes over CLASS_TO_MIDI collapse.
-                midi_note = _RLRR_EDITOR_VARIANT_NOTE.get(cls, mapping[1])
+                if mapping:
+                    # Prefer distinct Crash17/Ride20 notes over CLASS_TO_MIDI collapse.
+                    midi_note = _RLRR_EDITOR_VARIANT_NOTE.get(cls, mapping[1])
+                else:
+                    # Fallback: cymbal families CLASS_TO_MIDI doesn't know (china /
+                    # 13" crash / splash). Match the raw event name (or the instrument
+                    # class string) against the supplemental prefix map so these hits
+                    # stop being silently dropped (owner 2026-07-12: china -> Crash).
+                    _probe = name_val if "name" in e else cls
+                    midi_note = None
+                    for _pfx, _mn in _RLRR_SUPPLEMENTAL_CLASS_NOTE.items():
+                        if _probe.startswith(_pfx):
+                            midi_note = _mn
+                            break
+                    if midi_note is None:
+                        continue
                 lane_idx = note_to_lane.get(midi_note)
                 if lane_idx is None:
                     continue
@@ -37754,9 +37785,20 @@ demucs.separate.main()
                     if isinstance(inst_idx, int) and 0 <= inst_idx < len(instruments):
                         cls = instruments[inst_idx].get("class", "") or ""
                 mapping = CLASS_TO_MIDI.get(cls)
-                if not mapping:
-                    continue
-                _, midi_note, _ = mapping
+                if mapping:
+                    _, midi_note, _ = mapping
+                else:
+                    # Fallback: china / 13" crash / splash (owner 2026-07-12:
+                    # china -> Crash, unified) — supplemental prefix map so the
+                    # practice-viz matches the editor loader instead of dropping them.
+                    _probe = name_val if "name" in e else cls
+                    midi_note = None
+                    for _pfx, _mn in _RLRR_SUPPLEMENTAL_CLASS_NOTE.items():
+                        if _probe.startswith(_pfx):
+                            midi_note = _mn
+                            break
+                    if midi_note is None:
+                        continue
                 lane_idx = midi_to_lane.get(midi_note)
                 if lane_idx is None:
                     continue
@@ -41408,42 +41450,54 @@ demucs.separate.main()
                           and self.accent_notes_var.get())
                 ch_events = rlrr_events_to_ch_events(
                     rlrr["events"], bpm, emit_ghost=_g, emit_accent=_a)
-                audio_path = slot["audio_var"].get()
-                _ch_audio_ext = os.path.splitext(audio_path)[1].lower()
-                _diff_key = str(diff).title()
-                if _diff_key not in ("Easy", "Medium", "Hard", "Expert"):
-                    _diff_key = "Expert"
-                chart_str = build_chart_multi_difficulty(
-                    events_by_difficulty={_diff_key: ch_events}, bpm=bpm,
-                    title=title, artist=artist,
-                    album="", year="", charter=creator,
-                    music_stream=f"song{_ch_audio_ext}",
-                )
-                with open(os.path.join(ch_dir, "notes.chart"), "w", encoding="utf-8", newline="\n") as f:
-                    f.write(chart_str)
+                if not ch_events:
+                    # Never write a section-less Clone Hero chart (the single-song
+                    # path already refuses this). Skip CH output for this slot and
+                    # remove the empty folder we just created.
+                    self._batch_log("  ERROR: no Clone Hero drum events generated "
+                                    "- skipping Clone Hero output for this slot.\n")
+                    try:
+                        os.rmdir(ch_dir)
+                    except OSError:
+                        pass
+                    ch_count = 0
+                else:
+                    audio_path = slot["audio_var"].get()
+                    _ch_audio_ext = os.path.splitext(audio_path)[1].lower()
+                    _diff_key = str(diff).title()
+                    if _diff_key not in ("Easy", "Medium", "Hard", "Expert"):
+                        _diff_key = "Expert"
+                    chart_str = build_chart_multi_difficulty(
+                        events_by_difficulty={_diff_key: ch_events}, bpm=bpm,
+                        title=title, artist=artist,
+                        album="", year="", charter=creator,
+                        music_stream=f"song{_ch_audio_ext}",
+                    )
+                    with open(os.path.join(ch_dir, "notes.chart"), "w", encoding="utf-8", newline="\n") as f:
+                        f.write(chart_str)
 
-                song_len_ms = 0
-                if ch_events:
-                    last_tick = ch_events[-1][0]
-                    last_sec = last_tick / (bpm / 60.0 * 192) + 5.0
-                    song_len_ms = int(last_sec * 1000)
-                _diff_ratings = {"Easy": 1, "Medium": 2, "Hard": 3, "Expert": 4}
-                ini_str = write_song_ini(
-                    title=title, artist=artist,
-                    album="", year="", charter=creator,
-                    song_length_ms=song_len_ms,
-                    diff_drums=_diff_ratings.get(diff, 3),
-                )
-                with open(os.path.join(ch_dir, "song.ini"), "w", encoding="utf-8", newline="\n") as f:
-                    f.write(ini_str)
+                    song_len_ms = 0
+                    if ch_events:
+                        last_tick = ch_events[-1][0]
+                        last_sec = last_tick / (bpm / 60.0 * 192) + 5.0
+                        song_len_ms = int(last_sec * 1000)
+                    _diff_ratings = {"Easy": 1, "Medium": 2, "Hard": 3, "Expert": 4}
+                    ini_str = write_song_ini(
+                        title=title, artist=artist,
+                        album="", year="", charter=creator,
+                        song_length_ms=song_len_ms,
+                        diff_drums=_diff_ratings.get(diff, 3),
+                    )
+                    with open(os.path.join(ch_dir, "song.ini"), "w", encoding="utf-8", newline="\n") as f:
+                        f.write(ini_str)
 
-                shutil.copy2(audio_path, os.path.join(ch_dir, f"song{_ch_audio_ext}"))
-                if slot["drum_var"].get() and os.path.exists(slot["drum_var"].get()):
-                    drum_ext = os.path.splitext(slot["drum_var"].get())[1].lower()
-                    shutil.copy2(slot["drum_var"].get(), os.path.join(ch_dir, f"drums{drum_ext}"))
-                if slot["cover_var"].get() and os.path.exists(slot["cover_var"].get()):
-                    shutil.copy2(slot["cover_var"].get(), os.path.join(ch_dir, "album.png"))
-                ch_count = len(ch_events)
+                    shutil.copy2(audio_path, os.path.join(ch_dir, f"song{_ch_audio_ext}"))
+                    if slot["drum_var"].get() and os.path.exists(slot["drum_var"].get()):
+                        drum_ext = os.path.splitext(slot["drum_var"].get())[1].lower()
+                        shutil.copy2(slot["drum_var"].get(), os.path.join(ch_dir, f"drums{drum_ext}"))
+                    if slot["cover_var"].get() and os.path.exists(slot["cover_var"].get()):
+                        shutil.copy2(slot["cover_var"].get(), os.path.join(ch_dir, "album.png"))
+                    ch_count = len(ch_events)
 
             if fmt == "paradiddle":
                 self._batch_log(f"  ? Done - {event_count} events at {bpm:.1f} BPM\n")

@@ -27,6 +27,27 @@
 ==============================================================================
 
 ------------------------------------------------------------------------------
+  v4.7.8.7   --   2026-07-12
+------------------------------------------------------------------------------
+  Clone Hero export + .rlrr import correctness.
+
+  Clone Hero / .rlrr:
+  - Fix (important): china and 13" crash cymbal hits were silently dropped when
+    converting Paradiddle charts to Clone Hero, and when importing a .rlrr into
+    the MIDI Editor or the Practice view. On a typical library that's a large
+    share of charts losing cymbals from the chart with no warning. china, 13"
+    crash and splash now map to the Crash lane (china is treated as crash
+    everywhere, matching the difficulty reducer).
+  - The batch converter no longer writes a broken, section-less Clone Hero chart
+    when a slot produces no drum events -- it skips that slot with an error in
+    the log instead of installing an unplayable song.
+
+  MIDI Editor:
+  - The one-time ".parakit_bak" safety backups (created before an in-place lossy
+    save) now appear in the "Load MIDI" file dialog, so you can reopen one to
+    recover -- they are ordinary MIDI files under the hood.
+
+------------------------------------------------------------------------------
   v4.7.8.6   --   2026-07-12
 ------------------------------------------------------------------------------
   A focused correctness pass on difficulty reduction and MIDI timing.
