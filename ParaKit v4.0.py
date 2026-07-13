@@ -5726,7 +5726,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.8.7"
+    VERSION = "4.7.8.8"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -10942,7 +10942,14 @@ class MidiToRlrrApp:
         model_frame = ttk.LabelFrame(card_in, text=" Standard Split  -  recommended first step ", padding=8)
         model_frame.pack(fill=tk.X, pady=(8, 0))
 
-        self.stem_model_var = tk.StringVar(value="htdemucs")
+        # Persist the split-model choice across sessions (owner 2026-07-12:
+        # htdemucs_ft users shouldn't have to re-select it every launch).
+        _saved_stem_model = load_config().get("stem_model", "htdemucs")
+        if _saved_stem_model not in ("htdemucs", "htdemucs_ft"):
+            _saved_stem_model = "htdemucs"
+        self.stem_model_var = tk.StringVar(value=_saved_stem_model)
+        self.stem_model_var.trace_add("write", lambda *_: save_config(
+            {"stem_model": self.stem_model_var.get()}))
 
         # Model cache status
         self.stem_model_status_var = tk.StringVar(value="")
@@ -12356,6 +12363,580 @@ class MidiToRlrrApp:
         except Exception:
             pass
 
+    # =========================================================================
+    # Audio → MIDI "Song Library" (owner redesign 2026-07-12)
+    #
+    # A third view onto the SAME songs folder the YouTube + Stem libraries
+    # mirror (via _stem_library_scan). Shares the row look, badges, art cache
+    # helpers, and the single pygame preview stream — but each library keeps
+    # its OWN row list + chip-updater so refreshes never clobber each other.
+    # The row's primary action is "Create MIDI": it loads the song's lossless
+    # drums split (LOSSLESS SPLITS (DRUMS)\<song>_drums.flac, then the drums
+    # .ogg, then the source file) into the Audio → MIDI input field above.
+    # =========================================================================
+    def _a2m_lib_drums_for(self, path):
+        """Best Audio→MIDI source for a library song: its lossless drums split
+        if present, else the drums .ogg, else the source file itself (full mix).
+        Mirrors _stem_show_success's `detector_drums_path or drums_ogg` choice
+        and the folder layout _stem_is_split probes."""
+        try:
+            song = os.path.splitext(os.path.basename(path))[0]
+        except Exception:
+            return path
+        bases = []
+        for var_name in ("stem_output_var", "stem_iso_output_var"):
+            vv = getattr(self, var_name, None)
+            try:
+                b = vv.get().strip() if vv is not None else ""
+            except Exception:
+                b = ""
+            if b and os.path.isdir(b) and b not in bases:
+                bases.append(b)
+        for b in bases:  # 1) lossless FLAC detector split (preferred)
+            c = os.path.join(b, "LOSSLESS SPLITS (DRUMS)", f"{song}_drums.flac")
+            try:
+                if os.path.isfile(c):
+                    return c
+            except Exception:
+                pass
+        for b in bases:  # 2) the .ogg drums stem
+            for sub in ("DRUMS ONLY", "DRUMS"):
+                c = os.path.join(b, sub, f"{song}_drums.ogg")
+                try:
+                    if os.path.isfile(c):
+                        return c
+                except Exception:
+                    pass
+        return path       # 3) fall back to the source file (full mix)
+
+    def _a2m_lib_on_create_midi(self, path):
+        """Create MIDI chip / context menu — load the song's drums into the
+        Audio → MIDI input field (does NOT auto-start the conversion)."""
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning(
+                "File not found",
+                "That song is no longer on disk:\n" + str(path))
+            return
+        target = self._a2m_lib_drums_for(path)
+        try:
+            self.a2m_input_var.set(target)
+        except Exception:
+            pass
+        try:
+            self._add_recent_file("recent_a2m_audio", target)
+        except Exception:
+            pass
+        # Auto-restore per-file settings, same as the Browse… flow.
+        try:
+            if self._a2m_load_file_settings(target):
+                self.me_status_var.set(
+                    f"⚙  Settings restored for: {os.path.basename(target)}")
+                self.root.after(3000, lambda: self.me_status_var.set(
+                    getattr(self, 'ME_DEFAULT_STATUS', "")))
+        except Exception:
+            pass
+        _bn = os.path.basename(target).lower()
+        if _bn.endswith("_drums.flac"):
+            _kind = "lossless drums split"
+        elif "_drums." in _bn:
+            _kind = "drums stem"
+        else:
+            _kind = "source file (no drums split found)"
+        try:
+            self._set_global_status(
+                f"Loaded {os.path.basename(target)} ({_kind}) into Audio → MIDI",
+                4000)
+        except Exception:
+            pass
+
+    def _a2m_library_build(self, parent):
+        """Build the Song Library panel. Mirrors _stem_library_build (search +
+        sort + Canvas list) but scans the shared songs folder and renders rows
+        with a Create MIDI primary action."""
+        self._a2m_lib_art_refs = getattr(self, "_a2m_lib_art_refs", {})
+        self._a2m_lib_rows = []
+        self._a2m_lib_selected_path = None
+        self._a2m_lib_show_all = False
+        self._a2m_lib_refresh_after = None
+        self._yt_preview_path = getattr(self, "_yt_preview_path", None)
+        self._yt_preview_state = getattr(self, "_yt_preview_state", None)
+        # Share the Stem tab's songs-folder var (mirrors yt_out_var). Create it
+        # defensively if the A2M tab happens to build before the Stem tab.
+        if not getattr(self, "stem_lib_folder_var", None):
+            _def = ""
+            try:
+                _def = self.yt_out_var.get()
+            except Exception:
+                _def = load_config().get("output_folder_yt") or ""
+            self.stem_lib_folder_var = tk.StringVar(value=_def)
+
+        hdr = ttk.Frame(parent)
+        hdr.pack(fill=tk.X)
+        ttk.Label(hdr, text="YOUR SONGS", font=("Segoe UI", 8, "bold"),
+                  foreground="#9a9ab0").pack(side=tk.LEFT, anchor="w")
+        ttk.Button(hdr, text="Refresh",
+                   command=self._a2m_library_refresh).pack(side=tk.RIGHT)
+        ttk.Label(parent,
+                  text="Right-click a song for options. Create MIDI loads its "
+                       "lossless drums split into the input field above.",
+                  style="Sub.TLabel", foreground="#8b949e").pack(
+                      anchor="w", pady=(0, 4))
+
+        bar = ttk.Frame(parent)
+        bar.pack(fill=tk.X, pady=(2, 4))
+        self._a2m_lib_search_var = tk.StringVar()
+        search_entry = ttk.Entry(bar, textvariable=self._a2m_lib_search_var)
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._a2m_lib_search_var.trace_add("write", self._a2m_library_refresh)
+        self._a2m_lib_search_placeholder = "Search songs…"
+        self._a2m_lib_search_is_placeholder = True
+
+        def _a2m_search_show_placeholder():
+            self._a2m_lib_search_is_placeholder = True
+            search_entry.configure(foreground="#7e7e96")
+            self._a2m_lib_search_var.set(self._a2m_lib_search_placeholder)
+
+        def _a2m_search_on_focus_in(_e):
+            if self._a2m_lib_search_is_placeholder:
+                self._a2m_lib_search_is_placeholder = False
+                self._a2m_lib_search_var.set("")
+                search_entry.configure(foreground="#e8e8f0")
+
+        def _a2m_search_on_focus_out(_e):
+            if not self._a2m_lib_search_var.get().strip():
+                _a2m_search_show_placeholder()
+        search_entry.bind("<FocusIn>", _a2m_search_on_focus_in)
+        search_entry.bind("<FocusOut>", _a2m_search_on_focus_out)
+        _a2m_search_show_placeholder()
+        ttk.Label(bar, text="Sort:", style="Sub.TLabel").pack(
+            side=tk.LEFT, padx=(6, 2))
+        self._a2m_lib_sort_var = tk.StringVar(value="Newest")
+        sort_combo = ttk.Combobox(bar, textvariable=self._a2m_lib_sort_var,
+                                  values=("Newest", "Title", "Not-split first"),
+                                  width=14, state="readonly")
+        sort_combo.pack(side=tk.LEFT)
+        sort_combo.bind("<<ComboboxSelected>>", self._a2m_library_refresh)
+
+        canvas_wrap = ttk.Frame(parent)
+        canvas_wrap.pack(fill=tk.BOTH, expand=True)
+        self._a2m_lib_canvas = tk.Canvas(canvas_wrap, bg="#15152a",
+                                         highlightthickness=0, bd=0, height=260)
+        vsb = ttk.Scrollbar(canvas_wrap, orient="vertical",
+                            command=self._a2m_lib_canvas.yview)
+        self._a2m_lib_canvas.configure(yscrollcommand=vsb.set)
+        self._a2m_lib_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._a2m_lib_inner = tk.Frame(self._a2m_lib_canvas, bg="#15152a")
+        self._a2m_lib_inner_id = self._a2m_lib_canvas.create_window(
+            (0, 0), window=self._a2m_lib_inner, anchor="nw")
+
+        def _on_inner_cfg(_e):
+            try:
+                self._a2m_lib_canvas.configure(
+                    scrollregion=self._a2m_lib_canvas.bbox("all"))
+            except Exception:
+                pass
+        self._a2m_lib_inner.bind("<Configure>", _on_inner_cfg)
+
+        def _on_canvas_cfg(e):
+            try:
+                self._a2m_lib_canvas.itemconfigure(
+                    self._a2m_lib_inner_id, width=e.width)
+            except Exception:
+                pass
+        self._a2m_lib_canvas.bind("<Configure>", _on_canvas_cfg)
+
+        def _vsb_wheel(e):
+            try:
+                self._a2m_lib_canvas.yview_scroll(
+                    int(-1 * (e.delta / 120)), "units")
+            except Exception:
+                pass
+            return "break"
+        vsb.bind("<MouseWheel>", _vsb_wheel)
+
+        self._a2m_library_refresh()
+
+    def _a2m_library_refresh(self, *_):
+        """Debounced entry point (search keystrokes / sort / Refresh)."""
+        if not hasattr(self, "_a2m_lib_inner"):
+            return
+        prev = getattr(self, "_a2m_lib_refresh_after", None)
+        if prev:
+            try:
+                self.root.after_cancel(prev)
+            except Exception:
+                pass
+        self._a2m_lib_refresh_after = self.root.after(
+            200, self._a2m_library_do_refresh)
+
+    def _a2m_library_do_refresh(self):
+        """Rebuild the row list from the shared folder scan (mirrors
+        _stem_library_do_refresh)."""
+        self._a2m_lib_refresh_after = None
+        self._ogg_paired_listing = {}
+        if not hasattr(self, "_a2m_lib_inner"):
+            return
+        try:
+            if not self._a2m_lib_inner.winfo_exists():
+                return
+        except Exception:
+            return
+
+        for child in list(self._a2m_lib_inner.winfo_children()):
+            try:
+                child.destroy()
+            except Exception:
+                pass
+        self._a2m_lib_rows = []
+
+        entries = self._stem_library_scan()
+        live = [e for e in entries
+                if e.get("path") and os.path.isfile(e["path"])]
+
+        if getattr(self, "_a2m_lib_search_is_placeholder", False):
+            q = ""
+        else:
+            q = (self._a2m_lib_search_var.get() or "").strip().lower()
+        if q:
+            live = [e for e in live
+                    if q in (e.get("title", "") or "").lower()
+                    or q in (e.get("artist", "") or "").lower()
+                    or q in os.path.basename(e.get("path", "")).lower()]
+
+        sort_mode = self._a2m_lib_sort_var.get()
+        if sort_mode == "Title":
+            live.sort(key=lambda e: (e.get("title")
+                                     or os.path.basename(e.get("path", ""))).lower())
+        elif sort_mode == "Not-split first":
+            live.sort(key=lambda e: (self._stem_is_split(e.get("path", "")),
+                                     (e.get("title") or "").lower()))
+        else:
+            live.sort(key=lambda e: e.get("mtime", 0), reverse=True)
+
+        if not live:
+            folder_set = False
+            try:
+                folder_set = bool((self.stem_lib_folder_var.get() or "").strip())
+            except Exception:
+                folder_set = False
+            if q:
+                msg = "No matches."
+            elif folder_set:
+                msg = "No songs found in your songs folder."
+            else:
+                msg = ("Set your songs folder on the YouTube → FLAC or "
+                       "Stem Splitter tab.")
+            tk.Label(self._a2m_lib_inner, text=msg, bg="#15152a",
+                     fg="#7e7e96", font=("Segoe UI", 9),
+                     padx=10, pady=14).pack(anchor="w")
+        else:
+            cap = 60
+            show = live if self._a2m_lib_show_all else live[:cap]
+            for i, e in enumerate(show):
+                split = self._stem_is_split(e.get("path", ""))
+                midi = self._midi_paired(e.get("path", ""))
+                self._a2m_lib_row(self._a2m_lib_inner, e, split, midi, i)
+            if (not self._a2m_lib_show_all) and len(live) > cap:
+                more = tk.Label(self._a2m_lib_inner,
+                                text=f"▾  Show all {len(live)} songs",
+                                bg="#15152a", fg="#b388ff", cursor="hand2",
+                                font=("Segoe UI", 9, "bold"), pady=6)
+                more.pack(fill=tk.X)
+
+                def _show_all(_e):
+                    self._a2m_lib_show_all = True
+                    self._a2m_library_do_refresh()
+                more.bind("<Button-1>", _show_all)
+
+        # Prune by the (path, mtime) ART KEY the cache is keyed on — NOT the
+        # row path — or every refresh would drop all PhotoImage refs, letting
+        # Tk garbage-collect them so the art tiles render blank.
+        try:
+            rendered = {getattr(r, "_a2m_art_key", None)
+                        for r in self._a2m_lib_rows}
+            self._a2m_lib_art_refs = {
+                k: v for k, v in self._a2m_lib_art_refs.items()
+                if k in rendered}
+        except Exception:
+            pass
+
+        try:
+            self._a2m_lib_canvas.update_idletasks()
+            self._a2m_lib_canvas.configure(
+                scrollregion=self._a2m_lib_canvas.bbox("all"))
+        except Exception:
+            pass
+
+    def _a2m_lib_select_path(self, path):
+        self._a2m_lib_selected_path = path
+        for r in self._a2m_lib_rows:
+            try:
+                r._yt_set_state("selected"
+                                if getattr(r, "_yt_path", None) == path
+                                else "rest")
+            except Exception:
+                pass
+
+    def _a2m_lib_row(self, parent, entry, split, midi, idx):
+        """Render one library row — mirrors _stem_lib_row, but chip col 7 is
+        'Create MIDI' (loads the drums split) instead of 'Split'."""
+        path = entry.get("path", "")
+        rest_bg = "#181830" if (idx % 2) else "#15152a"
+        HOVER_BG, SEL_BG, ACCENT = "#22203c", "#2c2748", "#b388ff"
+
+        row = tk.Frame(parent, bg=rest_bg)
+        row.pack(fill=tk.X)
+        row.columnconfigure(2, weight=1)
+        row.columnconfigure(8, minsize=110)
+        row.columnconfigure(9, minsize=22)
+        row.columnconfigure(10, minsize=80)
+        row._yt_path = path
+        row._yt_split = split
+        row._yt_color_targets = []
+
+        accent = tk.Frame(row, bg=rest_bg, width=3)
+        accent.grid(row=0, column=0, sticky="ns")
+        row._yt_accent = accent
+
+        _artc = self._a2m_lib_art_refs
+        try:
+            _mt = os.path.getmtime(path)
+        except Exception:
+            _mt = 0
+        _art_key = (path, _mt)
+        row._a2m_art_key = _art_key   # prune key (must match the cache key)
+        if _art_key in _artc:
+            photo = _artc[_art_key] or None
+        else:
+            photo = self._stem_lib_art_photo(path, size=40)
+            _artc[_art_key] = photo or False
+        if photo is not None:
+            art_lbl = tk.Label(row, image=photo, bg=rest_bg, bd=0)
+        else:
+            art_lbl = tk.Label(row, text="♪", bg="#0d0d1a", fg="#6f6f8f",
+                               font=("Segoe UI", 15), width=3, height=2)
+        art_lbl.grid(row=0, column=1, padx=(6, 8), pady=4)
+
+        textcol = tk.Frame(row, bg=rest_bg)
+        textcol.grid(row=0, column=2, sticky="ew")
+        row._yt_color_targets.append(textcol)
+        title = entry.get("title") or os.path.splitext(os.path.basename(path))[0]
+        title_lbl = tk.Label(textcol, text=self._yt_ellipsize(title, 42),
+                             bg=rest_bg, fg="#e8e8f0",
+                             font=("Segoe UI", 10, "bold"),
+                             anchor="w", justify="left")
+        title_lbl.pack(fill=tk.X, anchor="w")
+        row._yt_color_targets.append(title_lbl)
+        artist = entry.get("artist") or ""
+        if artist:
+            art_sub = tk.Label(textcol, text=self._yt_ellipsize(artist, 42),
+                               bg=rest_bg, fg="#9a9ab0",
+                               font=("Segoe UI", 9), anchor="w", justify="left")
+            art_sub.pack(fill=tk.X, anchor="w")
+            row._yt_color_targets.append(art_sub)
+
+        badges = tk.Frame(row, bg=rest_bg)
+        badges.grid(row=0, column=5, padx=(6, 6))
+        row._yt_color_targets.append(badges)
+        fmt = os.path.splitext(path)[1].lstrip(".").upper() or "?"
+        self._yt_make_badge(badges, fmt, present=True, neutral=True, row=row)
+        self._yt_make_badge(badges, "OGG", present=self._ogg_paired(path), row=row)
+        self._yt_make_badge(badges, "STEMS", present=split, row=row)
+        self._yt_make_badge(badges, "MIDI", present=midi, row=row)
+
+        dur_lbl = tk.Label(row,
+                           text=self._yt_fmt_duration(entry.get("duration_sec")),
+                           bg=rest_bg, fg="#9a9ab0", font=("Segoe UI", 9))
+        dur_lbl.grid(row=0, column=6, padx=(0, 8))
+        row._yt_color_targets.append(dur_lbl)
+
+        def _mk_chip(text, fg, cmd, col, border="#4a4a6b", bg=None, track=True):
+            chip = tk.Label(row, text=text, bg=(rest_bg if bg is None else bg),
+                            fg=fg, font=("Segoe UI", 9, "bold"), cursor="hand2",
+                            padx=8, pady=4, bd=0, highlightthickness=1,
+                            highlightbackground=border, highlightcolor=border)
+            chip.bind("<Button-1>", lambda _e, p=path: cmd(p))
+            chip.grid(row=0, column=col, padx=(0, 4), sticky="e")
+            if track:
+                row._yt_color_targets.append(chip)
+            return chip
+
+        # (a) Create MIDI — load the drums split into the A2M input. Col 7.
+        create_chip = _mk_chip("Create MIDI", ACCENT,
+                               self._a2m_lib_on_create_midi, 7)
+        self._add_tooltip(
+            create_chip,
+            "Load this song's lossless drums split into Audio → MIDI")
+
+        # (b) Open Stems — only when already split. Col 8.
+        if split:
+            open_chip = _mk_chip("Open Stems", "#46d18a",
+                                 self._a2m_lib_on_open_stems, 8)
+            self._add_tooltip(open_chip,
+                              "Opens your folder containing your drum stems")
+
+        _spinner = tk.Label(row, text="", bg=rest_bg, fg=ACCENT,
+                            font=("Consolas", 11, "bold"), width=2)
+        _spinner.grid(row=0, column=9, padx=(0, 2), sticky="e")
+        row._yt_color_targets.append(_spinner)
+        row._yt_spinner = _spinner
+
+        _playing = (path == getattr(self, "_yt_preview_path", None)
+                    and getattr(self, "_yt_preview_state", None) == "playing")
+        _play_bg = YT_PAUSE_CHIP_BG if _playing else YT_PLAY_CHIP_BG
+        row._yt_play_chip = _mk_chip(
+            "⏸  Pause" if _playing else "▶  Play",
+            "#ffffff", self._a2m_lib_on_play, 10,
+            border=_play_bg, bg=_play_bg, track=False)
+
+        sep = tk.Frame(parent, bg="#222238", height=1)
+        sep.pack(fill=tk.X)
+
+        def _set_state(state):
+            if state == "selected":
+                bg = SEL_BG
+                accent.configure(bg=ACCENT)
+            elif state == "hover":
+                bg = HOVER_BG
+                accent.configure(bg=ACCENT)
+            else:
+                bg = rest_bg
+                accent.configure(bg=rest_bg)
+            try:
+                row.configure(bg=bg)
+            except Exception:
+                pass
+            for w in row._yt_color_targets:
+                try:
+                    w.configure(bg=bg)
+                except Exception:
+                    pass
+        row._yt_set_state = _set_state
+
+        def _is_selected():
+            return self._a2m_lib_selected_path == path
+
+        def _on_enter(_e):
+            _set_state("selected" if _is_selected() else "hover")
+
+        def _on_leave(_e):
+            try:
+                x, y = self.root.winfo_pointerxy()
+                w = row.winfo_containing(x, y)
+            except Exception:
+                w = None
+            inside = False
+            while w is not None:
+                if w is row:
+                    inside = True
+                    break
+                w = getattr(w, "master", None)
+            if inside:
+                return
+            _set_state("selected" if _is_selected() else "rest")
+
+        def _on_click(_e):
+            self._a2m_lib_select_path(path)
+
+        def _on_right_click(e):
+            self._a2m_lib_select_path(path)
+            self._a2m_lib_context_menu(e, path)
+            return "break"
+
+        def _bind_recursive(w):
+            w.bind("<Enter>", _on_enter, add="+")
+            w.bind("<Leave>", _on_leave, add="+")
+            w.bind("<Button-1>", _on_click, add="+")
+            w.bind("<Button-3>", _on_right_click, add="+")
+            for c in w.winfo_children():
+                _bind_recursive(c)
+        _bind_recursive(row)
+
+        self._a2m_lib_rows.append(row)
+        _set_state("selected" if _is_selected() else "rest")
+
+    def _a2m_lib_context_menu(self, event, path):
+        """Row right-click menu — mirrors _stem_lib_context_menu, but the first
+        item is Create MIDI (not Split)."""
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Create MIDI",
+                         command=lambda: self._a2m_lib_on_create_midi(path))
+        menu.add_command(
+            label="Rename song…",
+            command=lambda: (self._stem_lib_rename(path),
+                             self.root.after(350, self._a2m_library_refresh)))
+        menu.add_command(
+            label="Edit artist…",
+            command=lambda: (self._stem_lib_edit_artist(path),
+                             self.root.after(350, self._a2m_library_refresh)))
+        menu.add_command(label="Open file location",
+                         command=lambda: self._stem_lib_open_location(path))
+        if self._stem_is_split(path):
+            menu.add_separator()
+            menu.add_command(label="Open stems folder",
+                             command=lambda: self._a2m_lib_on_open_stems(path))
+        menu.add_separator()
+        menu.add_command(
+            label="Delete song…",
+            command=lambda: (self._stem_lib_delete(path),
+                             self.root.after(350, self._a2m_library_refresh)))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _a2m_lib_on_open_stems(self, path):
+        try:
+            self._open_stems_folder(path)
+        except Exception:
+            try:
+                d = os.path.dirname(path)
+                if d and os.path.isdir(d):
+                    self._open_folder_crossplatform(d)
+            except Exception:
+                pass
+
+    def _a2m_lib_on_play(self, path):
+        """Play/Pause chip — toggles the SHARED single-stream preview, then
+        flips OUR rows' chips (scoped to _a2m_lib_rows)."""
+        try:
+            self._yt_preview_toggle(path)
+        except Exception:
+            pass
+        try:
+            self._a2m_lib_update_chips()
+        except Exception:
+            pass
+
+    def _a2m_lib_update_chips(self):
+        cur = getattr(self, "_yt_preview_path", None)
+        state = getattr(self, "_yt_preview_state", None)
+        for r in getattr(self, "_a2m_lib_rows", []):
+            chip = getattr(r, "_yt_play_chip", None)
+            if chip is None:
+                continue
+            try:
+                playing = (getattr(r, "_yt_path", None) == cur
+                           and state == "playing")
+                _bg = YT_PAUSE_CHIP_BG if playing else YT_PLAY_CHIP_BG
+                chip.configure(text="⏸  Pause" if playing else "▶  Play",
+                               bg=_bg, highlightbackground=_bg,
+                               highlightcolor=_bg)
+            except Exception:
+                pass
+
+    def _a2m_lib_on_tab_changed_stop_preview(self, _e=None):
+        """Stop the shared preview when the user leaves the Audio → MIDI tab
+        (mirrors the YT + Stem leave-guards; add=+ binding)."""
+        try:
+            if self.notebook.index("current") != self._tab_indexes.get("a2m"):
+                if getattr(self, "_yt_preview_path", None) is not None:
+                    self._yt_preview_stop()
+                self._a2m_lib_update_chips()
+        except Exception:
+            pass
+
     # ── Stem splitter helpers ─────────────────────────────────────────────────
     def _stem_iso_toggle(self):
         """Show/hide the custom isolation options."""
@@ -13379,14 +13960,32 @@ demucs.separate.main()
                   ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
         # ── Settings ──────────────────────────────────────────────────────────
-        # ── Two-column body: left = settings/output/convert/log, right = adv/debug ──
+        # ── Three-column body (owner redesign 2026-07-12): left = basic
+        # settings/convert/log, middle = E.D. / N.S.I. / Settings Profiles /
+        # Output cards, right = adv/debug ──
         body_cols = ttk.Frame(main)
         body_cols.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-        body_cols.columnconfigure(0, weight=3)
-        body_cols.columnconfigure(1, weight=2)
+        body_cols.columnconfigure(0, weight=5)   # left area: settings cols + library
+        body_cols.columnconfigure(1, weight=2)   # right: Advanced/Debug + MIDI Extractor
+        body_cols.rowconfigure(0, weight=1)
 
-        left_body = ttk.Frame(body_cols)
+        # Left area holds two setting sub-columns on top and the Song Library
+        # spanning both beneath them, so the library fills the vertical space
+        # beside the expandable MIDI Extractor on the right (owner redesign
+        # 2026-07-12: Log moved into the middle column, library added under the
+        # settings so there's no dead space when the MIDI Extractor is expanded).
+        left_area = ttk.Frame(body_cols)
+        left_area.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+
+        top_cols = ttk.Frame(left_area)
+        top_cols.pack(fill=tk.X)
+        top_cols.columnconfigure(0, weight=3)
+        top_cols.columnconfigure(1, weight=2)
+        left_body = ttk.Frame(top_cols)
         left_body.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        mid_body = ttk.Frame(top_cols)
+        mid_body.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+
         right_body = ttk.Frame(body_cols)
         right_body.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
@@ -13567,8 +14166,8 @@ demucs.separate.main()
         self.a2m_ride_var = tk.BooleanVar(value=False)
         ride_cb = ttk.Checkbutton(
             settings_frame,
-            text="Ride cymbal detection  —  OFF: ride hits appear in Crash lane  "
-                 "/ ON: attempt ride separation  ⚠  More reliable than it was previously, but still flawed",
+            text="Ride cymbal detection  —  OFF: rides → Crash lane  /  ON: "
+                 "attempt separation  ⚠  more reliable now, still flawed",
             variable=self.a2m_ride_var
         )
         ride_cb.grid(row=10, column=0, columnspan=3, sticky="w", pady=(6, 0))
@@ -13667,32 +14266,49 @@ demucs.separate.main()
         self._a2m_ml_frame.grid(row=18, column=0, columnspan=3, sticky="ew")
         self._a2m_ml_frame.grid_remove()  # hidden until ML/Hybrid selected
 
+        # Grid layout (owner 2026-07-12): row 0 = label | field | ✕ ; row 1 =
+        # Browse on its OWN row beneath the field, right-aligned so it sits flush
+        # with the field's rightmost edge. The ✕ keeps the small spot where
+        # Browse used to be. This stops the buttons clipping in the narrow column.
         ml_path_row = ttk.Frame(self._a2m_ml_frame)
         ml_path_row.pack(fill=tk.X, pady=(6, 2))
-        ttk.Label(ml_path_row, text="Model file (.onnx):", width=18).pack(side=tk.LEFT)
+        ml_path_row.columnconfigure(1, weight=1)
+        ttk.Label(ml_path_row, text="Model file (.onnx):", width=18).grid(
+            row=0, column=0, sticky="w")
         self.a2m_onnx_path_var = tk.StringVar()
         _cfg_onnx = load_config()
         if _cfg_onnx.get("onnx_model_path") and os.path.exists(_cfg_onnx["onnx_model_path"]):
             self.a2m_onnx_path_var.set(_cfg_onnx["onnx_model_path"])
-        ml_path_entry = ttk.Entry(ml_path_row, textvariable=self.a2m_onnx_path_var, width=40)
-        ml_path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
-        ttk.Button(ml_path_row, text="Browse...",
-                   command=self._a2m_browse_onnx_model).pack(side=tk.LEFT, padx=(0, 4))
+        ml_path_entry = ttk.Entry(ml_path_row, textvariable=self.a2m_onnx_path_var, width=12)
+        ml_path_entry.grid(row=0, column=1, sticky="ew", padx=(0, 4))
         ttk.Button(ml_path_row, text="✕", width=2,
-                   command=lambda: self.a2m_onnx_path_var.set("")).pack(side=tk.LEFT)
+                   command=lambda: self.a2m_onnx_path_var.set("")).grid(
+                       row=0, column=2, sticky="w")
+        ttk.Button(ml_path_row, text="Browse...",
+                   command=self._a2m_browse_onnx_model).grid(
+                       row=1, column=1, sticky="e", pady=(3, 0))
 
         ml_status_row = ttk.Frame(self._a2m_ml_frame)
         ml_status_row.pack(fill=tk.X, pady=(2, 6))
-        self.a2m_onnx_status_lbl = ttk.Label(ml_status_row,
-                                              text="⬜  No model loaded",
-                                              style="Sub.TLabel", foreground="#888")
-        self.a2m_onnx_status_lbl.pack(side=tk.LEFT)
+        # The ML frame only stretches to the Basic-Detection panel's natural
+        # content width, which the 3-column layout made narrow — so a long
+        # "Model ready (…1.7 MB)" label with two RIGHT-packed buttons clipped
+        # the Download button off the card. Fix: wrapping status label on top,
+        # Check + Download on their OWN row beneath it (can't be clipped in
+        # compact OR roomy mode).
+        self.a2m_onnx_status_lbl = ttk.Label(
+            ml_status_row, text="⬜  No model loaded",
+            style="Sub.TLabel", foreground="#888",
+            wraplength=520, justify=tk.LEFT)
+        self.a2m_onnx_status_lbl.pack(anchor="w")
+        _onnx_btn_row = ttk.Frame(ml_status_row)
+        _onnx_btn_row.pack(fill=tk.X, pady=(3, 0))
+        ttk.Button(_onnx_btn_row, text="🔍  Check",
+                   command=self._a2m_auto_detect_onnx).pack(side=tk.LEFT)
         self._a2m_onnx_get_btn = ttk.Button(
-            ml_status_row, text="↓  Download Model",
+            _onnx_btn_row, text="↓  Download Model",
             command=self._a2m_download_onnx_model)
-        self._a2m_onnx_get_btn.pack(side=tk.RIGHT, padx=(0, 4))
-        ttk.Button(ml_status_row, text="🔍  Check",
-                   command=self._a2m_auto_detect_onnx).pack(side=tk.RIGHT)
+        self._a2m_onnx_get_btn.pack(side=tk.LEFT, padx=(4, 0))
 
         ml_thresh_row = ttk.Frame(self._a2m_ml_frame)
         ml_thresh_row.pack(fill=tk.X, pady=(0, 2))
@@ -13782,9 +14398,9 @@ demucs.separate.main()
         self.a2m_enhanced_detection_mode_var.trace_add("write", _update_alt_status)
         self.a2m_enhanced_detection_mode_var.trace_add("write", _persist_alt_mode)
 
-        alt_frame = ttk.LabelFrame(settings_frame,
+        alt_frame = ttk.LabelFrame(mid_body,
                                    text=" Enhanced Detection (experimental) ", padding=8)
-        alt_frame.grid(row=19, column=0, columnspan=3, sticky="ew", pady=(12, 6))
+        alt_frame.pack(fill=tk.X, pady=(0, 10))
         self._a2m_alt_frame = alt_frame
 
         alt_hdr = ttk.Frame(alt_frame)
@@ -13827,7 +14443,7 @@ demucs.separate.main()
             alt_frame,
             text="Off — default detection only. Enhanced Detection is disabled.",
             style="Sub.TLabel", foreground="#8888aa",
-            justify=tk.LEFT, wraplength=700)
+            justify=tk.LEFT, wraplength=430)
         self.a2m_alt_status_lbl.pack(anchor="w", fill=tk.X, pady=(2, 0))
 
         # ── F-INT-001 v4.4.4: Neural Stem Isolation (experimental) ────────────
@@ -13857,9 +14473,9 @@ demucs.separate.main()
         self.a2m_separator_slot_var = tk.StringVar(value=sep_default)
 
         sep_frame = ttk.LabelFrame(
-            settings_frame,
+            mid_body,
             text=" Neural Stem Isolation (experimental) ", padding=8)
-        sep_frame.grid(row=20, column=0, columnspan=3, sticky="ew", pady=(8, 6))
+        sep_frame.pack(fill=tk.X, pady=(0, 10))
         self._a2m_sep_frame = sep_frame
 
         sep_intro = ttk.Label(
@@ -13869,7 +14485,7 @@ demucs.separate.main()
                   "into each other. Adds ~30-60s per song on CPU. Recommended; "
                   "turns on automatically once the model is installed."),
             style="Sub.TLabel", foreground="#c9d1d9",
-            justify=tk.LEFT, wraplength=700)
+            justify=tk.LEFT, wraplength=430)
         sep_intro.pack(anchor="w", fill=tk.X, pady=(0, 4))
 
         sep_radio_row = ttk.Frame(sep_frame)
@@ -13905,12 +14521,23 @@ demucs.separate.main()
         self.a2m_sep_status_lbl = ttk.Label(
             sep_status_row, textvariable=self.a2m_sep_status_var,
             style="Sub.TLabel", foreground="#8888aa",
-            justify=tk.LEFT, wraplength=600)
+            justify=tk.LEFT, wraplength=400)
         self.a2m_sep_status_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self._a2m_sep_download_btn = ttk.Button(
             sep_status_row, text="↓  Download Model",
             command=self._a2m_sep_download_clicked)
+        # Compact mode narrows this middle column enough to clip the "l" in
+        # "Model" — shrink just this button's font a touch so it fits (roomy
+        # mode is untouched).
+        if getattr(self, "_compact_layout", False):
+            try:
+                _sep_dl_style = ttk.Style()
+                _sep_dl_style.configure("A2MSepDL.TButton", font=("Segoe UI", 8),
+                                        padding=(4, 2))
+                self._a2m_sep_download_btn.configure(style="A2MSepDL.TButton")
+            except Exception:
+                pass
         self._a2m_sep_download_btn.pack(side=tk.RIGHT, padx=(8, 0))
 
         def _a2m_sep_refresh_status(*_):
@@ -14544,7 +15171,7 @@ demucs.separate.main()
         _update_alt_status()
 
         # Audio to MIDI setting presets
-        preset_frame = ttk.LabelFrame(left_body, text=" Settings Profiles ", padding=8)
+        preset_frame = ttk.LabelFrame(mid_body, text=" Settings Profiles ", padding=8)
         preset_frame.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(preset_frame,
                   text="Save detector settings before experimenting, then restore or compare later.",
@@ -14592,7 +15219,7 @@ demucs.separate.main()
             self.root.after(80, lambda s=_last_settings: self._a2m_apply_settings_snapshot(s))
 
         # ── Output ────────────────────────────────────────────────────────────
-        out_frame = ttk.LabelFrame(left_body, text=" Output ", padding=10)
+        out_frame = ttk.LabelFrame(mid_body, text=" Output ", padding=10)
         out_frame.pack(fill=tk.X, pady=(0, 10))
 
         self.a2m_output_var = tk.StringVar()
@@ -14635,7 +15262,9 @@ demucs.separate.main()
         self.a2m_timer_lbl.pack(anchor="w", pady=(0, 4))
 
         # ── Log ───────────────────────────────────────────────────────────────
-        a2m_log_frame = ttk.LabelFrame(left_body, text=" Log ", padding=5)
+        # Owner redesign 2026-07-12: Log lives in the middle column beneath the
+        # Output card (frees the left column's lower half for the Song Library).
+        a2m_log_frame = ttk.LabelFrame(mid_body, text=" Log ", padding=5)
         a2m_log_frame.pack(fill=tk.X, pady=(0, 10))
 
         a2m_log_btn_row = ttk.Frame(a2m_log_frame)
@@ -14648,7 +15277,7 @@ demucs.separate.main()
                    command=self._a2m_open_output).pack(side=tk.RIGHT)
 
         self.a2m_log_text = scrolledtext.ScrolledText(
-            a2m_log_frame, height=12, bg="#0d1117", fg="#58a6ff",
+            a2m_log_frame, height=20, bg="#0d1117", fg="#58a6ff",
             font=("Consolas", 9), wrap=tk.WORD,
             insertbackground="#58a6ff", state="disabled")
         self.a2m_log_text.pack(fill=tk.BOTH, expand=True)
@@ -14659,6 +15288,16 @@ demucs.separate.main()
             "Tip: enable Show diagnostic log before converting if you want to use the Help tab Detection Troubleshooter.\n"
         )
         self.a2m_log_text.configure(state="disabled")
+
+        # ── Song Library ─────────────────────────────────────────────────────
+        # Owner redesign 2026-07-12: a mirror of the YouTube tab library, sharing
+        # the Stem Splitter's row right-click menu, but the primary action is
+        # "Create MIDI" (loads the song's lossless drums split into the input
+        # field above). Spans the left area beneath the two settings columns so
+        # it fills the space next to the expandable MIDI Extractor.
+        a2m_lib_frame = ttk.LabelFrame(left_area, text=" Song Library ", padding=8)
+        a2m_lib_frame.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+        self._a2m_library_build(a2m_lib_frame)
 
     # ── Audio → MIDI helpers ──────────────────────────────────────────────────
     def _a2m_preview_last(self):
@@ -27783,6 +28422,9 @@ demucs.separate.main()
         # so it gets its own leave-the-stem-tab stop guard (add="+").
         self.notebook.bind("<<NotebookTabChanged>>",
                            self._stem_lib_on_tab_changed_stop_preview, add="+")
+        # The Audio → MIDI "Song Library" shares the same preview stream too.
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           self._a2m_lib_on_tab_changed_stop_preview, add="+")
 
     # =====================================================================
     # v4.4.61-1 — YouTube → FLAC: Send-to-Stem + Downloaded-Songs Library

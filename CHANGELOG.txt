@@ -27,6 +27,27 @@
 ==============================================================================
 
 ------------------------------------------------------------------------------
+  v4.7.8.8   --   2026-07-12
+------------------------------------------------------------------------------
+  Audio -> MIDI tab redesign + new Song Library.
+
+  Audio -> MIDI:
+  - Redesigned the tab into a three-column layout: the detection settings on the
+    left; Enhanced Detection, Neural Stem Isolation, Settings Profiles and Output
+    are now their own cards in the middle with a larger Log beneath them; and
+    Advanced / Debug stays on the right.
+  - NEW: a "Song Library" (Your Songs) right on the tab, mirroring the YouTube and
+    Stem Splitter libraries. Right-click a song, or click its "Create MIDI"
+    button, to load that song's lossless drums split straight into the
+    Audio -> MIDI input, ready to convert. Search, sort, album art and full-song
+    preview are included.
+  - The Stem Splitter model choice (htdemucs / htdemucs_ft) is now remembered
+    between sessions, so htdemucs_ft users don't have to re-select it every launch.
+  - Layout fixes: the ONNX model-file row (Browse / Check / Download Model), the
+    ride-cymbal toggle line, and the Neural Stem Isolation "Download Model" button
+    no longer clip in the narrower column.
+
+------------------------------------------------------------------------------
   v4.7.8.7   --   2026-07-12
 ------------------------------------------------------------------------------
   Clone Hero export + .rlrr import correctness.
