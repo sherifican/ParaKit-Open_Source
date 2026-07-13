@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-late-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.7.8.8`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.8.9`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -106,11 +106,21 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 
 *Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
 
+**v4.7.8.9**<br>2026-07-13
+
+Audio → MIDI — tab polish
+
+<img src="screenshots/app-05-audio-to-midi.png?v=20260713" width="900" alt="Audio → MIDI — middle-column cards tinted, top boxes removed">
+
++ The **middle column** (Enhanced Detection, Neural Stem Isolation, Settings Profiles, Output) now has a **subtle tint** so it reads as one grouped panel set, distinct from the settings on the left and Advanced / Debug on the right.
++ Removed the **Reality Check** and **Engine Cheat Sheet** boxes from the top of the tab to cut scrolling (that guidance already lives in the Quick Path box and the Detection Engine section).
++ Fixed the ONNX **model-file row** — the clear (✕) button no longer clips at narrower window widths; Browse sits on its own row beneath the field.
+
+---
+
 **v4.7.8.8**<br>2026-07-12
 
 Audio → MIDI — tab redesign & new Song Library
-
-<img src="screenshots/app-05-audio-to-midi.png?v=20260712" width="900" alt="Audio → MIDI — redesigned three-column tab with the new Song Library">
 
 + **Redesigned the Audio → MIDI tab** into three columns: the detection settings on the left; **Enhanced Detection**, **Neural Stem Isolation**, **Settings Profiles** and **Output** are now their own cards in the middle with a larger **Log** beneath them; and **Advanced / Debug** stays on the right.
 + **NEW — a "Your Songs" library** right on the tab, mirroring the YouTube and Stem Splitter libraries. Right-click a song, or click its **Create MIDI** button, to load that song's lossless drums split straight into the Audio → MIDI input, ready to convert — with search, sort, album art and full-song preview.
@@ -195,7 +205,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.7.8.8`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.8.9`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -378,7 +388,7 @@ with hands-on testing on real songs, **with sources listed**, and the experiment
 <img src="screenshots/app-04-stem-splitter.png?v=20260704" width="900" alt="Stem Splitter">
 
 ### 5 · Audio → MIDI
-<img src="screenshots/app-05-audio-to-midi.png?v=20260712" width="900" alt="Audio to MIDI">
+<img src="screenshots/app-05-audio-to-midi.png?v=20260713" width="900" alt="Audio to MIDI">
 
 ### 6 · MIDI Editor
 <img src="screenshots/app-06-midi-editor.png?v=20260620" width="900" alt="MIDI Editor">
@@ -592,6 +602,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.7.8.9**<br>2026-07-13 | <ul><li>**Audio → MIDI — middle column tinted.** Enhanced Detection, Neural Stem Isolation, Settings Profiles and Output now share a subtle tint so the middle reads as one grouped panel set, distinct from the left settings and the right Advanced / Debug column.</li><li>Removed the **Reality Check** and **Engine Cheat Sheet** boxes from the top of the tab to cut scrolling — that guidance already lives in the Quick Path box and the Detection Engine section.</li><li>Fixed the ONNX **model‑file row**: the clear (✕) button no longer clips at narrower window widths; Browse sits on its own row beneath the field.</li></ul> |
 | **v4.7.8.8**<br>2026-07-12 | <ul><li>**Audio → MIDI — full‑tab redesign.** The tab is now three columns: detection settings on the left; **Enhanced Detection**, **Neural Stem Isolation**, **Settings Profiles** and **Output** as their own cards in the middle with a larger **Log** beneath them; **Advanced / Debug** on the right.</li><li>**NEW — a "Your Songs" library on the tab** (mirrors the YouTube / Stem Splitter libraries). Right‑click a song, or hit **Create MIDI**, to load that song's lossless drums split straight into the Audio → MIDI input, ready to convert — with search, sort, album art and full‑song preview.</li><li>The **Stem Splitter model choice (htdemucs / htdemucs_ft) is now remembered** between sessions.</li><li>Layout fixes: the ONNX model‑file row (Browse / Check / Download Model), the ride‑cymbal toggle line, and the Neural Stem Isolation "Download Model" button no longer clip in the narrower column.</li></ul> |
 | **v4.7.8.7**<br>2026-07-12 | <ul><li>**Clone Hero / .rlrr — china & 13" crash no longer dropped.** Converting Paradiddle charts to Clone Hero (and importing a `.rlrr` into the MIDI Editor or Practice view) silently deleted china, 13"‑crash and splash cymbal hits — a large share of a typical library lost cymbals with no warning. They now map to the **Crash** lane (china is treated as crash everywhere, matching the difficulty reducer).</li><li>**Batch converter** no longer writes a broken, section‑less Clone Hero chart when a slot has no drum events — it skips that slot with an error instead of installing an unplayable song.</li><li>**MIDI Editor:** the one‑time `.parakit_bak` safety backups now appear in the **Load MIDI** dialog, so you can reopen one to recover (they're ordinary MIDI files).</li></ul> |
 | **v4.7.8.6**<br>2026-07-12 | <ul><li>**Difficulty reduction keeps the whole song.** Easy/Medium/Hard charts made with note‑reduction previously thinned toward the end — kick and snare could drop out of the back of longer songs. Reduced charts now spread notes evenly across the full length. Expert is unchanged.</li><li>**MIDI timing rounds to the nearest tick** instead of always rounding down — removes a small drift (~8 ms over ~10 saves) when repeatedly saving the same chart in the MIDI Editor; also applied to the Audio→MIDI and Sheet‑Music→MIDI exports.</li><li>Fixed a rare **doubled note** when the Advanced Peak Detection / Trigger Align options were used together.</li></ul> |

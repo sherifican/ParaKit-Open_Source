@@ -5726,7 +5726,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.8.8"
+    VERSION = "4.7.8.9"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -8510,6 +8510,42 @@ class MidiToRlrrApp:
         style.configure("TFrame", background=BG)
         style.configure("TLabelframe", background=BG)
         style.configure("TLabelframe.Label", background=BG)
+        # Card.TLabelframe — reserved hook for the Audio -> MIDI section cards.
+        # Currently NEUTRAL (identical to the default TLabelframe) while we
+        # iterate on a cleaner card look (owner 2026-07-12: don't force the
+        # purple borders yet — the cards keep the style tag so re-enabling later
+        # is a one-block change here).
+        style.configure("Card.TLabelframe", background=BG)
+        style.configure("Card.TLabelframe.Label", background=BG)
+        # Tint.* — subtle-tint card treatment for the Audio -> MIDI tab. A card
+        # tagged with these (via _a2m_tint_card) reads as one lightly-lifted panel
+        # vs the page. Applied to a STAGGERED subset so adjacent cards don't blend.
+        # Self-coloured widgets (buttons/entries/combos/scales/tk) are left alone.
+        def _tint_lift(hex_c, amt):
+            hex_c = str(hex_c).lstrip("#")
+            r, g, b = (int(hex_c[i:i + 2], 16) for i in (0, 2, 4))
+            return "#%02x%02x%02x" % (min(255, r + amt), min(255, g + amt),
+                                      min(255, b + amt))
+        _TINT = _tint_lift(BG, 18)
+        _TINT_RADIO = "#00d4d4"   # matches the base TRadiobutton cyan
+        style.configure("Tint.TLabelframe", background=_TINT)
+        style.configure("Tint.TLabelframe.Label", background=_TINT,
+                        foreground=PURPLE,
+                        font=("Segoe UI", base_font_size, "bold"))
+        style.configure("Tint.TFrame", background=_TINT)
+        style.configure("Tint.TLabel", background=_TINT)
+        style.configure("Tint.Sub.TLabel", background=_TINT, foreground="#8b93a8",
+                        font=("Segoe UI", 8 if compact else 9))
+        style.configure("Tint.TCheckbutton", background=_TINT)
+        style.map("Tint.TCheckbutton",
+                  background=[("active", _TINT), ("!active", _TINT)])
+        style.configure("Tint.TRadiobutton", background=_TINT,
+                        foreground=_TINT_RADIO)
+        style.map("Tint.TRadiobutton",
+                  background=[("active", _TINT), ("!active", _TINT)],
+                  foreground=[("disabled", "#888888"), ("active", _TINT_RADIO),
+                              ("!active", _TINT_RADIO)],
+                  indicatorcolor=[("selected", _TINT_RADIO), ("pressed", _TINT_RADIO)])
         # Pin the base widget backgrounds too — otherwise plain ttk.Label /
         # Checkbutton / Radiobutton keep ttkbootstrap-darkly's own gray, which
         # used to blend with the old #222222 frames but now shows as gray patches
@@ -13833,6 +13869,41 @@ demucs.separate.main()
     # =========================================================================
     # Tab 5 — Audio → MIDI Converter
     # =========================================================================
+    def _a2m_tint_card(self, card):
+        """Give a LabelFrame card the subtle 'Tint.*' panel treatment: the card
+        and its blend-in children (frames / labels / checks / radios) switch to
+        the tinted styles so the whole card reads as one lightly-lifted panel.
+        Self-coloured widgets (buttons, entries, comboboxes, scales, tk widgets)
+        are left untouched. Drives the STAGGERED tint on the Audio -> MIDI tab."""
+        _map = {
+            "TLabelframe":  "Tint.TLabelframe",
+            "TFrame":       "Tint.TFrame",
+            "TLabel":       "Tint.TLabel",
+            "TCheckbutton": "Tint.TCheckbutton",
+            "TRadiobutton": "Tint.TRadiobutton",
+        }
+
+        def _walk(w):
+            cls = w.winfo_class()
+            new = _map.get(cls)
+            if cls == "TLabel":
+                try:
+                    if str(w.cget("style")) == "Sub.TLabel":
+                        new = "Tint.Sub.TLabel"
+                except Exception:
+                    pass
+            if new:
+                try:
+                    w.configure(style=new)
+                except Exception:
+                    pass
+            for c in w.winfo_children():
+                _walk(c)
+        try:
+            _walk(card)
+        except Exception:
+            pass
+
     def _build_audio_to_midi_tab(self, parent):
         """Basic Pitch audio-to-MIDI conversion tab."""
         canvas = tk.Canvas(parent, bg=APP_BG, highlightthickness=0)
@@ -13856,7 +13927,8 @@ demucs.separate.main()
                   style="Sub.TLabel").pack(anchor="w", pady=(2, 8))
 
         # Quick path and compact guidance
-        quick_frame = ttk.LabelFrame(main, text=" Quick Path ", padding=10)
+        quick_frame = ttk.LabelFrame(main, text=" Quick Path ", padding=10,
+                                     style="Card.TLabelframe")
         quick_frame.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(
             quick_frame,
@@ -13870,43 +13942,16 @@ demucs.separate.main()
             justify=tk.LEFT
         ).pack(anchor="w", pady=(3, 0))
 
+        # Reality Check + Engine Cheat Sheet boxes removed (owner 2026-07-12) to
+        # cut top-of-tab scrolling; the Quick Path box + Detection Engine section
+        # already carry the "use Hybrid / check the result in the MIDI Editor"
+        # guidance. tips_frame is kept for the cyan .alt_detector.mid note below.
         tips_frame = ttk.Frame(main)
         tips_frame.pack(fill=tk.X, pady=(0, 12))
-        header_cols = ttk.Frame(tips_frame)
-        header_cols.pack(fill=tk.X)
-        header_cols.columnconfigure(0, weight=1)
-        header_cols.columnconfigure(1, weight=1)
 
-        reality_col = ttk.LabelFrame(header_cols, text=" Reality Check ", padding=10)
-        reality_col.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        # v4.7.8.5 — removed the medium-red "MIDI silently overwrites" disclaimer:
-        # Convert now PROMPTS before overwriting an existing MIDI (the a2m-overwrite
-        # fix), so the warning is no longer true. The orange reality note now spans
-        # the whole box, with a responsive wraplength recomputed on <Configure>.
-        reality_col.columnconfigure(0, weight=1)
-        reality_orange = ttk.Label(reality_col,
-                  text="Audio detection gets you a strong first draft, not a finished chart. Always check the generated MIDI in the MIDI Editor before building the song.",
-                  style="Sub.TLabel", foreground="#e09a3a",
-                  justify=tk.LEFT, wraplength=230)
-        reality_orange.grid(row=0, column=0, sticky="nw")
-
-        def _reality_resize(event, _o=reality_orange):
-            _o.configure(wraplength=max(150, event.width - 22))
-        reality_col.bind("<Configure>", _reality_resize)
-
-        engine_col = ttk.LabelFrame(header_cols, text=" Engine Cheat Sheet ", padding=10)
-        engine_col.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        ttk.Label(engine_col,
-                  text="Spectral: safest, no model needed\n"
-                       "Hybrid: best target when the ONNX model is available\n"
-                       "ML: useful for comparison and clean drum stems",
-                  style="Sub.TLabel", foreground="#b388ff",
-                  justify=tk.LEFT, wraplength=410).pack(anchor="w")
-
-        # Cyan note (owner 2026-06-25) — sits BELOW the red "Heads up" overwrite text in
-        # the Reality Check box; cyan so it contrasts and stands out under the red.
-        # Explains the optional ".alt_detector.mid" comparison files so the extra MIDI
-        # next to a converted song isn't confusing.
+        # Cyan note (owner 2026-06-25) — explains the optional ".alt_detector.mid"
+        # comparison files so the extra MIDI next to a converted song isn't
+        # confusing.
         ttk.Label(tips_frame,
                   text="💡  Seeing an extra '.alt_detector.mid' file next to a converted song? "
                        "It's an optional helper for the MIDI Editor's Ghost Overlay -- a deliberately "
@@ -13927,7 +13972,8 @@ demucs.separate.main()
                   style="Sub.TLabel", foreground="#b388ff",
                   justify=tk.LEFT, wraplength=860).pack(anchor="w")
 
-        in_frame = ttk.LabelFrame(main, text=" Input Audio File (drums-only or full mix) ", padding=10)
+        in_frame = ttk.LabelFrame(main, text=" Input Audio File (drums-only or full mix) ", padding=10,
+                                  style="Card.TLabelframe")
         in_frame.pack(fill=tk.X, pady=(0, 10))
 
         self.a2m_input_var = tk.StringVar()
@@ -13989,7 +14035,8 @@ demucs.separate.main()
         right_body = ttk.Frame(body_cols)
         right_body.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
 
-        settings_frame = ttk.LabelFrame(left_body, text=" Basic Detection Settings ", padding=10)
+        settings_frame = ttk.LabelFrame(left_body, text=" Basic Detection Settings ", padding=10,
+                                         style="Card.TLabelframe")
         settings_frame.pack(fill=tk.X, pady=(0, 10))
 
         # Notice shown when pure ML mode is active — spectral settings inactive
@@ -14272,15 +14319,20 @@ demucs.separate.main()
         # Browse used to be. This stops the buttons clipping in the narrow column.
         ml_path_row = ttk.Frame(self._a2m_ml_frame)
         ml_path_row.pack(fill=tk.X, pady=(6, 2))
-        ml_path_row.columnconfigure(1, weight=1)
         ttk.Label(ml_path_row, text="Model file (.onnx):", width=18).grid(
             row=0, column=0, sticky="w")
         self.a2m_onnx_path_var = tk.StringVar()
         _cfg_onnx = load_config()
         if _cfg_onnx.get("onnx_model_path") and os.path.exists(_cfg_onnx["onnx_model_path"]):
             self.a2m_onnx_path_var.set(_cfg_onnx["onnx_model_path"])
-        ml_path_entry = ttk.Entry(ml_path_row, textvariable=self.a2m_onnx_path_var, width=12)
-        ml_path_entry.grid(row=0, column=1, sticky="ew", padx=(0, 4))
+        # FIXED-width field (NO column weight / expand): an expanding field grew
+        # to the card's content edge and pushed the ✕ into the padding, clipping
+        # it at narrower window widths. A fixed width keeps label + field + ✕ a
+        # compact cluster that fits at any width; the entry still scrolls to show
+        # the path's tail. Browse sits on its own row beneath, right-aligned to
+        # the field's edge.
+        ml_path_entry = ttk.Entry(ml_path_row, textvariable=self.a2m_onnx_path_var, width=30)
+        ml_path_entry.grid(row=0, column=1, sticky="w", padx=(0, 4))
         ttk.Button(ml_path_row, text="✕", width=2,
                    command=lambda: self.a2m_onnx_path_var.set("")).grid(
                        row=0, column=2, sticky="w")
@@ -14399,7 +14451,8 @@ demucs.separate.main()
         self.a2m_enhanced_detection_mode_var.trace_add("write", _persist_alt_mode)
 
         alt_frame = ttk.LabelFrame(mid_body,
-                                   text=" Enhanced Detection (experimental) ", padding=8)
+                                   text=" Enhanced Detection (experimental) ", padding=8,
+                                   style="Card.TLabelframe")
         alt_frame.pack(fill=tk.X, pady=(0, 10))
         self._a2m_alt_frame = alt_frame
 
@@ -14474,7 +14527,8 @@ demucs.separate.main()
 
         sep_frame = ttk.LabelFrame(
             mid_body,
-            text=" Neural Stem Isolation (experimental) ", padding=8)
+            text=" Neural Stem Isolation (experimental) ", padding=8,
+            style="Card.TLabelframe")
         sep_frame.pack(fill=tk.X, pady=(0, 10))
         self._a2m_sep_frame = sep_frame
 
@@ -14611,7 +14665,8 @@ demucs.separate.main()
 
         # ── Advanced / Debug ──────────────────────────────────────────────────
         adv_frame = ttk.LabelFrame(right_body,
-                                   text=" Advanced / Debug  -  optional tuning ", padding=8)
+                                   text=" Advanced / Debug  -  optional tuning ", padding=8,
+                                   style="Card.TLabelframe")
         adv_frame.pack(fill=tk.X)
 
         self.a2m_debug_var = tk.BooleanVar(value=False)
@@ -15171,7 +15226,8 @@ demucs.separate.main()
         _update_alt_status()
 
         # Audio to MIDI setting presets
-        preset_frame = ttk.LabelFrame(mid_body, text=" Settings Profiles ", padding=8)
+        preset_frame = ttk.LabelFrame(mid_body, text=" Settings Profiles ", padding=8,
+                                      style="Card.TLabelframe")
         preset_frame.pack(fill=tk.X, pady=(0, 10))
         ttk.Label(preset_frame,
                   text="Save detector settings before experimenting, then restore or compare later.",
@@ -15219,7 +15275,8 @@ demucs.separate.main()
             self.root.after(80, lambda s=_last_settings: self._a2m_apply_settings_snapshot(s))
 
         # ── Output ────────────────────────────────────────────────────────────
-        out_frame = ttk.LabelFrame(mid_body, text=" Output ", padding=10)
+        out_frame = ttk.LabelFrame(mid_body, text=" Output ", padding=10,
+                                   style="Card.TLabelframe")
         out_frame.pack(fill=tk.X, pady=(0, 10))
 
         self.a2m_output_var = tk.StringVar()
@@ -15264,7 +15321,8 @@ demucs.separate.main()
         # ── Log ───────────────────────────────────────────────────────────────
         # Owner redesign 2026-07-12: Log lives in the middle column beneath the
         # Output card (frees the left column's lower half for the Song Library).
-        a2m_log_frame = ttk.LabelFrame(mid_body, text=" Log ", padding=5)
+        a2m_log_frame = ttk.LabelFrame(mid_body, text=" Log ", padding=5,
+                                       style="Card.TLabelframe")
         a2m_log_frame.pack(fill=tk.X, pady=(0, 10))
 
         a2m_log_btn_row = ttk.Frame(a2m_log_frame)
@@ -15295,9 +15353,18 @@ demucs.separate.main()
         # "Create MIDI" (loads the song's lossless drums split into the input
         # field above). Spans the left area beneath the two settings columns so
         # it fills the space next to the expandable MIDI Extractor.
-        a2m_lib_frame = ttk.LabelFrame(left_area, text=" Song Library ", padding=8)
+        a2m_lib_frame = ttk.LabelFrame(left_area, text=" Song Library ", padding=8,
+                                       style="Card.TLabelframe")
         a2m_lib_frame.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
         self._a2m_library_build(a2m_lib_frame)
+
+        # ── Subtle tint on the middle column (owner 2026-07-13) ──────────────
+        # Every middle-column card gets the subtle tint EXCEPT the Log, so the
+        # middle stack reads as one grouped panel set distinct from the left /
+        # right columns. None of these carry a ttk scale, so no untinted patch.
+        # Runs last, once every card's children exist.
+        for _tint_card in (alt_frame, sep_frame, preset_frame, out_frame):
+            self._a2m_tint_card(_tint_card)
 
     # ── Audio → MIDI helpers ──────────────────────────────────────────────────
     def _a2m_preview_last(self):

@@ -27,6 +27,21 @@
 ==============================================================================
 
 ------------------------------------------------------------------------------
+  v4.7.8.9   --   2026-07-13
+------------------------------------------------------------------------------
+  Audio -> MIDI tab polish.
+
+  Audio -> MIDI:
+  - The middle column (Enhanced Detection, Neural Stem Isolation, Settings
+    Profiles, Output) now has a subtle tint so it reads as one grouped panel set,
+    distinct from the settings on the left and Advanced / Debug on the right.
+  - Removed the "Reality Check" and "Engine Cheat Sheet" boxes from the top of the
+    tab to cut scrolling (that guidance already lives in the Quick Path box and
+    the Detection Engine section).
+  - Fixed the ONNX model-file row: the clear (X) button no longer clips at
+    narrower window widths; Browse sits on its own row beneath the field.
+
+------------------------------------------------------------------------------
   v4.7.8.8   --   2026-07-12
 ------------------------------------------------------------------------------
   Audio -> MIDI tab redesign + new Song Library.
