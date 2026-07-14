@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-late-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.7.8.9.1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.8.10`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -178,7 +178,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.7.8.9.1`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.8.10`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -575,6 +575,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.7.8.10**<br>2026-07-13 | <ul><li>**Audio → MIDI — Song Library "Create MIDI" fix.** Create MIDI now loads the song's lossless **drums-only** split (never the full mix), and is **disabled** for any song that hasn't been split into stems yet — so you can't accidentally feed the full mix into Audio → MIDI. Split a song on the Stem Splitter tab first and the button lights up. Clicking Create MIDI now also **scrolls the tab back to the top** so the loaded Audio file field is in view.</li></ul> |
 | **v4.7.8.9.1**<br>2026-07-13 | <ul><li>**MIDI Editor — hi-hats: right-click now deletes; select first to change articulation.** Right-clicking a hi-hat note now **deletes** it — the same quick one-click removal you already get on every other lane. To change a hi-hat's **Closed / Open / Pedal** articulation instead, first **select** the note(s) (Ctrl-click one, or rubber-band a group), then right-click one of them — the variation menu opens and your choice applies to **every selected hi-hat** at once.</li><li>**Audio → MIDI:** the **Advanced / Debug — optional tuning** heading is now **orange** so it stands out as an important settings section.</li></ul> |
 | **v4.7.8.9**<br>2026-07-13 | <ul><li>**Audio → MIDI — middle column tinted.** Enhanced Detection, Neural Stem Isolation, Settings Profiles and Output now share a subtle tint so the middle reads as one grouped panel set, distinct from the left settings and the right Advanced / Debug column.</li><li>Removed the **Reality Check** and **Engine Cheat Sheet** boxes from the top of the tab to cut scrolling — that guidance already lives in the Quick Path box and the Detection Engine section.</li><li>Fixed the ONNX **model‑file row**: the clear (✕) button no longer clips at narrower window widths; Browse sits on its own row beneath the field.</li></ul> |
 | **v4.7.8.8**<br>2026-07-12 | <ul><li>**Audio → MIDI — full‑tab redesign.** The tab is now three columns: detection settings on the left; **Enhanced Detection**, **Neural Stem Isolation**, **Settings Profiles** and **Output** as their own cards in the middle with a larger **Log** beneath them; **Advanced / Debug** on the right.</li><li>**NEW — a "Your Songs" library on the tab** (mirrors the YouTube / Stem Splitter libraries). Right‑click a song, or hit **Create MIDI**, to load that song's lossless drums split straight into the Audio → MIDI input, ready to convert — with search, sort, album art and full‑song preview.</li><li>The **Stem Splitter model choice (htdemucs / htdemucs_ft) is now remembered** between sessions.</li><li>Layout fixes: the ONNX model‑file row (Browse / Check / Download Model), the ride‑cymbal toggle line, and the Neural Stem Isolation "Download Model" button no longer clip in the narrower column.</li></ul> |

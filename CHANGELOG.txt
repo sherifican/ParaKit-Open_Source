@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.8.9.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.8.10  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,19 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.8.10   --   2026-07-13
+------------------------------------------------------------------------------
+  Audio -> MIDI Song Library "Create MIDI" fix.
+
+  Audio -> MIDI:
+  - Song Library "Create MIDI" fix: the button now loads the song's lossless
+    DRUMS-ONLY split (not the full mix), and is disabled for any song that
+    hasn't been split into stems yet -- so you can't accidentally feed the full
+    mix into Audio -> MIDI. Split a song on the Stem Splitter tab first and the
+    button lights up. Clicking Create MIDI now also scrolls the tab back to the
+    top so the loaded Audio file field is in view.
 
 ------------------------------------------------------------------------------
   v4.7.8.9.1   --   2026-07-13

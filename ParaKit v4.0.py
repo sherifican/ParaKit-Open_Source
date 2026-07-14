@@ -5726,7 +5726,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.8.9.1"
+    VERSION = "4.7.8.10"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -12464,8 +12464,28 @@ class MidiToRlrrApp:
                 "That song is no longer on disk:\n" + str(path))
             return
         target = self._a2m_lib_drums_for(path)
+        # Backstop: _a2m_lib_drums_for returns the source path UNCHANGED only
+        # when no drums split (FLAC or .ogg) exists on disk — i.e. the full
+        # mix. Create MIDI must feed the drums-only split, never the full mix,
+        # so refuse here rather than silently loading it. The row chip is
+        # already disabled in that case; this guards the right-click path and
+        # any stale UI.
+        if target == path:
+            messagebox.showinfo(
+                "No drums split found",
+                "This song hasn't been split into stems yet, so only the "
+                "full mix is on disk — which isn't a valid Audio → MIDI "
+                "input.\n\nSplit it on the Stem Splitter tab first, then use "
+                "Create MIDI.")
+            return
         try:
             self.a2m_input_var.set(target)
+        except Exception:
+            pass
+        # Snap the tab back to the top so the just-loaded Audio file field is in
+        # view (the Song Library sits at the bottom of the scrolled tab).
+        try:
+            self._tab5_canvas.yview_moveto(0.0)
         except Exception:
             pass
         try:
@@ -12798,22 +12818,36 @@ class MidiToRlrrApp:
         row._yt_color_targets.append(dur_lbl)
 
         def _mk_chip(text, fg, cmd, col, border="#4a4a6b", bg=None, track=True):
+            # cmd=None -> disabled chip: no click binding, arrow cursor.
             chip = tk.Label(row, text=text, bg=(rest_bg if bg is None else bg),
-                            fg=fg, font=("Segoe UI", 9, "bold"), cursor="hand2",
+                            fg=fg, font=("Segoe UI", 9, "bold"),
+                            cursor=("hand2" if cmd is not None else "arrow"),
                             padx=8, pady=4, bd=0, highlightthickness=1,
                             highlightbackground=border, highlightcolor=border)
-            chip.bind("<Button-1>", lambda _e, p=path: cmd(p))
+            if cmd is not None:
+                chip.bind("<Button-1>", lambda _e, p=path: cmd(p))
             chip.grid(row=0, column=col, padx=(0, 4), sticky="e")
             if track:
                 row._yt_color_targets.append(chip)
             return chip
 
         # (a) Create MIDI — load the drums split into the A2M input. Col 7.
-        create_chip = _mk_chip("Create MIDI", ACCENT,
-                               self._a2m_lib_on_create_midi, 7)
-        self._add_tooltip(
-            create_chip,
-            "Load this song's lossless drums split into Audio → MIDI")
+        # Only clickable when detected drum stems exist on disk; without a
+        # split there's only the full mix to load, which is NOT a valid
+        # Audio → MIDI input, so the chip is shown disabled/greyed.
+        if split:
+            create_chip = _mk_chip("Create MIDI", ACCENT,
+                                   self._a2m_lib_on_create_midi, 7)
+            self._add_tooltip(
+                create_chip,
+                "Load this song's lossless drums split into Audio → MIDI")
+        else:
+            create_chip = _mk_chip("Create MIDI", "#5b5b74", None, 7,
+                                   border="#33334d")
+            self._add_tooltip(
+                create_chip,
+                "Split this song into stems first — Create MIDI needs the "
+                "drums split, not the full mix")
 
         # (b) Open Stems — only when already split. Col 8.
         if split:
@@ -12906,8 +12940,10 @@ class MidiToRlrrApp:
         """Row right-click menu — mirrors _stem_lib_context_menu, but the first
         item is Create MIDI (not Split)."""
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Create MIDI",
-                         command=lambda: self._a2m_lib_on_create_midi(path))
+        menu.add_command(
+            label="Create MIDI",
+            command=lambda: self._a2m_lib_on_create_midi(path),
+            state=("normal" if self._stem_is_split(path) else "disabled"))
         menu.add_command(
             label="Rename song…",
             command=lambda: (self._stem_lib_rename(path),
