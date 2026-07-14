@@ -5738,7 +5738,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.10"
+    VERSION = "4.7.11"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -14109,23 +14109,9 @@ demucs.separate.main()
         # Reality Check + Engine Cheat Sheet boxes removed (owner 2026-07-12) to
         # cut top-of-tab scrolling; the Quick Path box + Detection Engine section
         # already carry the "use Hybrid / check the result in the MIDI Editor"
-        # guidance. tips_frame is kept for the cyan .alt_detector.mid note below.
-        tips_frame = ttk.Frame(main)
-        tips_frame.pack(fill=tk.X, pady=(0, 12))
-
-        # Cyan note (owner 2026-06-25) — explains the optional ".alt_detector.mid"
-        # comparison files so the extra MIDI next to a converted song isn't
-        # confusing.
-        ttk.Label(tips_frame,
-                  text="💡  Seeing an extra '.alt_detector.mid' file next to a converted song? "
-                       "It's an optional helper for the MIDI Editor's Ghost Overlay -- a deliberately "
-                       "over-eager detection pass that fills a chart with lots of candidate tom hits "
-                       "(most are wrong, but some catch real toms the normal pass missed). Open it in "
-                       "the Ghost Overlay as a layer UNDER your main chart and use the opacity slider to "
-                       "spot the good ones, then place those toms into your real chart. It never changes "
-                       "your main MIDI -- safe to ignore or delete if you don't use it.",
-                  style="Sub.TLabel", foreground="#00d4d4",
-                  justify=tk.LEFT, wraplength=860).pack(anchor="w", pady=(6, 2))
+        # guidance. (v4.7.11: the cyan ".alt_detector.mid" tip was removed with
+        # Enhanced Detection — that comparison file was only ever written by the
+        # enhanced pass, which is retired, so no such file is produced anymore.)
 
         _, input_tips = self._make_collapsible_tips(
             main, title="Input and accuracy notes", start_open=False,
@@ -14559,96 +14545,28 @@ demucs.separate.main()
         # Detect model on startup if ML/Hybrid was last selected
         self.root.after(600, self._a2m_auto_detect_onnx)
 
-        _alt_cfg = load_config()
-        _alt_mode = _alt_cfg.get("a2m_enhanced_detection_mode")
-        if _alt_mode not in ("off", "crash", "toms", "both"):
-            _alt_mode = "both" if _alt_cfg.get("a2m_use_alt_detector", False) else "off"
-        self.a2m_enhanced_detection_mode_var = tk.StringVar(value=_alt_mode)
-
-        def _update_alt_status(*_):
-            mode = self.a2m_enhanced_detection_mode_var.get()
-            if mode == "crash":
-                self.a2m_alt_status_lbl.configure(
-                    text=("Crash only — improves crash cymbal detection on tricky "
-                          "material. Tom detection stays on the built-in detector. "
-                          "Adds extra processing time and writes a comparison file "
-                          "(.alt_detector.mid) for side-by-side review."))
-            elif mode == "toms":
-                self.a2m_alt_status_lbl.configure(
-                    text=("Toms only — improves tom detection on tracks with prominent "
-                          "fills. Crash detection stays on the built-in detector. On "
-                          "songs with few or no toms, review and delete any unwanted "
-                          "tom notes in the MIDI Editor."))
-            elif mode == "both":
-                self.a2m_alt_status_lbl.configure(
-                    text=("Crash + Toms — both enhancements active. This preserves the "
-                          "v4.4.0 Enhanced Detection ON behavior and is best for "
-                          "rock/metal material that needs a stronger draft."))
-            else:
-                self.a2m_alt_status_lbl.configure(
-                    text="Off — default detection only. Enhanced Detection is disabled.")
-
-        def _persist_alt_mode(*_):
-            mode = self.a2m_enhanced_detection_mode_var.get()
-            if mode not in ("off", "crash", "toms", "both"):
-                mode = "off"
-                self.a2m_enhanced_detection_mode_var.set(mode)
-            save_config({
-                "a2m_enhanced_detection_mode": mode,
-                "a2m_use_alt_detector": mode != "off",
-            })
-
-        self.a2m_enhanced_detection_mode_var.trace_add("write", _update_alt_status)
-        self.a2m_enhanced_detection_mode_var.trace_add("write", _persist_alt_mode)
+        # v4.7.11 — Enhanced Detection (the LarsNet "alt-detector" path) RETIRED as a
+        # user toggle. LarsNet's model was never installed, so the toggle only ever
+        # failed to load and fell back to the main detector — a verified silent no-op
+        # (enhanced=both produced byte-identical output to off). The var is kept
+        # (always "off") so the save/restore + run-flag plumbing stays intact; the
+        # enhanced pass in _a2m_do_convert is now unreachable (enhanced_mode is
+        # hard-forced "off" where _a2m_run_flags is built).
+        self.a2m_enhanced_detection_mode_var = tk.StringVar(value="off")
 
         alt_frame = ttk.LabelFrame(mid_body,
-                                   text=" Enhanced Detection (experimental) ", padding=8,
+                                   text=" Enhanced Detection ", padding=8,
                                    style="Card.TLabelframe")
         alt_frame.pack(fill=tk.X, pady=(0, 10))
         self._a2m_alt_frame = alt_frame
-
-        alt_hdr = ttk.Frame(alt_frame)
-        alt_hdr.pack(fill=tk.X, pady=(0, 4))
-        ttk.Label(alt_hdr, text="Choose what to enhance:",
-                  style="Sub.TLabel", foreground="#c9d1d9").pack(side=tk.LEFT)
-
-        alt_mode_frame = ttk.Frame(alt_frame)
-        alt_mode_frame.pack(anchor="w", fill=tk.X, pady=(0, 5))
-        self._a2m_alt_mode_widgets = []
-        _alt_options = [
-            ("off", "Off",
-             "Default detection only. Disable Enhanced Detection entirely."),
-            ("crash", "Crash only",
-             "Improves crash cymbal detection on tricky material (fast metal, "
-             "slow ballads, sparse intros, dense crash sections). Tom detection "
-             "stays on the default detector."),
-            ("toms", "Toms only",
-             "Improves tom detection, especially on rock and metal tracks with "
-             "prominent tom fills. Crash detection stays on the default detector.\n\n"
-             "Heads up: on tracks with very few or zero tom hits (some pop, "
-             "electronic, ballads), this may add unwanted tom notes — drag-select "
-             "on the tom row in the editor and Delete to clean up."),
-            ("both", "Crash + Toms (Full Enhance)",
-             "Both crash AND tom enhancements active. Recommended for general use "
-             "on rock/metal material. This was the default 'Enhanced Detection ON' "
-             "behavior in v4.4.0."),
-        ]
-        for value, label, tip in _alt_options:
-            rb = ttk.Radiobutton(
-                alt_mode_frame,
-                text=label,
-                value=value,
-                variable=self.a2m_enhanced_detection_mode_var)
-            rb.pack(anchor="w", pady=1)
-            self._add_tooltip(rb, tip)
-            self._a2m_alt_mode_widgets.append(rb)
-
-        self.a2m_alt_status_lbl = ttk.Label(
+        ttk.Label(
             alt_frame,
-            text="Off — default detection only. Enhanced Detection is disabled.",
+            text=("The experimental Enhanced Detection options have been folded into "
+                  "the default detection pipeline. The fine-tuned model plus the "
+                  "cleanup pass now handle crash and tom detection directly, so "
+                  "there's no separate toggle to enable."),
             style="Sub.TLabel", foreground="#8888aa",
-            justify=tk.LEFT, wraplength=430)
-        self.a2m_alt_status_lbl.pack(anchor="w", fill=tk.X, pady=(2, 0))
+            justify=tk.LEFT, wraplength=430).pack(anchor="w", fill=tk.X)
 
         # ── F-INT-001 v4.4.4: Neural Stem Isolation (experimental) ────────────
         # Separator-slot opt-in. Default OFF; opt-in routes A→MIDI through the
@@ -15186,15 +15104,8 @@ demucs.separate.main()
             self.a2m_cleanup_cymbal_var.set(_a2m_cfg["a2m_cleanup_cymbal"])
         if "a2m_cleanup_kick" in _a2m_cfg:
             self.a2m_cleanup_kick_var.set(_a2m_cfg["a2m_cleanup_kick"])
-        if ("a2m_enhanced_detection_mode" in _a2m_cfg
-                or "a2m_use_alt_detector" in _a2m_cfg):
-            _restored_alt_mode = _a2m_cfg.get("a2m_enhanced_detection_mode")
-            if _restored_alt_mode not in ("off", "crash", "toms", "both"):
-                _restored_alt_mode = (
-                    "both" if _a2m_cfg.get("a2m_use_alt_detector", False)
-                    else "off"
-                )
-            self.a2m_enhanced_detection_mode_var.set(_restored_alt_mode)
+        # v4.7.11 — Enhanced Detection retired; ignore any saved mode, keep it OFF.
+        self.a2m_enhanced_detection_mode_var.set("off")
         # Apply restored engine (shows/hides ML frame, syncs dedup toggle)
         self.root.after(100, self._a2m_update_engine_ui)
 
@@ -15385,8 +15296,6 @@ demucs.separate.main()
         self._midi_extractor_panel = MidiExtractorPanel(
             self._midi_extractor_frame,
             on_send_to_editor=_me_extractor_send_to_editor)
-
-        _update_alt_status()
 
         # Audio to MIDI setting presets
         preset_frame = ttk.LabelFrame(mid_body, text=" Settings Profiles ", padding=8,
@@ -16210,9 +16119,9 @@ demucs.separate.main()
             "cymbal_resolver": bool(
                 getattr(self, "a2m_cymbal_resolver_var", None) is not None
                 and self.a2m_cymbal_resolver_var.get()),
-            "enhanced_mode": (self.a2m_enhanced_detection_mode_var.get()
-                              if getattr(self, "a2m_enhanced_detection_mode_var", None)
-                              else "off"),
+            # v4.7.11 — Enhanced Detection retired (LarsNet never installed = no-op);
+            # hard-forced OFF so the now-unreachable enhanced pass never runs.
+            "enhanced_mode": "off",
         }
 
         thread = threading.Thread(
@@ -33476,31 +33385,16 @@ demucs.separate.main()
               "    Check the conversion log for a fallback notice.")
         divider(s)
         entry(s,
-              "🔬  Enhanced Detection  (experimental)\n\n"
-              "An optional helper that runs alongside the built-in detector. You\n"
-              "choose exactly what it is allowed to improve.\n\n"
-              "Options:\n"
-              "  • Off: default detection only.\n"
-              "  • Crash only: improves crash cymbal detection on tricky material.\n"
-              "    Tom detection stays on the built-in detector.\n"
-              "  • Toms only: improves tom detection on rock and metal tracks with\n"
-              "    prominent fills. Crash detection stays on the built-in detector.\n"
-              "    On songs with very few toms, this can add unwanted tom notes;\n"
-              "    drag-select across the tom row in the MIDI Editor and press Delete.\n"
-              "  • Crash + Toms: both enhancements active. This matches the old\n"
-              "    Enhanced Detection ON behavior from v4.4.0.\n\n"
-              "What always stays the same:\n"
-              "  • Kick, snare, hi-hat, ride, and final tom-lane choices stay on\n"
-              "    the built-in detector.\n"
-              "  • If the helper has any problem, ParaKit falls back to the built-in\n"
-              "    detector so your conversion still finishes.\n"
-              "  • Enhanced options take extra processing time and write a comparison\n"
-              "    file (.alt_detector.mid) for Ghost Overlay review.\n\n"
-              "When to use it:\n"
-              "  • Leave it OFF for normal use.\n"
-              "  • Try Crash only for pop, ballads, or songs with few toms.\n"
-              "  • Try Crash + Toms for rock or metal tracks with big fills.\n\n"
-              "This is still experimental, so always review the chart before export.")
+              "🔬  Enhanced Detection — folded into the default detection\n\n"
+              "The old experimental Enhanced Detection options (Crash only / Toms\n"
+              "only / Crash + Toms) have been folded into the default detection\n"
+              "pipeline and removed as a separate toggle.\n\n"
+              "The fine-tuned detection model and the cleanup pass now handle crash\n"
+              "and tom detection directly, on every conversion — so there is nothing\n"
+              "extra to turn on. Kick, snare, hi-hat, ride, and the tom-lane choices\n"
+              "all run through the built-in detector as usual. Tune tom sensitivity\n"
+              "with the Strict / Moderate / Aggressive / OFF control if a song needs\n"
+              "it, and review the chart in the MIDI Editor before export.")
         divider(s)
         entry(s,
               "🧠  Neural Stem Isolation  (experimental)\n\n"
@@ -33529,23 +33423,23 @@ demucs.separate.main()
               "    to default detection so your conversion still finishes.")
         divider(s)
         entry(s,
-              "👻  Comparing detectors with Ghost Overlay\n\n"
-              "When you turn on Enhanced Detection, ParaKit writes two chart files: "
-              "the regular chart file used in the game, and a second comparison file "
-              "that shows what the enhanced detector found on its own. You can use "
-              "both to compare the two detectors side-by-side without converting "
-              "your song twice.\n\n"
+              "👻  Comparing charts with Ghost Overlay\n\n"
+              "Ghost Overlay lets you load a second MIDI into the editor and see its "
+              "notes as faded 'ghost' notes underneath your current chart — handy for "
+              "comparing two versions of a chart (an earlier draft, or the same song "
+              "converted at a different tom sensitivity) without switching back and "
+              "forth.\n\n"
               "How to compare them:\n"
-              "  1. Open the regular chart file in the MIDI Editor.\n"
+              "  1. Open your chart in the MIDI Editor.\n"
               "  2. In the right sidebar, find the Ghost Overlay panel.\n"
-              "  3. Click Browse in Ghost Overlay and select the comparison file "
-              "     from the same folder.\n"
-              "  4. The second file's notes appear as faded ghost notes underneath "
-              "     your regular chart.\n\n"
+              "  3. Click Browse in Ghost Overlay and select the other MIDI you want "
+              "     to compare against.\n"
+              "  4. That file's notes appear as faded ghost notes underneath your "
+              "     chart.\n\n"
               "Where the two charts agree, the notes line up. Where they disagree, "
-              "you can see exactly which notes one detector caught that the other "
-              "missed. This makes it easy to decide if any cleanup is needed before "
-              "saving your final chart.")
+              "you can see exactly which notes one has that the other doesn't. This "
+              "makes it easy to decide if any cleanup is needed before saving your "
+              "final chart.")
         divider(s)
         entry(s,
               "🥁  How each engine handles cymbals — what to expect in the MIDI Editor\n\n"

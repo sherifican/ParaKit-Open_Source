@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-late-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.7.10`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.11`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -178,7 +178,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.7.10`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.11`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -575,6 +575,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.7.11**<br>2026-07-14 | <ul><li>**Audio → MIDI — Enhanced Detection folded into the default.** The experimental **Enhanced Detection** options (Crash / Toms / Crash + Toms) have been folded into the default detection pipeline and removed as a separate toggle — the fine-tuned model plus the cleanup pass now handle crash and tom detection directly on every conversion, so there's nothing extra to switch on. A short note where the toggle used to be (and in the Help tab) explains it. Your detection results don't change — the default pipeline is what conversions were already using.</li></ul> |
 | **v4.7.10**<br>2026-07-14 | <ul><li>**Audio → MIDI — Tom "OFF" now truly zeroes toms.** OFF removes **every** tom, floor toms included, so it's a real off switch — previously it only dropped the mid/rack toms and left the floor-tom line in. Reach for it when a song is picking up phantom toms, then add any real toms back in the MIDI Editor. (Detection is unchanged; this only strips toms on the OFF setting.)</li><li>**Color-coded tab buttons.** The tabs are now tinted for at-a-glance navigation: **Stem Splitter green, Audio → MIDI yellow, MIDI Editor orange, YouTube → FLAC cyan, Asset Manager red, Quick Start & FAQ magenta**; the rest stay purple — matching the in-game Paradiddle drum-kit piece colors. The active tab keeps the dark-purple pressed look and tabs lighten on hover.</li><li>**Matching library badges.** The **MIDI** badge is now yellow, the **Create MIDI** chip is yellow, and on the Stem Splitter library the **Open Stems** chip has a green outline and the **Split** chip a magenta one.</li></ul> |
 | **v4.7.9**<br>2026-07-14 | <ul><li>**Audio → MIDI — new drum-detection model + ride cymbals on by default.** Updated the drum-detection model to a fine-tuned version with a re-tuned gate profile — validated on 39 freshly-downloaded, **training-blind** metal tracks (pre-registered, score-once protocol, independent 3-way review): **macro-F +0.048, crash +0.051** (95% CI entirely positive), every lane improved or unchanged, no regressions. The previous model is kept for one-step rollback.</li><li>**Ride cymbals now kept in the Ride lane by default.** The cleanup pass separates rides automatically instead of folding every cymbal into Crash — turn the **Ride** toggle **OFF** to fold all cymbals into Crash and reclassify by hand. The older, unreliable spectral ride estimator has been retired.</li><li>**Tom sensitivity re-calibrated** for the new model: **Strict / Moderate (default) / Aggressive / OFF.** Moderate is the precision sweet spot — it cuts phantom toms sharply versus the model's raw output (especially on metal). Dense songs can still leave a few phantom toms; reclassify or delete them in the MIDI Editor, drop to Strict for fewer, or OFF.</li><li>**Song Library:** the **Create MIDI** chip now shows a **purple outline** when it's active (a drums-only split exists for that song) and stays gray when there's no split yet — a clearer at-a-glance cue for which songs are ready.</li></ul> |
 | **v4.7.8.10**<br>2026-07-13 | <ul><li>**Audio → MIDI — Song Library "Create MIDI" fix.** Create MIDI now loads the song's lossless **drums-only** split (never the full mix), and is **disabled** for any song that hasn't been split into stems yet — so you can't accidentally feed the full mix into Audio → MIDI. Split a song on the Stem Splitter tab first and the button lights up. Clicking Create MIDI now also **scrolls the tab back to the top** so the loaded Audio file field is in view.</li></ul> |

@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.10  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.11  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,20 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.11   --   2026-07-14
+------------------------------------------------------------------------------
+  Enhanced Detection folded into the default detection.
+
+  Audio -> MIDI:
+  - The experimental "Enhanced Detection" options (Crash only / Toms only /
+    Crash + Toms) have been folded into the default detection pipeline and
+    removed as a separate toggle. The fine-tuned model plus the cleanup pass now
+    handle crash and tom detection directly on every conversion, so there is
+    nothing extra to switch on. A short note where the toggle used to be, and in
+    the Help tab, explains the change. This does not change your detection
+    results -- the default pipeline is what conversions were already using.
 
 ------------------------------------------------------------------------------
   v4.7.10   --   2026-07-14
