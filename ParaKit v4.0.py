@@ -5726,7 +5726,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.8.9"
+    VERSION = "4.7.8.9.1"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -8517,6 +8517,16 @@ class MidiToRlrrApp:
         # is a one-block change here).
         style.configure("Card.TLabelframe", background=BG)
         style.configure("Card.TLabelframe.Label", background=BG)
+        # Re-assert the Audio→MIDI Advanced/Debug title's orange (owner
+        # 2026-07-13). It's a classic tk.Label labelwidget (ttkbootstrap-darkly
+        # overrides derived ttk-style foregrounds at render time), so we re-force
+        # its colours here on every theme (re)apply — bg tracks the active theme.
+        _adv_lbl = getattr(self, "_adv_tuning_lbl", None)
+        if _adv_lbl is not None:
+            try:
+                _adv_lbl.configure(bg=BG, fg="#ff9e3d")
+            except Exception:
+                pass
         # Tint.* — subtle-tint card treatment for the Audio -> MIDI tab. A card
         # tagged with these (via _a2m_tint_card) reads as one lightly-lifted panel
         # vs the page. Applied to a STAGGERED subset so adjacent cards don't blend.
@@ -14664,9 +14674,19 @@ demucs.separate.main()
         }
 
         # ── Advanced / Debug ──────────────────────────────────────────────────
-        adv_frame = ttk.LabelFrame(right_body,
-                                   text=" Advanced / Debug  -  optional tuning ", padding=8,
-                                   style="Card.TLabelframe")
+        # Orange, bold title so this reads as important "optional tuning"
+        # settings (owner 2026-07-13). A ttk derived-style foreground is
+        # overridden by ttkbootstrap-darkly at render time (see the TRadiobutton
+        # note in _apply_theme), so we use a classic tk.Label as the LabelFrame's
+        # labelwidget and re-assert its colour in _apply_theme — the same
+        # ttkbootstrap-proof approach _fix_header_labels uses for the header.
+        self._adv_tuning_lbl = tk.Label(
+            right_body, text=" Advanced / Debug  -  optional tuning ",
+            bg=APP_BG, fg="#ff9e3d",
+            font=("Segoe UI",
+                  8 if getattr(self, "_compact_layout", False) else 9, "bold"))
+        adv_frame = ttk.LabelFrame(right_body, labelwidget=self._adv_tuning_lbl,
+                                   padding=8, style="Card.TLabelframe")
         adv_frame.pack(fill=tk.X)
 
         self.a2m_debug_var = tk.BooleanVar(value=False)
@@ -18155,9 +18175,12 @@ demucs.separate.main()
                 cb.pack(side=tk.LEFT, padx=(4, 0))
 
         ttk.Label(frame,
-                  text=("Hi-Hat is PER-NOTE: right-click any hi-hat note in the "
-                        "editor to set it Closed (42) /\nOpen (46) / Pedal (44) — "
-                        "mixed open/closed charts are preserved on export. Open "
+                  text=("Hi-Hat is PER-NOTE: select the hi-hat note(s) in the "
+                        "editor (Ctrl-click or\nrubber-band), then right-click one "
+                        "to set them Closed (42) / Open (46) /\nPedal (44) — the "
+                        "change applies to every selected hi-hat. (Right-clicking "
+                        "an\nunselected hi-hat deletes it.) "
+                        "Mixed open/closed charts are preserved on export. Open "
                         "hats\nshow up hollow with a yellow outline in the editor "
                         "so you can spot them\nat a glance. The row above only "
                         "bulk-sets the currently loaded chart (not a saved "
@@ -22532,7 +22555,15 @@ demucs.separate.main()
                 self.root.after(300, menu.destroy)
         elif (self.MIDI_EDITOR_LANES[note["lane_idx"]]["name"]
                 == self.MANUAL_NOTE_HHAT_EXEMPT):
-            # Hi-hat — variation menu (Closed/Open/Pedal per-note, owner
+            # Hi-hat. Owner 2026-07-13: right-click DELETES an unselected hi-hat
+            # (fast deletion, same as every other lane). The variation menu only
+            # opens when the clicked hi-hat is part of the current selection
+            # (Ctrl-click "individually" or rubber-band) — and the chosen
+            # variation then applies to every selected hi-hat.
+            if ni not in getattr(self, "_me_selected_notes", set()):
+                self._me_delete_note_rclick(ni)
+                return
+            # Selected hi-hat — variation menu (Closed/Open/Pedal per-note, owner
             # 2026-07-09) with delete kept inside it, mirroring the flagged-note
             # menu pattern above.
             menu = tk.Menu(self.root, tearoff=0,
@@ -33522,8 +33553,11 @@ demucs.separate.main()
               "  Hi-Hat works like the other lanes — pick its MIDI note in the\n"
               "  Manager (Closed 42 / Open 46 / Pedal 44) and new hats you place\n"
               "  use it. But hi-hats can ALSO be changed individually, because a\n"
-              "  song mixes open and closed hits: right-click any hi-hat note in\n"
-              "  the editor to set it Closed / Open / Pedal on its own. Those\n"
+              "  song mixes open and closed hits: SELECT the hi-hat note(s)\n"
+              "  (Ctrl-click or rubber-band) and then right-click one to set them\n"
+              "  Closed / Open / Pedal — the change applies to every selected\n"
+              "  hi-hat. (Right-clicking an UNSELECTED hi-hat deletes it, so quick\n"
+              "  note-removal still works the same as every other lane.) Those\n"
               "  per-note choices are preserved on export (the Hi-Hat lane is the\n"
               "  one lane that is not flattened to a single note), which is why\n"
               "  its readout shows the lane note '& per note'. 'Set all hats now'\n"

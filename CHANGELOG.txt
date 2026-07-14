@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.8.5  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.8.9.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,25 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.8.9.1   --   2026-07-13
+------------------------------------------------------------------------------
+  MIDI Editor + Audio -> MIDI polish.
+
+  MIDI Editor:
+  - Right-clicking a hi-hat note now DELETES it -- the same quick one-click
+    removal you already get on every other lane. To change a hi-hat's
+    articulation instead, first SELECT the note(s) (Ctrl-click for one, or
+    rubber-band a group), then right-click one of them: the Closed / Open / Pedal
+    menu opens and your choice applies to every selected hi-hat at once.
+    (Previously every hi-hat right-click opened the menu, so there was no fast
+    way to just delete a hat.)
+
+  Audio -> MIDI:
+  - The "Advanced / Debug - optional tuning" heading is now orange so it stands
+    out as an important settings section.
+
 
 ------------------------------------------------------------------------------
   v4.7.8.9   --   2026-07-13
