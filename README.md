@@ -129,33 +129,6 @@ Audio → MIDI — tab redesign & new Song Library
 
 ---
 
-**v4.7.8.7**<br>2026-07-12
-
-Clone Hero export & .rlrr import correctness
-
-+ Fix: china and 13" crash cymbals were silently dropped when converting to Clone Hero and when importing a .rlrr into the MIDI Editor / Practice view — a large share of a typical library lost cymbals with no warning. china / 13" crash / splash now map to the Crash lane (china = crash everywhere).
-+ The batch converter no longer installs a broken, section-less Clone Hero song when a slot has no drum events — it skips that slot with an error instead.
-+ The one-time `.parakit_bak` safety backups now show up in the "Load MIDI" dialog so you can reopen one to recover.
-
----
-
-**v4.7.8.6**<br>2026-07-12
-
-Difficulty & timing correctness
-
-+ Difficulty reduction now keeps notes across the whole song — Easy/Medium/Hard charts made with note-reduction no longer thin out toward the end (kick/snare could drop from the back of longer songs). Expert is unchanged.
-+ MIDI timing rounds to the nearest tick — removes a small drift (~8 ms over ~10 saves) when repeatedly saving in the MIDI Editor; also applied to the Audio→MIDI and Sheet-Music→MIDI writers.
-+ Fixed a rare doubled note when the Advanced Peak Detection / Trigger Align options were used together.
-
----
-
-**v4.7.8.5**<br>2026-07-12
-
-Stability & correctness pass — whole app
-
-+ 24 fixes. Highlights: Stem Splitter library Delete/Rename now targets only the exact song (never a same-prefixed one); the MIDI Editor gains unsaved-edit and lossy-overwrite guards, reliable flags/undo, and a new **MIDI Input (BETA)** button to record drum hits from a connected kit; Audio→MIDI asks before overwriting a MIDI and fixes Auto-Detect offset drift; Single Song Creator tempo/offset correctness; Preview/Practice pause-position and drift fixes; atomic, failure-surfacing settings/config saves. Full list in **CHANGELOG.txt**.
-
----
 
 **v4.7.0**<br>2026-07-10
 
