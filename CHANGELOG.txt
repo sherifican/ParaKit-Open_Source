@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.9  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.10  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,29 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.10   --   2026-07-14
+------------------------------------------------------------------------------
+  Tom OFF now truly zeroes toms + color-coded tab buttons for easier navigation.
+
+  Audio -> MIDI:
+  - Tom detection "OFF" now removes EVERY tom (floor toms included), so it is a
+    true off switch. Previously OFF only dropped the mid/rack toms the ML gate
+    controls and left the floor-tom line in, because floor toms come from a
+    spectral path the sensitivity preset cannot reach. It is now a clean escape
+    hatch when a song is picking up phantom toms -- switch to OFF, then add any
+    real toms back by hand in the MIDI Editor. (Detection itself is unchanged;
+    this only strips toms from the output on the OFF setting.)
+
+  Interface -- color-coded navigation:
+  - The tab buttons are now tinted so you can find them at a glance: Stem
+    Splitter green, Audio -> MIDI yellow, MIDI Editor orange, YouTube -> FLAC
+    cyan, Quick Start & FAQ magenta; the rest stay purple. The active tab keeps
+    the dark-purple pressed look, and tabs lighten on hover.
+  - Library badges + chips recolored to match: the MIDI badge is now yellow (was
+    green) and the "Create MIDI" chip is yellow; on the Stem Splitter library the
+    "Open Stems" chip now has a green outline and the "Split" chip a magenta one.
 
 ------------------------------------------------------------------------------
   v4.7.9   --   2026-07-14

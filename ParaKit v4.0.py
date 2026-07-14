@@ -5738,7 +5738,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.9"
+    VERSION = "4.7.10"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -6049,12 +6049,21 @@ class MidiToRlrrApp:
                   wraplength=900, justify=tk.LEFT).pack(
                       anchor="w", pady=((1 if compact else 4), 0))
 
-        # ── Notebook ─────────────────────────────────────────────────────────
+        # ── Notebook + custom colored tab bar ─────────────────────────────────
+        # v4.8.0 — ttk.Notebook has no per-tab -background (verified: TclError
+        # "unknown option -background"), so the native tab strip is HIDDEN (empty
+        # TNotebook.Tab layout, re-asserted in _apply_theme) and the notebook is
+        # driven from a custom row of colored buttons (_build_tab_buttons). Each tab
+        # is tinted like its library badge for at-a-glance wayfinding; the ACTIVE tab
+        # keeps the app's dark-purple pressed color. All notebook.select()/index()
+        # navigation is unchanged — the buttons just call notebook.select().
         notebook = ttk.Notebook(root)
+        self.notebook = notebook
+        self._tabbar = tk.Frame(root, bg=BG)
+        self._tabbar.pack(fill=tk.X, padx=(6 if compact else 10), pady=(1, 0))
         notebook.pack(fill=tk.BOTH, expand=True,
                       padx=(6 if compact else 10),
                       pady=(0, 2 if compact else 4))
-        self.notebook = notebook
 
         tab1 = ttk.Frame(notebook)
         tab2 = ttk.Frame(notebook)
@@ -6095,6 +6104,10 @@ class MidiToRlrrApp:
         self._build_help_tab(tab11)
         self._build_asset_manager_tab(tab12)
         self._build_menu_bar()
+        self._build_tab_buttons()   # v4.8.0 custom colored tab bar (native tabs hidden in _apply_theme)
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           lambda e: self._sync_tab_buttons(), add="+")
+        self.root.after(150, self._sync_tab_buttons)
         self.notebook.bind("<<NotebookTabChanged>>",
                            lambda e: self._update_menu_state(), add="+")
         # v4.4.38 — also re-apply theme on every tab switch. ttkbootstrap
@@ -6161,6 +6174,88 @@ class MidiToRlrrApp:
         self._setup_global_scroll()
 
         self.root.after(5, self._poll_midi_queue)
+
+    def _build_tab_buttons(self):
+        """v4.8.0 — custom colored tab bar. ttk.Notebook exposes no per-tab
+        -background (verified TclError), so the native tab strip is hidden (empty
+        TNotebook.Tab layout in _apply_theme) and the notebook is driven from this
+        row of colored buttons. Unselected tabs are tinted like their library badge
+        for wayfinding (Stem Splitter green, MIDI Editor yellow, YouTube cyan, Quick
+        Start magenta; the rest keep the light purple); the ACTIVE tab uses the app's
+        dark-purple pressed color. Buttons only call notebook.select(), and
+        <<NotebookTabChanged>> keeps the highlight in sync — so a programmatic tab
+        switch from anywhere in the app also updates the bar. Colors live in one
+        table below for easy tuning."""
+        compact = getattr(self, "_compact_layout", False)
+        PUR, WHT, DRK = "#b388ff", "#ffffff", "#12121c"   # default tint / light text / dark text
+        # (icon, label, unselected-bg, unselected-fg) in notebook.add() INDEX ORDER
+        self._tab_btn_meta = [
+            ("🎵", "Single Song Creator",   PUR,       WHT),   # 0
+            ("🎶", "Create Multiple Songs", PUR,       WHT),   # 1
+            ("🔄", "Audio → .ogg",          PUR,       WHT),   # 2
+            ("🥁", "Stem Splitter",         "#46d18a", DRK),   # 3  green
+            ("🎹", "Audio → MIDI",          "#e6c84a", DRK),   # 4  yellow (MIDI-creation flow)
+            ("🎼", "MIDI Editor",           "#ff9f43", DRK),   # 5  orange
+            ("🎼", "Sheet Music → MIDI",    PUR,       WHT),   # 6
+            ("▶",  "YouTube → FLAC",        "#00d4d4", DRK),   # 7  cyan
+            ("🎨", "Asset Manager",         PUR,       WHT),   # 8
+            ("🔬", "Song Tester",           PUR,       WHT),   # 9
+            ("🥁", "Preview/Practice Track", PUR,      WHT),   # 10
+            ("📖", "Quick Start & FAQ",     "#bd02c1", WHT),   # 11 magenta
+        ]
+        self._tab_sel_bg, self._tab_sel_fg = "#2a1235", "#ffffff"   # dark-purple pressed
+        # hide native tabs immediately (also re-asserted in _apply_theme)
+        try:
+            ttk.Style().layout("TNotebook.Tab", [])
+        except Exception:
+            pass
+        self._tab_buttons = []
+        fnt = ("Segoe UI", 8 if compact else 9, "bold")
+        for idx, (icon, label, bg, fg) in enumerate(self._tab_btn_meta):
+            lbl = tk.Label(self._tabbar, text=f" {icon} {label} ", bg=bg, fg=fg,
+                           font=fnt, padx=(4 if compact else 7),
+                           pady=(3 if compact else 5), cursor="hand2", bd=0)
+            lbl.pack(side=tk.LEFT, padx=1)
+            lbl.bind("<Button-1>", lambda e, i=idx: self.notebook.select(i))
+            lbl.bind("<Enter>", lambda e, i=idx: self._tab_hover(i, True))
+            lbl.bind("<Leave>", lambda e, i=idx: self._tab_hover(i, False))
+            self._tab_buttons.append(lbl)
+        self._sync_tab_buttons()
+
+    @staticmethod
+    def _lighten(hexc, amt=0.24):
+        """Blend a hex color toward white by amt (0..1) — used for tab hover."""
+        hexc = hexc.lstrip("#")
+        r, g, b = int(hexc[0:2], 16), int(hexc[2:4], 16), int(hexc[4:6], 16)
+        r = int(r + (255 - r) * amt); g = int(g + (255 - g) * amt); b = int(b + (255 - b) * amt)
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def _tab_hover(self, idx, entering):
+        """Lighten a tab button on mouse-over for affordance; the active (dark) tab
+        doesn't react (it stays the pressed color until you leave it)."""
+        try:
+            if self.notebook.index("current") == idx:
+                return
+            b = self._tab_buttons[idx]
+            base = self._tab_btn_meta[idx][2]
+            b.configure(bg=self._lighten(base) if entering else base)
+        except Exception:
+            pass
+
+    def _sync_tab_buttons(self, *_):
+        """Highlight the active tab button (dark purple) and restore the rest to
+        their per-tab tint. Bound to <<NotebookTabChanged>> so it tracks both button
+        clicks and programmatic notebook.select() calls from anywhere in the app."""
+        try:
+            cur = self.notebook.index("current")
+        except Exception:
+            return
+        for i, b in enumerate(getattr(self, "_tab_buttons", [])):
+            _icon, _label, bg, fg = self._tab_btn_meta[i]
+            if i == cur:
+                b.configure(bg=self._tab_sel_bg, fg=self._tab_sel_fg)
+            else:
+                b.configure(bg=bg, fg=fg)
 
     def _build_menu_bar(self):
         """Build a guarded desktop-style menu bar as alternate access to existing UI."""
@@ -8604,6 +8699,14 @@ class MidiToRlrrApp:
                                ("active",   tokens["button_focus"]),
                                ("!selected", tokens["button_focus"])],
                   expand=[("selected", [1, 1, 1, 0])])
+        # v4.8.0 — hide the native tab strip; the custom colored tab bar
+        # (_build_tab_buttons) drives the notebook instead. Re-asserted here so it
+        # survives ttkbootstrap's staggered theme re-applies (which re-register the
+        # notebook layout and would otherwise bring the native tabs back).
+        try:
+            style.layout("TNotebook.Tab", [])
+        except Exception:
+            pass
 
         # Radiobutton indicator + foreground (text)
         # v4.4.36 — added `foreground=PURPLE` on base TRadiobutton style
@@ -11892,13 +11995,15 @@ class MidiToRlrrApp:
 
         # (a) Split — load this song into the Stem Splitter input (load-only, do
         # NOT auto-start the split). Col 7.
-        split_chip = _mk_chip("Split", ACCENT, self._stem_lib_on_split, 7)
+        split_chip = _mk_chip("Split", "#bd02c1", self._stem_lib_on_split, 7,
+                              border="#bd02c1")   # magenta outline (matches the Pause chip color)
         self._add_tooltip(split_chip, "Load this song into the Stem Splitter")
 
         # (b) Open Stems — ONLY when this song is already split. Col 8.
         if split:
             open_chip = _mk_chip("Open Stems", "#46d18a",
-                                 self._stem_lib_on_open_stems, 8)
+                                 self._stem_lib_on_open_stems, 8,
+                                 border="#46d18a")   # green outline (matches the green Stem Splitter tab)
             self._add_tooltip(open_chip, "Opens your folder containing your drum stems")
 
         # (c) Play/Pause — rides the shared pygame preview (col 9). Glyph + fill
@@ -12850,7 +12955,7 @@ class MidiToRlrrApp:
         if split:
             create_chip = _mk_chip("Create MIDI", ACCENT,
                                    self._a2m_lib_on_create_midi, 7,
-                                   border="#b388ff")  # v4.7.9: purple outline when ACTIVE (a drums split exists)
+                                   border="#e6c84a")  # yellow outline when ACTIVE — matches MIDI=yellow scheme (MIDI badge + MIDI Editor tab)
             self._add_tooltip(
                 create_chip,
                 "Load this song's lossless drums split into Audio → MIDI")
@@ -26183,6 +26288,50 @@ demucs.separate.main()
                 pass
             self.root.after(0, self._me_play)
 
+    def _a2m_strip_toms_if_off(self, midi_path):
+        """v4.7.9.1 — when Tom sensitivity is OFF, remove EVERY tom-lane note from the
+        freshly-written Audio->MIDI .mid IN PLACE, so OFF truly means zero toms. The
+        tom-sensitivity preset only gates the ML-only tom_mid path; the floor-tom line
+        rides a spectral path the gate cannot reach (see the tom-presets note ~:3499),
+        so OFF alone left the floor toms in (verified: 0-96% of toms removed depending
+        on the floor/rack split). This is a post-detection edit on the OUTPUT MIDI only
+        -- NO protected-fn / detection change. Any non-OFF preset, or any failure, is a
+        no-op (chart kept exactly as detected). Runs independently of the cleanup-pass
+        toggles -- OFF is a detection-sensitivity choice, not part of the cleanup."""
+        try:
+            var = getattr(self, "a2m_tom_sensitivity_var", None)
+            if var is None or var.get() != "OFF":
+                return
+            import mido as _mido
+            # GM tom lanes: low/high floor (41/43), low/low-mid/hi-mid/high rack (45/47/48/50)
+            _TOM_PITCHES = {41, 43, 45, 47, 48, 50}
+            mid = _mido.MidiFile(midi_path)
+            removed = 0
+            for tr in mid.tracks:
+                kept = []
+                carry = 0   # preserve timing: fold a dropped msg's delta into the next kept msg
+                for msg in tr:
+                    if (msg.type in ("note_on", "note_off")
+                            and getattr(msg, "note", None) in _TOM_PITCHES):
+                        carry += msg.time
+                        if msg.type == "note_on" and msg.velocity > 0:
+                            removed += 1
+                        continue
+                    kept.append(msg.copy(time=msg.time + carry))
+                    carry = 0
+                tr[:] = kept
+            if removed:
+                mid.save(midi_path)
+            try:
+                self._a2m_log(f"Tom detection OFF: removed {removed} tom note(s)")
+            except Exception:
+                pass
+        except Exception as _e:
+            try:
+                self._a2m_log(f"Tom OFF strip:     skipped ({type(_e).__name__})")
+            except Exception:
+                pass
+
     def _a2m_apply_cleanup_pass(self, midi_path):
         """v4.5.0-1 — apply the trained detection CLEANUP PASS (cymbal re-classifier
         + kick phantom-remover) to the freshly-written Audio->MIDI .mid IN PLACE,
@@ -26262,6 +26411,9 @@ demucs.separate.main()
         # v4.5.0-1 — detection cleanup pass on the just-written MIDI BEFORE it loads
         # (operates on the detector OUTPUT + audio; NO protected-fn / detection
         # change). Gated by the adv_frame toggles; master OFF = passthrough.
+        # v4.7.9.1 — OFF means zero toms: strip the tom lanes from the OUTPUT .mid
+        # BEFORE cleanup + editor load (the sensitivity gate can't reach floor toms).
+        self._a2m_strip_toms_if_off(midi_path)
         self._a2m_apply_cleanup_pass(midi_path)
         # R2-1: load FIRST — on decline, me_midi_var and _me_source_audio keep
         # pointing at the OLD chart (setting them before the load mispaired
@@ -29778,6 +29930,10 @@ demucs.separate.main()
             # purple when the .ogg is present, dim when absent (parallels STEMS/MIDI so
             # the always-rendered OGG slot keeps the badge row a constant width)
             border, fg = ("#b388ff", "#b388ff") if present else ("#4a4a6b", "#8a8aa2")
+        elif text == "MIDI":
+            # MIDI = yellow (matches the MIDI Editor tab + the Create MIDI chip);
+            # dim when absent, same as STEMS. Keeps STEMS green below.
+            border, fg = ("#e6c84a", "#e6c84a") if present else ("#4a4a6b", "#8a8aa2")
         elif present:
             border, fg = "#46d18a", "#46d18a"
         else:
