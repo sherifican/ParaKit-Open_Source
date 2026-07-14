@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.8.10  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.9  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,34 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.9   --   2026-07-14
+------------------------------------------------------------------------------
+  Drum detection upgrade -- new fine-tuned model + ride cymbals on by default.
+
+  Audio -> MIDI:
+  - Updated the drum detection model to a fine-tuned version with a re-tuned
+    gate profile. Validated on 39 freshly-downloaded, training-blind metal
+    tracks with a pre-registered, score-once protocol and an independent 3-way
+    review: macro-F +0.048, crash +0.051 (95% confidence interval entirely
+    positive), every drum lane improved or unchanged, no regressions. The
+    previous model is kept for one-step rollback.
+  - Ride cymbals are now kept in the Ride lane by DEFAULT. The cleanup pass
+    separates rides automatically instead of folding every cymbal into the
+    Crash lane -- turn the Ride toggle OFF if you'd rather fold all cymbals into
+    Crash and reclassify by hand. The older, unreliable spectral ride estimator
+    has been retired; ride separation is handled by the more reliable cleanup
+    reclassifier now (still imperfect on ride-heavy songs -- reclassify any
+    strays in the MIDI Editor).
+  - Tom detection sensitivity re-calibrated for the new model: Strict / Moderate
+    (default) / Aggressive / OFF. Moderate is the precision sweet spot -- it cuts
+    phantom toms sharply versus the model's raw output (especially on metal). Even
+    so, dense songs can still leave a few phantom toms (a limit of the model) --
+    reclassify or delete them in the MIDI Editor, drop to Strict for fewer, or OFF.
+  - Song Library: the "Create MIDI" chip now shows a purple outline when it's
+    active (a drums-only split exists for that song). It stays gray when there's
+    no split yet -- a clearer at-a-glance cue for which songs are ready.
 
 ------------------------------------------------------------------------------
   v4.7.8.10   --   2026-07-13

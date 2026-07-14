@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-late-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.7.8.10`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.9`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -178,7 +178,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.7.8.10`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.9`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -575,6 +575,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.7.9**<br>2026-07-14 | <ul><li>**Audio → MIDI — new drum-detection model + ride cymbals on by default.** Updated the drum-detection model to a fine-tuned version with a re-tuned gate profile — validated on 39 freshly-downloaded, **training-blind** metal tracks (pre-registered, score-once protocol, independent 3-way review): **macro-F +0.048, crash +0.051** (95% CI entirely positive), every lane improved or unchanged, no regressions. The previous model is kept for one-step rollback.</li><li>**Ride cymbals now kept in the Ride lane by default.** The cleanup pass separates rides automatically instead of folding every cymbal into Crash — turn the **Ride** toggle **OFF** to fold all cymbals into Crash and reclassify by hand. The older, unreliable spectral ride estimator has been retired.</li><li>**Tom sensitivity re-calibrated** for the new model: **Strict / Moderate (default) / Aggressive / OFF.** Moderate is the precision sweet spot — it cuts phantom toms sharply versus the model's raw output (especially on metal). Dense songs can still leave a few phantom toms; reclassify or delete them in the MIDI Editor, drop to Strict for fewer, or OFF.</li><li>**Song Library:** the **Create MIDI** chip now shows a **purple outline** when it's active (a drums-only split exists for that song) and stays gray when there's no split yet — a clearer at-a-glance cue for which songs are ready.</li></ul> |
 | **v4.7.8.10**<br>2026-07-13 | <ul><li>**Audio → MIDI — Song Library "Create MIDI" fix.** Create MIDI now loads the song's lossless **drums-only** split (never the full mix), and is **disabled** for any song that hasn't been split into stems yet — so you can't accidentally feed the full mix into Audio → MIDI. Split a song on the Stem Splitter tab first and the button lights up. Clicking Create MIDI now also **scrolls the tab back to the top** so the loaded Audio file field is in view.</li></ul> |
 | **v4.7.8.9.1**<br>2026-07-13 | <ul><li>**MIDI Editor — hi-hats: right-click now deletes; select first to change articulation.** Right-clicking a hi-hat note now **deletes** it — the same quick one-click removal you already get on every other lane. To change a hi-hat's **Closed / Open / Pedal** articulation instead, first **select** the note(s) (Ctrl-click one, or rubber-band a group), then right-click one of them — the variation menu opens and your choice applies to **every selected hi-hat** at once.</li><li>**Audio → MIDI:** the **Advanced / Debug — optional tuning** heading is now **orange** so it stands out as an important settings section.</li></ul> |
 | **v4.7.8.9**<br>2026-07-13 | <ul><li>**Audio → MIDI — middle column tinted.** Enhanced Detection, Neural Stem Isolation, Settings Profiles and Output now share a subtle tint so the middle reads as one grouped panel set, distinct from the left settings and the right Advanced / Debug column.</li><li>Removed the **Reality Check** and **Engine Cheat Sheet** boxes from the top of the tab to cut scrolling — that guidance already lives in the Quick Path box and the Detection Engine section.</li><li>Fixed the ONNX **model‑file row**: the clear (✕) button no longer clips at narrower window widths; Browse sits on its own row beneath the field.</li></ul> |

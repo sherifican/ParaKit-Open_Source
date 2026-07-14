@@ -3429,23 +3429,18 @@ class _PdToChConverterWindow(tk.Toplevel):
 # These gates apply only to ML-only hits in Hybrid mode. ML hits confirmed by
 # nearby spectral hits still pass through so Hybrid keeps its timing advantage.
 A2M_HYBRID_ML_ONLY_MIN_CONF = {
-    "kick": 0.62,
-    "snare": 0.60,
-    "hihat": 0.35,   # v4.5.1-1 hi-hat recovery: was 0.58. Spectral detects almost no hi-hats, so
-                     # every hat is an "ML-only" hit and this gate was killing soft/fast hats it had
-                     # actually detected. Validated post-cleanup (60-track corpus + 14 fresh songs,
-                     # all genres) net-positive with no other-lane regression. Freeze-exempt constant.
-    "crash": 0.66,
-    "ride": 0.66,
-    # v4.5.2-1 Tom Recovery — was 0.58 (the strict ML-only gate that hid real
-    # toms). Spectral finds ~zero toms, so every tom is an ML-only hit and this
-    # gate was rejecting toms the ML model had actually found. Lowering it
-    # recovers them. Default = "Conservative" (0.35); the Audio→MIDI ▸ Advanced
-    # ▸ "Tom detection sensitivity" dropdown overrides BOTH tom lanes per the
-    # validated A2M_TOM_SENSITIVITY_PRESETS below. Freeze-exempt; validated
-    # post-cleanup on 101 tracks with ZERO high-lane regression.
-    "floor_tom": 0.35,
-    "tom_mid": 0.35,
+    # v4.7.9 DETECTOR SWAP -> finetuned_candidate.onnx (sha 6cff14bc). Its activations are
+    # globally downshifted ~-0.45 vs the prior model, so these ML-only gates are correspondingly
+    # lower. Pre-registered SHIP_ABS absolutes, validated BLIND on 39 fresh training-blind tracks
+    # (macroF +0.048, crash +0.051 [+0.030,+0.076]; unanimous 3-leg reconcile). crash 0.35 is the
+    # CALIB-tuned override (base abs 0.21). Tom lanes re-applied per run by the Moderate/OFF preset.
+    "kick": 0.17,
+    "snare": 0.15,
+    "hihat": 0.13,
+    "crash": 0.35,
+    "ride": 0.21,
+    "floor_tom": 0.45,
+    "tom_mid": 0.45,
 }
 A2M_HYBRID_ML_ONLY_MIN_GAP = {
     # v4.4.52 — kick gap tightened 0.045 → 0.060 per F-DET-017 Phase 1
@@ -3464,22 +3459,24 @@ A2M_HYBRID_ML_ONLY_MIN_GAP = {
     "tom_mid": 0.065,
 }
 A2M_HYBRID_ML_ONLY_THRESH_BOOST = {
-    "kick": 0.12,
-    "snare": 0.10,
-    "hihat": -0.15,  # v4.5.1-1 hi-hat recovery (was 0.04) — merge-gate floor, paired with MIN_CONF above
-    "crash": 0.14,
-    "ride": 0.14,
-    "floor_tom": -0.15,  # v4.5.2-1 Tom Recovery (was 0.08) — Conservative default (T−0.5);
-    "tom_mid": -0.15,    # overridden per-run by the Tom detection sensitivity dropdown
+    # v4.7.9 detector swap -- SHIP_ABS (see A2M_HYBRID_ML_ONLY_MIN_CONF). Tom lanes re-applied per run.
+    "kick": -0.33,
+    "snare": -0.35,
+    "hihat": -0.41,
+    "crash": -0.31,
+    "ride": -0.31,
+    "floor_tom": -0.05,
+    "tom_mid": -0.05,
 }
 A2M_ML_CLASS_CONF_BOOST = {
-    "kick": 0.00,
-    "snare": 0.00,
-    "hihat": -0.15,  # v4.5.1-1 hi-hat recovery (was 0.03) — lowers the ML detection threshold for hi-hats
-    "crash": 0.05,
-    "ride": 0.05,
-    "floor_tom": -0.15,  # v4.5.2-1 Tom Recovery (was -0.02) — Conservative default (T−0.5);
-    "tom_mid": -0.15,    # overridden per-run by the Tom detection sensitivity dropdown
+    # v4.7.9 detector swap -- SHIP_ABS (see A2M_HYBRID_ML_ONLY_MIN_CONF). Tom lanes re-applied per run.
+    "kick": -0.45,
+    "snare": -0.45,
+    "hihat": -0.42,
+    "crash": -0.40,
+    "ride": -0.40,
+    "floor_tom": -0.12,
+    "tom_mid": -0.12,
 }
 A2M_ML_CLASS_MIN_GAP = {
     "kick": 0.020,
@@ -3491,34 +3488,49 @@ A2M_ML_CLASS_MIN_GAP = {
     "tom_mid": 0.020,
 }
 
-# ── Tom detection sensitivity presets (v4.5.2-1) ──────────────────────────────
+# ── Tom detection sensitivity presets ─────────────────────────────────────────
 # Owner-directed, freeze-exempt control (NOT a protected-function / detection-algo
 # change): each preset sets the per-class tom ML-only gate constants for BOTH tom
-# lanes, faithfully reproducing the validated operating points from the 101-track
-# post-cleanup sweep (tools/detection_harness/results/tom_postcleanup_summary.json,
-# 2026-06-20). The kick/snare/hi-hat/crash lanes are byte-identical at every
-# setting — the gate touches toms only. Tuple = (MIN_CONF, THRESH_BOOST, CONF_BOOST).
-#   Strict       0.58 / 0.08 / -0.02  legacy baseline (pre-tom-recovery), fewest toms
-#   Conservative 0.35 /-0.15 / -0.15  DEFAULT — tom_mid F 0.169->0.279; identical
-#                                     to the shipped v4.5.1-1 hi-hat-fix values
-#   Balanced     0.28 /-0.22 / -0.22  F-knee — tom_mid F 0.295
-#   Aggressive   0.20 /-0.30 / -0.30  max recall — tom_mid F 0.295, R 0.40
+# lanes. Tuple = (MIN_CONF, THRESH_BOOST, CONF_BOOST). kick/snare/hi-hat/crash never change.
+# v4.7.9: RE-SWEPT + reconcile-verified (codex + grok) for finetuned_candidate.onnx on a
+# genre-labeled, artist-disjoint corpus (2026-07-14). Metal precision PEAKS at Moderate
+# (0.45) and falls at Strict — so Strict is the most-conservative (fewest toms) level, NOT
+# a higher-precision one. Moderate cuts metal phantom-toms 71% vs the raw candidate point.
+# NOTE (reconcile finding): the gate effectively only moves tom_mid — floor_tom is near-inert
+# on this model, so these levels mainly tune the mid-tom lane.
+#   Strict      0.58 / 0.05 / -0.02  fewest toms & phantoms (metal ~24/trk), low recall
+#   Moderate    0.45 /-0.05 / -0.12  DEFAULT — metal-precision peak (P 0.32 calib / 0.38 held-out)
+#   Aggressive  0.28 /-0.22 / -0.32  more recall for tom-heavy songs (more phantoms)
+#   OFF         1.01 / 0.00 /  0.00  gate above max confidence → no ML-only toms pass
 A2M_TOM_SENSITIVITY_PRESETS = {
-    "Strict":       (0.58,  0.08, -0.02),
-    "Conservative": (0.35, -0.15, -0.15),
-    "Balanced":     (0.28, -0.22, -0.22),
-    "Aggressive":   (0.20, -0.30, -0.30),
+    "Strict":       (0.58,  0.05, -0.02),
+    "Moderate":     (0.45, -0.05, -0.12),  # DEFAULT
+    "Aggressive":   (0.28, -0.22, -0.32),
+    "OFF":          (1.01,  0.00,  0.00),
 }
+
+
+# v4.7.9: re-swept, reconcile-verified calibrated tom levels for the new model — Strict /
+# Moderate / Aggressive / OFF are all selectable. (Balanced was dropped; the re-sweep landed
+# three "on" levels.) The choke point still forces a value in this tuple, so a stale saved
+# preset (e.g. a prior-model name) can never reach a conversion.
+_TOM_PRESETS_ALLOWED = ("Strict", "Moderate", "Aggressive", "OFF")
 
 
 def _apply_tom_sensitivity_preset(preset_name):
     """Set the freeze-exempt tom ML-only gate constants for the chosen sensitivity
     preset. Mutates the module-level gate dicts for tom_mid + floor_tom ONLY; the
-    high lanes (kick/snare/hi-hat/crash) are never touched. Unknown name falls back
-    to Conservative. Same module-level-constant mechanism as the shipped hi-hat
+    high lanes (kick/snare/hi-hat/crash) are never touched. An unallowed/unknown name
+    falls back to Moderate. Same module-level-constant mechanism as the shipped hi-hat
     recovery — it does NOT alter any protected detection function."""
+    # v4.7.9 CHOKE POINT: only the calibrated options in _TOM_PRESETS_ALLOWED can reach a
+    # conversion. Force "Moderate" from EVERY caller (dropdown, detection troubleshooter,
+    # saved A2M preset snapshot) at the single point of application, so an uncalibrated
+    # prior-model tom gate can never be applied regardless of what set the var.
+    if preset_name not in _TOM_PRESETS_ALLOWED:
+        preset_name = "Moderate"
     min_conf, thresh_boost, conf_boost = A2M_TOM_SENSITIVITY_PRESETS.get(
-        preset_name, A2M_TOM_SENSITIVITY_PRESETS["Conservative"])
+        preset_name, A2M_TOM_SENSITIVITY_PRESETS["Moderate"])
     for _lane in ("tom_mid", "floor_tom"):
         A2M_HYBRID_ML_ONLY_MIN_CONF[_lane] = min_conf
         A2M_HYBRID_ML_ONLY_THRESH_BOOST[_lane] = thresh_boost
@@ -5726,7 +5738,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.8.10"
+    VERSION = "4.7.9"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -12837,7 +12849,8 @@ class MidiToRlrrApp:
         # Audio → MIDI input, so the chip is shown disabled/greyed.
         if split:
             create_chip = _mk_chip("Create MIDI", ACCENT,
-                                   self._a2m_lib_on_create_midi, 7)
+                                   self._a2m_lib_on_create_midi, 7,
+                                   border="#b388ff")  # v4.7.9: purple outline when ACTIVE (a drums split exists)
             self._add_tooltip(
                 create_chip,
                 "Load this song's lossless drums split into Audio → MIDI")
@@ -14256,41 +14269,28 @@ demucs.separate.main()
         self.a2m_onset_var.trace_add("write", _save_genre_settings)
         self.a2m_frame_var.trace_add("write", _save_genre_settings)
         self.a2m_mode_var.trace_add("write",  _save_genre_settings)
-        self.a2m_ride_var = tk.BooleanVar(value=False)
+        self.a2m_ride_var = tk.BooleanVar(value=True)
         ride_cb = ttk.Checkbutton(
             settings_frame,
-            text="Ride cymbal detection  —  OFF: rides → Crash lane  /  ON: "
-                 "attempt separation  ⚠  more reliable now, still flawed",
+            text="Ride cymbals  —  ON (default): kept in the Ride lane via the ML "
+                 "reclassifier  /  OFF: cymbals folded into the Crash lane",
             variable=self.a2m_ride_var
         )
         ride_cb.grid(row=10, column=0, columnspan=3, sticky="w", pady=(6, 0))
         self._add_tooltip(
             ride_cb,
-            "Controls where ride cymbal hits end up in the MIDI Editor.\n\n"
-            "OFF (default):\n"
-            "  Ride hits are not separated. They will appear in the Crash\n"
-            "  or Hi-Hat lane depending on their spectral energy. The Ride\n"
-            "  lane will be empty. You can reclassify manually in the MIDI\n"
-            "  Editor — this is the recommended approach for most songs.\n\n"
-            "ON — attempt ride separation:\n"
-            "  The spectral detection path tries to identify ride hits and\n"
-            "  route them to the Ride lane instead. Results are unreliable\n"
-            "  on most songs but can be useful on cleaner recordings or\n"
-            "  if you're willing to tune settings for a specific song.\n\n"
-            "  In Spectral mode: best-effort spectral estimate.\n"
-            "  In ML mode: ML handles kick/snare/hi-hat/crash; ride comes\n"
-            "    from spectral only (ML has no separate ride class).\n"
-            "  In Hybrid mode: same as ML — spectral handles ride, ML\n"
-            "    handles everything else. Less bleed from other instruments\n"
-            "    means Hybrid gives the best chance of usable ride detection.\n\n"
-            "Tips if you want to experiment:\n"
-            "  • Hybrid mode + drums-only stem = best conditions for ride\n"
-            "  • Adjust the Ride dedup gap (Advanced) to tune hit density\n"
-            "  • Compare a few runs with different settings\n"
-            "  • Expect to manually clean up most of what it produces\n\n"
-            "RECOMMENDED: Leave OFF and use Reclassify mode in the MIDI\n"
-            "Editor after conversion. Timestamps are already right — you\n"
-            "just change the instrument label. Takes 1-2 minutes."
+            "Controls where ride cymbal hits end up.\n\n"
+            "ON (default):\n"
+            "  Ride hits identified by the cleanup ML reclassifier are kept in\n"
+            "  the Ride lane — the validated default. It recovers real rides\n"
+            "  instead of folding every cymbal into the Crash lane.\n\n"
+            "OFF:\n"
+            "  All cymbal hits are folded into the Crash lane (no ride\n"
+            "  separation). You can still reclassify manually in the MIDI Editor.\n\n"
+            "Note: the older spectral ride estimator has been retired. Ride\n"
+            "separation is handled by the ML reclassifier now — more reliable\n"
+            "but still imperfect on ride-heavy songs. If rides land in the\n"
+            "Crash lane, fix them fast with Reclassify mode in the MIDI Editor."
         )
 
         # Kick detection toggle
@@ -14832,34 +14832,36 @@ demucs.separate.main()
         ttk.Label(tom_sens_row, text="Tom detection sensitivity:").pack(
             side=tk.LEFT, padx=(0, 6))
         self.a2m_tom_sensitivity_var = tk.StringVar(
-            value=load_config().get("a2m_tom_sensitivity", "Conservative"))
-        if self.a2m_tom_sensitivity_var.get() not in A2M_TOM_SENSITIVITY_PRESETS:
-            self.a2m_tom_sensitivity_var.set("Conservative")
+            value=load_config().get("a2m_tom_sensitivity", "Moderate"))
+        if self.a2m_tom_sensitivity_var.get() not in ("Strict", "Moderate", "Aggressive", "OFF"):  # v4.7.9: re-swept calibrated levels
+            self.a2m_tom_sensitivity_var.set("Moderate")
         tom_sens_combo = ttk.Combobox(
             tom_sens_row, textvariable=self.a2m_tom_sensitivity_var,
-            values=["Strict", "Conservative", "Balanced", "Aggressive"],
+            values=["Strict", "Moderate", "Aggressive", "OFF"],  # v4.7.9: re-swept + reconcile-verified for the new ONNX
             state="readonly", width=14)
         tom_sens_combo.pack(side=tk.LEFT)
         self.a2m_tom_sensitivity_var.trace_add(
             "write", lambda *_: save_config(
                 {"a2m_tom_sensitivity": self.a2m_tom_sensitivity_var.get()}))
         ttk.Label(adv_frame,
-                  text=("Recovers toms the AI detector found but the strict gate was hiding. "
-                        "Higher = more toms (and a few more phantom toms to clean up); "
-                        "Strict = legacy behavior. Kick / snare / hi-hat / crash are never "
+                  text=("Recovers toms the AI detector found — calibrated for the current model. "
+                        "Moderate (default) is the precision sweet spot; Aggressive recovers more "
+                        "toms; Strict fewest; OFF none. Kick / snare / hi-hat / crash are never "
                         "affected. Takes effect on the next conversion."),
                   style="Sub.TLabel", foreground="#9a9ab0",
                   wraplength=560, justify="left").pack(anchor="w", pady=(2, 0))
         self._add_tooltip(
             tom_sens_combo,
-            "Controls how aggressively ParaKit recovers tom hits.\n\n"
-            "Spectral detection finds almost no toms, so the AI/ML model's tom\n"
-            "hits face a strict confidence gate that was throwing real toms away.\n"
-            "This loosens that gate — for toms only:\n\n"
-            "  Strict        — fewest toms (the older behavior)\n"
-            "  Conservative  — default; recovers most toms, few false ones\n"
-            "  Balanced      — a few more toms, a few more false ones\n"
-            "  Aggressive    — the most toms (best when a song is tom-heavy)\n\n"
+            "Controls tom recovery for the current detection model — calibrated\n"
+            "on a genre-diverse corpus:\n\n"
+            "  Strict     — fewest toms & phantoms; low recall.\n"
+            "  Moderate   — default. The precision sweet spot: cleaner toms with\n"
+            "               far fewer phantoms than the model's raw output.\n"
+            "  Aggressive — more toms for genuinely tom-heavy songs (accepts more\n"
+            "               phantoms — clean up in the MIDI Editor).\n"
+            "  OFF        — no tom recovery (tom lanes essentially empty).\n\n"
+            "Even at Moderate, dense/metal songs can still leave some phantom toms —\n"
+            "that's a limit of the model; reclassify or delete them in the editor.\n\n"
             "Kick, snare, hi-hat and crash are NEVER changed by this setting.\n"
             "Takes effect on the next conversion.")
 
@@ -16011,7 +16013,10 @@ demucs.separate.main()
 
         onset    = self.a2m_onset_var.get()
         frame    = self.a2m_frame_var.get()
-        ride_detect = self.a2m_ride_var.get()
+        ride_detect = False  # v4.7.9: detect-side spectral ride path retired (unreliable, unvalidated);
+        # ride-keeping is now handled by the cleanup ML reclassifier, gated by a2m_ride_var at the
+        # cleanup (allow_ride, default ON). Decoupled per the blind eval (validated: cleanup-ride ON,
+        # detect-spectral OFF).
         kick_detect = self.a2m_kick_var.get()
         debug_log   = self.a2m_debug_var.get()
         genre       = self.a2m_genre_var.get()
@@ -16574,8 +16579,8 @@ demucs.separate.main()
                     self._a2m_log(f"  Composite drums-equivalent written "
                                   f"to: {_composite_path}")
                     self._a2m_log("  (Detection runs on the composite from "
-                                  "here — ride is unchanged from default "
-                                  "detection in v4.4.4.)")
+                                  "here — ride is handled the same as a "
+                                  "normal conversion.)")
                     input_path = str(_composite_path)
                 except Exception as _sep_exc:
                     import traceback as _sep_tb
@@ -16931,7 +16936,8 @@ demucs.separate.main()
                 self._a2m_log(f"    Snare:     {len(snare_times):4d} hits")
                 self._a2m_log(f"    Hi-Hat:    {len(hihat_times):4d} hits")
                 self._a2m_log(f"    Crash:     {len(crash_times):4d} hits  "
-                              f"(includes all cymbals — reclassify rides in MIDI Editor)")
+                              f"(all cymbals pre-cleanup; the cleanup pass separates rides "
+                              f"unless the Ride toggle is OFF)")
                 self._a2m_log(f"    Floor tom: {len(floor_tom_times):4d} hits")
                 self._a2m_log(f"    Tom:       {len(tom_mid_times):4d} hits")
 
@@ -17455,14 +17461,17 @@ demucs.separate.main()
                 hihat_times, crash_times, ride_times, _res_stats = _a2m_cymbal_resolver(
                     hihat_times, crash_times, ride_times, D_full, freqs, sr, bpm=bpm,
                     stem_loudness=None, ml_conf_dict=None, ml_hop=441)
-                # v4.3.23 - keep the Ride toggle contract after resolver cleanup.
+                # v4.7.9 - detect-side rides are always folded to crash here (ride_detect is
+                # permanently False after the ride decouple); ride separation is handled
+                # downstream by the cleanup reclassifier (gated by a2m_ride_var / allow_ride).
                 if not ride_detect and len(ride_times) > 0:
                     _ride_reverted = int(len(ride_times))
                     crash_times = np.sort(np.concatenate((crash_times, ride_times)))
                     ride_times = np.array([], dtype=float)
                     self._a2m_log(
-                        f"  Ride toggle OFF: routed {_ride_reverted} ride cleanup note(s) back to crash")
-                # v4.3.23 end - keep the Ride toggle contract after resolver cleanup.
+                        f"  Detect-side rides folded to crash ({_ride_reverted}) — "
+                        f"ride separation handled by the cleanup pass")
+                # v4.7.9 end
                 _res_changed = (
                     len(hihat_times) != len(_res_h0) or
                     len(crash_times) != len(_res_c0) or
@@ -17562,7 +17571,6 @@ demucs.separate.main()
             self.root.after(100, lambda p=midi_path: self._me_open_from_a2m(p))
 
             total_notes = len(events)
-            ride_count  = len(ride_times) if ride_detect else 0
             self._a2m_log(f"\n✓ Done!")
             self._a2m_log(f"  Total notes: {total_notes}")
             self._a2m_log(f"  BPM: {bpm:.1f}")
@@ -17570,29 +17578,11 @@ demucs.separate.main()
             self.root.after(0, lambda p=midi_path: self._set_global_status(
                 f"Audio to MIDI complete: {os.path.basename(p)}", 6000))
 
-            # ── Smart ride suggestion ─────────────────────────────────────────
-            suggestion = None
-            if ride_detect and len(ride_times) > 0:
-                ride_ratio = len(ride_times) / max(1, len(ride_times) + len(hihat_times))
-                if ride_ratio < 0.05:
-                    suggestion = ("⚠  Very few ride hits detected ({} out of {} cymbal hits).\n"
-                                  "   Consider remaking the MIDI with Ride Detection turned OFF\n"
-                                  "   for better results.").format(len(ride_times),
-                                  len(ride_times)+len(hihat_times))
-            elif not ride_detect:
-                # Check if the hihat pattern looks like it might contain rides
-                # Rides tend to have longer spacing (less frequent than hihats)
-                if len(hihat_times) > 10:
-                    gaps = np.diff(sorted(hihat_times))
-                    avg_gap = np.mean(gaps)
-                    long_gaps = np.sum(gaps > avg_gap * 2)
-                    if avg_gap > 0.4 and long_gaps / len(gaps) > 0.3:
-                        suggestion = ("💡  The cymbal pattern looks like it may contain ride cymbal hits\n"
-                                      "   (slower, more spaced-out pattern detected).\n"
-                                      "   Consider remaking the MIDI with Ride Detection turned ON.")
-
-            if suggestion:
-                self._a2m_log(f"\n{suggestion}")
+            # v4.7.9: the old "Smart ride suggestion" was tied to the retired detect-side
+            # ride toggle (it advised toggling "Ride Detection" ON/OFF). Rides are now kept
+            # in the Ride lane by the cleanup ML reclassifier by default, so that suggestion
+            # is obsolete — removed. Manual ride reclassification guidance lives in the Help
+            # tab and the MIDI Editor Reclassify mode.
 
             self._a2m_log(f"\n{'='*50}")
             self._a2m_log(f"  Tip: Load this MIDI into the Single Song Creator")
@@ -24695,7 +24685,7 @@ demucs.separate.main()
                 tk.StringVar(value="off")).get(),
             "tom_sensitivity": getattr(
                 self, "a2m_tom_sensitivity_var",
-                tk.StringVar(value="Conservative")).get(),
+                tk.StringVar(value="Moderate")).get(),
         }
 
     def _a2m_apply_settings_snapshot(self, settings):
@@ -33163,29 +33153,23 @@ demucs.separate.main()
                  "  Spectral — better for rock and acoustic drums.\n"
                  "  Frequency Band — better for programmed or synthetic drums.")
         divider(s)
-        entry(s, "Ride Cymbal Detection  —  OFF: ride goes to Crash/Hi-Hat  /  ON: attempt separation\n"
-                 "This toggle controls where ride cymbal hits end up in the MIDI Editor.\n\n"
-                 "OFF (default):\n"
-                 "  Ride hits are not separated from crash/hi-hat. They will appear in the\n"
-                 "  Crash or Hi-Hat lane depending on their spectral energy. The Ride lane\n"
-                 "  will be empty. This is the recommended default — reclassify manually\n"
-                 "  after conversion (see Ride section in the cymbal behavior guide above).\n\n"
-                 "ON — attempt ride separation:\n"
-                 "  The spectral path tries to identify ride hits and route them to the Ride\n"
-                 "  lane. Results are unreliable on most songs but can be useful on cleaner\n"
-                 "  recordings or if you want to invest time tuning for a specific song.\n\n"
-                 "  In Spectral mode: best-effort spectral estimate only.\n"
-                 "  In ML mode: ML handles kick/snare/hi-hat/crash; ride detection comes\n"
-                 "    from spectral only (the ML model combines crash and ride into one class).\n"
-                 "  In Hybrid mode: same as ML for ride specifically. Because kick/snare/hi-hat\n"
-                 "    are handled by ML, there is less spectral bleed into ride detection —\n"
-                 "    this gives the best conditions for auto-detection.\n\n"
-                 "Tips for experimenting:\n"
-                 "  1. Use Hybrid mode + a drums-only stem from the Stem Splitter\n"
-                 "  2. Enable ride detection\n"
-                 "  3. Try different Ride dedup gap values in Advanced settings\n"
-                 "  4. Compare a few runs\n"
-                 "  Expect to manually correct most of the output regardless.\n\n"
+        entry(s, "Ride Cymbal Detection  —  ON (default): rides kept in the Ride lane  /  OFF: cymbals folded into Crash\n"
+                 "This toggle controls whether ride cymbal hits are kept in the Ride lane.\n\n"
+                 "ON (default):\n"
+                 "  The cleanup ML reclassifier identifies ride hits and keeps them in the\n"
+                 "  Ride lane instead of folding every cymbal into Crash. This is the\n"
+                 "  validated default — it recovers real rides automatically. It works\n"
+                 "  across all engines and is more reliable than the old approach, though\n"
+                 "  still imperfect on ride-heavy songs.\n\n"
+                 "OFF:\n"
+                 "  All cymbal hits are folded into the Crash lane (no ride separation).\n"
+                 "  Use this if you would rather reclassify rides by hand.\n\n"
+                 "Notes:\n"
+                 "  - Ride separation is handled by the cleanup reclassifier now. The older\n"
+                 "    spectral ride estimator has been retired.\n"
+                 "  - MIDI Editor Reclassify mode is the fastest fix if a song's rides land\n"
+                 "    in the Crash lane — the timestamps are already right, you just change\n"
+                 "    the instrument label.\n\n"
                  "If a ride section has no notes at all after conversion, add them manually\n"
                  "in the Ride lane. Turn off Snap to Grid for precise placement on rapid hits.")
         divider(s)
@@ -33194,7 +33178,7 @@ demucs.separate.main()
                  "kick hits, disable it and add kicks manually in the MIDI Editor, or use "
                  "Reclassify mode to fix individual notes.")
         divider(s)
-        warn(s, "Tom detection in Spectral mode is unreliable regardless of preset or settings. "
+        warn(s, "Tom detection in Spectral mode is unreliable regardless of settings. "
                 "ML and Hybrid mode significantly improve basic tom hit detection, though the "
                 "split between tom1/tom2/floor tom remains imprecise in all modes. "
                 "The fastest fix: use Reclassify mode in the MIDI Editor to change misread "
@@ -33281,8 +33265,9 @@ demucs.separate.main()
               "    Hybrid mode or manual correction in the MIDI Editor.\n\n"
               "What the ML model does not improve:\n"
               "  Ride cymbal (separate from crash): the model treats crash and ride as\n"
-              "    one class. Use Hybrid mode to let the spectral path attempt ride\n"
-              "    detection, or reclassify manually in the MIDI Editor.\n"
+              "    one class. Ride is separated afterward by the cleanup reclassifier\n"
+              "    (on by default) — no engine choice needed; reclassify any residuals in\n"
+              "    the MIDI Editor.\n"
               "  Electronic or heavily processed drum sounds: the model was trained on\n"
               "    acoustic drums. Electronic kits may give worse results than spectral.\n"
               "  Full mix vs drum stems: accuracy is significantly better if you run\n"
@@ -33383,7 +33368,7 @@ demucs.separate.main()
               "that the option is just a checkbox.\n\n"
               "Heads up:\n"
               "  • CPU-only in this version. GPU support comes later.\n"
-              "  • The ride lane still uses default detection in this version.\n"
+              "  • Ride separation is handled by the cleanup reclassifier as usual.\n"
               "  • If the splitter has any problem at runtime, ParaKit falls back\n"
               "    to default detection so your conversion still finishes.")
         divider(s)
@@ -33418,10 +33403,9 @@ demucs.separate.main()
               "                 (the crash_strength_pct threshold). On a song with moderate\n"
               "                 cymbal activity this is usually correct. On busy crash-heavy\n"
               "                 sections it can over-fill the crash lane.\n"
-              "  Ride lane:     always EMPTY unless you enable Ride Cymbal Detection\n"
-              "                 in the settings. That toggle is off by default because\n"
-              "                 spectral ride detection is unreliable — see the Ride\n"
-              "                 section above.\n\n"
+              "  Ride lane:     the cleanup reclassifier routes ride hits here by default\n"
+              "                 (Ride Cymbal Detection is ON by default). Turn that toggle\n"
+              "                 OFF to fold all cymbals into the Crash lane instead.\n\n"
               "━━  ML / ONNX mode (pure)\n"
               "  Hi-Hat lane:   populated from the model's dedicated hi-hat class.\n"
               "                 This is the strongest class in the ADTOF model and tends\n"
@@ -33435,7 +33419,8 @@ demucs.separate.main()
               "                 that is not a hi-hat — crash, ride, china, open hi-hat\n"
               "                 hit hard — will appear in the CRASH lane. Not because\n"
               "                 they are all crashes, but because the model puts them there.\n"
-              "  Ride lane:     always EMPTY in pure ML mode. The model has no ride class.\n\n"
+              "  Ride lane:     the ML model has no ride class, but the cleanup reclassifier\n"
+              "                 routes ride hits to the Ride lane by default (toggle ON).\n\n"
               "━━  Hybrid mode\n"
               "  Hi-Hat lane:   best coverage — both ML and spectral hi-hat results\n"
               "                 are merged. ML timing is preferred when both methods\n"
@@ -33445,27 +33430,29 @@ demucs.separate.main()
               "                 crash detections. This means the crash lane will typically\n"
               "                 contain more hits than Spectral alone — including ride hits\n"
               "                 that the ML model classified as cymbal. This is expected.\n"
-              "  Ride lane:     populated ONLY from the spectral path if Ride Cymbal\n"
-              "                 Detection is turned ON. ML contributes nothing to the\n"
-              "                 ride lane. Even with spectral ride enabled, results\n"
-              "                 are unreliable — see the Ride section above.\n\n"
+              "  Ride lane:     the cleanup reclassifier separates rides here by default\n"
+              "                 (Ride Cymbal Detection ON). It is more reliable than the\n"
+              "                 retired spectral path, though still imperfect on ride-heavy\n"
+              "                 songs — see the Ride section above.\n\n"
               "━━  Summary table\n"
               "                  Spectral    ML          Hybrid\n"
               "  Hi-Hat          ✓ good      ✓ best      ✓ best\n"
               "  Open hi-hat     ✗ same as closed (all modes — no open/closed class)\n"
               "  Crash           ✓ ok        ⚠ mixed*    ✓ good\n"
-              "  Ride            ✗ empty†    ✗ empty     ✗ empty†\n"
+              "  Ride            ✓ default   ✓ default   ✓ default\n"
               "\n"
-              "  * Crash lane contains crash + ride + other cymbals in ML mode\n"
-              "  † Unless Ride Cymbal Detection toggle is ON (unreliable, see above)\n\n"
-              "━━  What to do about ride in the MIDI Editor\n"
-              "  After generating with ML or Hybrid:\n"
+              "  * Before the cleanup pass, the crash lane holds crash + ride + other cymbals.\n"
+              "  Ride is separated by the cleanup reclassifier by default (Ride toggle ON);\n"
+              "  turn the Ride toggle OFF to fold everything into the Crash lane.\n\n"
+              "━━  If some rides still land in the Crash lane\n"
+              "  The cleanup reclassifier separates most rides automatically, but it can\n"
+              "  miss some on ride-heavy songs (and it does nothing if you turned the Ride\n"
+              "  toggle OFF). To fix the residual by hand:\n"
               "  1. Open the MIDI Editor and look at the Crash lane\n"
               "  2. Sections that should be ride will be in the Crash lane as orange notes\n"
               "  3. Hold Shift and drag across those notes to select them\n"
               "  4. Click Reclassify → Ride\n"
-              "  The timing is already correct. You are only changing the instrument label.\n"
-              "  This takes 30-60 seconds on most songs.\n\n"
+              "  The timing is already correct. You are only changing the instrument label.\n\n"
               "━━  What to do about open hi-hat\n"
               "  Open hi-hat is not detected by any engine — they appear as regular hi-hat.\n"
               "  There is no separate open hi-hat instrument in Paradiddle's MIDI mapping,\n"
@@ -33478,11 +33465,11 @@ demucs.separate.main()
               "     button, or drag the note's velocity bar down below 40\n"
               "  The note renders as a hollow outline — Paradiddle sometimes interprets\n"
               "  low-velocity hi-hat hits as the open articulation in-game.")
-        warn(s, "The most common post-generation confusion: opening the MIDI Editor after\n"
-                "using ML or Hybrid and seeing the ride lane empty while the crash lane is\n"
-                "full of notes that should be rides. This is not a bug. The model combined\n"
-                "them intentionally. Use rubber-band select + Reclassify to fix it in under\n"
-                "a minute.")
+        warn(s, "Rides are kept in the Ride lane by default now — the cleanup reclassifier\n"
+                "separates them after detection. If you still see rides in the Crash lane,\n"
+                "either the reclassifier missed a ride-heavy section or the Ride toggle is\n"
+                "OFF: rubber-band select the misplaced notes and Reclassify → Ride to fix it\n"
+                "in under a minute.")
 
         # ── MIDI Extractor ────────────────────────────────────────────────────
         s = section("📂  MIDI Extractor", left)
@@ -34496,7 +34483,8 @@ demucs.separate.main()
                  "    and regenerate.")
         divider(s)
         entry(s, "Too many crashes / not enough hi-hats\n"
-                 "  → Enable Ride Cymbal Detection if the song uses ride and regenerate.\n"
+                 "  → Rides are separated into the Ride lane by default; reclassify any that\n"
+                 "    landed in Crash (MIDI Editor → Reclassify → Ride).\n"
                  "  → Delete excess crashes manually in the MIDI Editor.")
         divider(s)
         entry(s, "Three notes on the same beat\n"
@@ -35130,8 +35118,10 @@ demucs.separate.main()
                 _add(2,
                     "🥁 Cymbal misclassification (crash / hi-hat / ride):\n"
                     "   → MIDI Editor → Reclassify mode: click or drag notes to correct lane\n"
-                    "   → Keep Ride Detection OFF — reclassify rides from Crash lane manually\n"
-                    "   Why: ADTOF model combines crash+ride into one class — no setting fixes this")
+                    "   → Rides are auto-separated by the cleanup pass (Ride toggle ON by default);\n"
+                    "     reclassify any that still land in the Crash lane\n"
+                    "   Why: the ML model combines crash+ride into one class; the cleanup\n"
+                    "        reclassifier splits them, and manual fixes catch the rest")
                 _flg("Flag misclassified cymbals in MIDI Editor",
                      "yellow/lime outline on suspicious onset-overlap notes",
                      _flag_misclass_notes)
@@ -35146,62 +35136,39 @@ demucs.separate.main()
                      "yellow/lime outline on suspicious onset-overlap notes",
                      _flag_misclass_notes)
 
-            # Tom count off → the Tom detection sensitivity dropdown (v4.5.2-1) is
-            # the exact recall lever (Strict → Conservative → Balanced → Aggressive).
-            # Setting the var mirrors the dropdown (trace persists it; it applies on
-            # the next conversion). (owner 2026-07-09)
-            if "too_few_toms" in checked or "too_many_toms" in checked:
-                _order = ["Strict", "Conservative", "Balanced", "Aggressive"]
+            # v4.7.9: re-swept calibrated tom levels — Strict / Moderate (default) / Aggressive / OFF
+            # (see _TOM_PRESETS_ALLOWED). For "too few toms" bump to Aggressive; for "too many" drop to
+            # OFF (or Strict). Both are safe one-click actions (they set an allowed preset).
+            if "too_few_toms" in checked:
                 _sv = getattr(self, "a2m_tom_sensitivity_var", None)
-                _cur = _sv.get() if _sv else "Conservative"
-                try:
-                    _ci = _order.index(_cur)
-                except ValueError:
-                    _ci = 1
-                if "too_few_toms" in checked:
-                    _nxt = _order[min(_ci + 1, len(_order) - 1)]
-                    if _nxt == _cur:   # already at Aggressive — max recall reached
-                        _add(2,
-                            f"🥁 Not enough tom hits  (Tom sensitivity: {_cur}):\n"
-                            f"   → Already at Aggressive — the detector has surfaced every\n"
-                            f"     tom it can find; raising sensitivity further isn't possible.\n"
-                            f"   → Add the still-missing toms by hand in the MIDI Editor, or\n"
-                            f"     load the over-eager .alt_detector.mid as a Ghost Overlay\n"
-                            f"     to spot candidates. Past here it's a manual add, not a setting.")
-                    else:
-                        _add(2,
-                            f"🥁 Not enough tom hits  (Tom sensitivity: {_cur}):\n"
-                            f"   → Raise Tom detection sensitivity:  {_cur}  →  {_nxt}\n"
-                            f"     (Audio→MIDI ▸ Advanced ▸ Tom detection sensitivity)\n"
-                            f"   → Takes effect on the next conversion\n"
-                            f"   Why: toms are gated conservatively to avoid snare bleed;\n"
-                            f"        Balanced / Aggressive recover more real toms")
-                        if _sv:
-                            _act("Raise Tom detection sensitivity",
-                                 f"{_cur} → {_nxt}",
-                                 lambda n=_nxt: self.a2m_tom_sensitivity_var.set(n))
-                if "too_many_toms" in checked:
-                    _prv = _order[max(_ci - 1, 0)]
-                    if _prv == _cur:   # already at Strict — fewest toms
-                        _add(2,
-                            f"🥁 Too many tom hits  (Tom sensitivity: {_cur}):\n"
-                            f"   → Already at Strict (fewest toms) — lowering it further isn't\n"
-                            f"     possible. The extras are the detector's genuine mistakes:\n"
-                            f"     reclassify or delete them in the MIDI Editor.\n"
-                            f"   Why: past here it's a manual fix, not a setting")
-                    else:
-                        _add(2,
-                            f"🥁 Too many tom hits  (Tom sensitivity: {_cur}):\n"
-                            f"   → Lower Tom detection sensitivity:  {_cur}  →  {_prv}\n"
-                            f"   → Or reclassify stray toms in the MIDI Editor\n"
-                            f"   Why: higher sensitivity can pick up snare bleed as toms")
-                        if _sv:
-                            _act("Lower Tom detection sensitivity",
-                                 f"{_cur} → {_prv}",
-                                 lambda n=_prv: self.a2m_tom_sensitivity_var.set(n))
-                    _flg("Flag misclassified tom notes in MIDI Editor",
-                         "yellow/lime outline on suspicious onset-overlap notes",
-                         _flag_misclass_notes)
+                _add(2,
+                    "🥁 Not enough tom hits:\n"
+                    "   → Bump Tom detection sensitivity to Aggressive (Audio→MIDI ▸ Advanced) to\n"
+                    "     recover more toms, then regenerate.\n"
+                    "   → Or add the missing toms by hand in the MIDI Editor — Reclassify a nearby\n"
+                    "     hit to the correct tom lane, or drag it to the right row.\n"
+                    "   → Load the over-eager .alt_detector.mid as a Ghost Overlay to spot\n"
+                    "     candidate tom positions.")
+                if _sv and _sv.get() != "Aggressive":
+                    _act("Raise Tom detection sensitivity",
+                         f"{_sv.get()} → Aggressive",
+                         lambda: self.a2m_tom_sensitivity_var.set("Aggressive"))
+            if "too_many_toms" in checked:
+                _sv = getattr(self, "a2m_tom_sensitivity_var", None)
+                _add(2,
+                    "🥁 Too many tom hits:\n"
+                    "   → Set Tom detection sensitivity to OFF (Audio→MIDI ▸ Advanced) to stop\n"
+                    "     tom recovery, then regenerate — or reclassify/delete the stray toms in\n"
+                    "     the MIDI Editor.\n"
+                    "   → Or drop the sensitivity to Strict for far fewer toms without going\n"
+                    "     fully OFF.")
+                if _sv:
+                    _act("Turn Tom detection OFF",
+                         f"{_sv.get()} → OFF",
+                         lambda: self.a2m_tom_sensitivity_var.set("OFF"))
+                _flg("Flag misclassified tom notes in MIDI Editor",
+                     "yellow/lime outline on suspicious onset-overlap notes",
+                     _flag_misclass_notes)
 
             if "timing_messy" in checked:
                 bpm_str = f"{bpm:.1f}" if bpm else "unknown"

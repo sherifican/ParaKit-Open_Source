@@ -1,10 +1,10 @@
 {
-  "version": "4.7.8.10",
+  "version": "4.7.9",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "132e0ad9cffe0b3a220d0280f2a06e54e699ee7eea7e44b82ba22e2894a901aa"
+      "sha256": "20f0fb34a67702df397a78435772d139ec83d83872743b3c1c9efdff592dc602"
     },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
@@ -52,11 +52,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "cf3128e5d59226f91e5b3604db89cbc4e68a56d77f6c9ad1535b01149b5d4879"
+      "sha256": "f6ab6fd4110bc852ceab48f0830aca65539e1150857bf93af0483cc3dd70f3b6"
     },
     {
       "path": "README.txt",
-      "sha256": "0819273b67d345e182301bf7e564d71fafc83cf4a9ec62e7fb779f1e29cc9975"
+      "sha256": "1c918a78124f78ee6f1582d856f35e34e738b0620fb08a2c4c1347bf64e6a05a"
     },
     {
       "path": "Run ParaKit v4.0.bat",
@@ -148,7 +148,7 @@
     },
     {
       "path": "parakit_drum_model.onnx",
-      "sha256": "dc5c6d18c107bd4f030697ccd0c51d9518f40adb761cee94bc0dbae168946056"
+      "sha256": "6cff14bc63f3b20acf828b22b45184a2cda251453eb4565cfa1daade08dde225"
     },
     {
       "path": "parakit_header_logo.png",
