@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.16"
+    VERSION = "4.7.17"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -16262,6 +16262,17 @@ demucs.separate.main()
             # v4.7.12 — the tom preset applied to THIS run's gates. The post-conversion
             # strip reads this, not the live var (capture-at-start, like every flag here).
             "tom_sensitivity": _applied_tom_preset,
+            # v4.7.17 — the cleanup-pass toggles. Snapshotted here because the cleanup now
+            # runs ON THE WORKER (so it completes before "Done!"/total_notes are reported);
+            # the worker must never read a Tk var. Same capture-at-start contract as above.
+            "cleanup_pass": bool(getattr(self, "a2m_cleanup_pass_var", None)
+                                 is not None and self.a2m_cleanup_pass_var.get()),
+            "cleanup_cymbal": bool(getattr(self, "a2m_cleanup_cymbal_var", None)
+                                   is not None and self.a2m_cleanup_cymbal_var.get()),
+            "cleanup_kick": bool(getattr(self, "a2m_cleanup_kick_var", None)
+                                 is not None and self.a2m_cleanup_kick_var.get()),
+            "allow_ride": bool(getattr(self, "a2m_ride_var", None)
+                               is not None and self.a2m_ride_var.get()),
         }
 
         thread = threading.Thread(
@@ -17721,15 +17732,30 @@ demucs.separate.main()
             self._a2m_last_midi      = midi_path
             self._a2m_conf_lookup    = conf_lookup
             self._a2m_source_file    = _orig_input_path
+            # ── v4.7.17 — PROTECTED-FN EDIT (owner-approved; backup at
+            # backups/ParaKit v4.0 - pre-v4.7.17 cleanup-before-done PROTECTED-EDIT.py) ──
+            # Run the OUTPUT post-passes here, on the worker, BEFORE announcing completion.
+            # Both rewrite midi_path IN PLACE (tom-OFF strip; cleanup's phantom-kick
+            # removal). They used to run in the deferred after(100) callback below, which
+            # meant the worker logged "✓ Done!" + the note count and popped the completion
+            # dialog while the file was still being rewritten — so the number the user read
+            # was the PRE-cleanup count (e.g. it still counted 8 phantom kicks the cleanup
+            # then deleted), and the cleanup's own log line always landed after the banner.
+            # Both passes read _a2m_run_flags (never Tk vars), so they are worker-safe.
+            self._a2m_strip_toms_if_off(midi_path)
+            self._a2m_apply_cleanup_pass(midi_path)
             # Save settings for this specific file (the USER's file — input_path
             # may point at the separator's temp composite; see F1 note above)
             self.root.after(0, lambda p=_orig_input_path: self._a2m_save_file_settings(p))
             # Enable preview button
             self.root.after(0, lambda: self.a2m_preview_btn.configure(state="normal"))
-            # Auto-load into MIDI Editor
-            self.root.after(100, lambda p=midi_path: self._me_open_from_a2m(p))
+            # Auto-load into MIDI Editor — LOAD ONLY; the post-passes already ran above.
+            self.root.after(100, lambda p=midi_path: self._me_open_chart(p))
 
-            total_notes = len(events)
+            # v4.7.17 — count the FINAL chart on disk, not the pre-cleanup detection list
+            # (len(events) ignores every note the passes above removed). Falls back to the
+            # old value if the re-count fails, so this can never block a conversion.
+            total_notes = self._a2m_count_notes_on_disk(midi_path, len(events))
             self._a2m_log(f"\n✓ Done!")
             self._a2m_log(f"  Total notes: {total_notes}")
             self._a2m_log(f"  BPM: {bpm:.1f}")
@@ -26392,6 +26418,29 @@ demucs.separate.main()
             except Exception:
                 pass
 
+    def _a2m_count_notes_on_disk(self, midi_path, fallback):
+        """v4.7.17 — count the note-ons actually present in the written chart.
+
+        The conversion used to report ``len(events)`` — the DETECTION list — which ignores
+        every note the output post-passes removed (the tom-OFF strip, and the cleanup's
+        phantom-kick removal). So the log said "Total notes: N" and the completion dialog
+        quoted N while the real file on disk had fewer (e.g. 8 phantom kicks lighter).
+        Counting the file is the honest number.
+
+        Worker-safe: pure file I/O, no Tk. Any failure returns ``fallback`` (the old
+        len(events) value), so a bad re-count can never break or block a conversion.
+        """
+        try:
+            import mido as _mido
+            n = 0
+            for _tr in _mido.MidiFile(midi_path).tracks:
+                for _msg in _tr:
+                    if _msg.type == "note_on" and _msg.velocity > 0:
+                        n += 1
+            return n
+        except Exception:
+            return fallback
+
     def _a2m_apply_cleanup_pass(self, midi_path):
         """v4.5.0-1 — apply the trained detection CLEANUP PASS (cymbal re-classifier
         + kick phantom-remover) to the freshly-written Audio->MIDI .mid IN PLACE,
@@ -26402,20 +26451,33 @@ demucs.separate.main()
         byte-identical to pre-4.5). Any failure is caught + logged so a cleanup
         error never blocks loading the chart."""
         try:
-            if not (getattr(self, "a2m_cleanup_pass_var", None)
-                    and self.a2m_cleanup_pass_var.get()):
+            # v4.7.17 — read the RUN SNAPSHOT (_a2m_run_flags), not the live Tk vars.
+            # This pass now runs on the CONVERSION WORKER THREAD (so it finishes before
+            # "✓ Done!" is logged and before total_notes is reported), and reading Tk
+            # vars off the main thread is a thread-affinity violation — precisely the
+            # bug class the F2 capture-at-start fix removed from this worker. _a2m_start
+            # snapshots these four flags. It also means a mid-run toggle can't change the
+            # run already in progress, matching every other A2M setting.
+            # The var fallbacks below only fire if something calls this OUTSIDE a tracked
+            # conversion (i.e. on the main thread), where a Tk read is safe.
+            _f = getattr(self, "_a2m_run_flags", None) or {}
+
+            def _flag(key, var_name):
+                if key in _f:
+                    return bool(_f[key])
+                _v = getattr(self, var_name, None)
+                return bool(_v is not None and _v.get())
+
+            if not _flag("cleanup_pass", "a2m_cleanup_pass_var"):
                 return
-            do_cymbal = bool(getattr(self, "a2m_cleanup_cymbal_var", None)
-                             and self.a2m_cleanup_cymbal_var.get())
-            do_kick = bool(getattr(self, "a2m_cleanup_kick_var", None)
-                           and self.a2m_cleanup_kick_var.get())
+            do_cymbal = _flag("cleanup_cymbal", "a2m_cleanup_cymbal_var")
+            do_kick = _flag("cleanup_kick", "a2m_cleanup_kick_var")
             if not (do_cymbal or do_kick):
                 return
             # Ride-detection toggle is authoritative over the cleanup: when ride
             # detection is OFF the user wants no rides, so the cymbal re-classifier
             # must not promote onsets into the ride lane (it folds them to crash).
-            allow_ride = bool(getattr(self, "a2m_ride_var", None)
-                              and self.a2m_ride_var.get())
+            allow_ride = _flag("allow_ride", "a2m_ride_var")
             audio_path = getattr(self, "_a2m_source_file", None)
             if not audio_path or not os.path.isfile(audio_path):
                 try:

@@ -1,10 +1,10 @@
 {
-  "version": "4.7.16",
+  "version": "4.7.17",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "6c04360bf53dae5af1e8be53556a25211bdf7977e3b7a8021b2c21bf8c56fec0"
+      "sha256": "7a304880b8ab28a2f1fb797fef77254facde0038386e7fb73388064cb6def0ff"
     },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
@@ -52,11 +52,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "0d9078559a8d8fdf24633c463df447f039b8805b9723242210234fc8d93d6c78"
+      "sha256": "9a1a441c2395ae1683565636bd58a8bd68ba79e70ebac828638959f18336751f"
     },
     {
       "path": "README.txt",
-      "sha256": "7ee6f9a7dc8fb4057c57822659564d0442091b4ce01e72f56b6c51cbffb52bdf"
+      "sha256": "1a8acc4fc314cdad29e2968f6b58f7170531cf6d5b6d714846f9fa9898503537"
     },
     {
       "path": "Run ParaKit v4.0.bat",

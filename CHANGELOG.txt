@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.16  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.17  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,27 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.17   --   2026-07-15
+------------------------------------------------------------------------------
+  The note count you're shown is now the chart you actually got.
+
+  Audio -> MIDI:
+  - FIXED: the "Total notes" figure in the log and in the "Conversion Complete!"
+    dialog was the number of hits the DETECTOR found -- counted before the cleanup
+    pass ran. The cleanup then removed phantom kicks from the file, so the number
+    you were shown was too high (on our test track it said 1513 when the chart on
+    disk had 1505). ParaKit now finishes the cleanup FIRST and counts the finished
+    chart, so the number matches what you open.
+  - FIXED: for the same reason, "Done!" and the completion dialog appeared while
+    the chart was still being rewritten, and the "Cleanup pass:" line always turned
+    up at the very bottom of the log AFTER the conversion looked finished -- which
+    made it look like the cleanup hadn't run. The cleanup now runs and reports
+    before the conversion is announced.
+  - Changing a cleanup toggle in the middle of a conversion no longer affects the
+    conversion already running -- those settings are now captured when you press
+    Convert, the same as every other Audio -> MIDI setting.
 
 ------------------------------------------------------------------------------
   v4.7.16   --   2026-07-15
