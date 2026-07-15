@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.20"
+    VERSION = "4.7.21"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -26443,9 +26443,23 @@ demucs.separate.main()
                 # a stray orphan self-explanatory to anyone who finds one, and keeps INV11's
                 # sabotage — which keys on the chart path — landing on the real save.
                 import tempfile as _tempfile   # local, as everywhere else in this file
+                # v4.7.21 — a SHORT, FIXED-LENGTH temp name. v4.7.20 prefixed it with the
+                # whole chart basename, which put the song title INSIDE a path component:
+                # NTFS caps every component at 255 bytes and LongPathsEnabled does NOT lift
+                # that, so basename+24 > 255 raised OSError, the outer handler swallowed it
+                # as "skipped", and tom-OFF silently did nothing — INV15's bug re-entering
+                # through the very fix that closed it (basename 231 strips 36/36; 232 strips
+                # 0/36, breaker INV17). This component is now always 24 bytes regardless of
+                # the song name. It is also SHORTER than almost any real chart name, which
+                # keeps the FULL path under MAX_PATH on a default box (LongPathsEnabled=0,
+                # the shipping default) — the chart already exists at this path, so a temp
+                # whose name is no longer than the chart's fits wherever the chart does.
+                # Atomicity lives in the os.replace, never in the name; the name's only jobs
+                # are "unique" (can't collide with a stale orphan) and "identifiable"
+                # (.pktomstrip marks any leftover as ours, greppable across every song).
                 _fd, _tmp = _tempfile.mkstemp(
-                    prefix=os.path.basename(midi_path) + ".pktomstrip.",
-                    suffix=".tmp", dir=os.path.dirname(midi_path) or ".")
+                    prefix=".pktomstrip.", suffix=".tmp",
+                    dir=os.path.dirname(midi_path) or ".")
                 os.close(_fd)          # mido reopens by name
                 try:
                     mid.save(_tmp)
@@ -26486,6 +26500,30 @@ demucs.separate.main()
             return sum(1 for _tr in _mido.MidiFile(midi_path).tracks
                        for _msg in _tr
                        if _msg.type == "note_on" and _msg.velocity > 0)
+        except Exception:
+            return None
+
+    def _a2m_chart_sig(self, midi_path):
+        """v4.7.21 — a content signature for a chart on disk, or None if it can't be read.
+
+        Answers exactly one question: "are these bytes the same bytes as before?" — which is
+        what the word "skipped" claims about a chart, and what a NOTE COUNT cannot answer.
+        v4.7.20's ``_moved`` compared counts, reasoning that "a moved note count proves the
+        write happened". True — but it relied on the CONVERSE (an unmoved count proves no
+        write), which is false: the cymbal re-classifier RE-LABELS lanes and is deliberately
+        count-preserving, so a relabel that turned every crash into a ride and rewrote the
+        file left the count identical and got reported "skipped" (breaker INV16).
+        moved ⇒ wrote does not give ¬moved ⇒ ¬wrote.
+
+        Byte-identical is the honest bar: if the bytes never changed, the chart IS as
+        detected and "skipped" is true no matter what the code did in between.
+
+        Worker-safe: pure file I/O, no Tk. Charts are a few KB, so this is cheap.
+        """
+        try:
+            import hashlib as _hashlib
+            with open(midi_path, "rb") as _fh:
+                return _hashlib.sha256(_fh.read()).hexdigest()
         except Exception:
             return None
 
@@ -26549,6 +26587,7 @@ demucs.separate.main()
         # as the tally itself: measure, don't trust a self-report.
         _rewrote = False
         _n_pre = None
+        _sig_pre = None     # v4.7.21 — content, not count; see _a2m_chart_sig
         _tallied = False
         try:
             # v4.7.17 — read the RUN SNAPSHOT (_a2m_run_flags), not the live Tk vars.
@@ -26631,6 +26670,9 @@ demucs.separate.main()
             # failed re-count reports (breaker INV12). Counting before/after is exact
             # regardless of what the sidecar says, and costs one small file read.
             _n_pre = self._a2m_count_note_ons(midi_path)
+            # v4.7.21 — and the CONTENT, so the except can tell a count-preserving relabel
+            # apart from a genuine skip (breaker INV16).
+            _sig_pre = self._a2m_chart_sig(midi_path)
             summary = clean_a2m_midi(midi_path, audio_path,
                                      do_cymbal=do_cymbal, do_kick=do_kick,
                                      allow_ride=allow_ride)
@@ -26679,8 +26721,15 @@ demucs.separate.main()
                 # fallible tail, so a raise in there leaves _rewrote False on a chart that
                 # was very much rewritten (breaker INV13). A moved note count proves the
                 # write happened regardless of where it died.
+                # v4.7.21 — ask whether the BYTES changed, not the note count. A count is the
+                # wrong question: the cymbal re-classifier relabels lanes count-preservingly,
+                # so a relabel that rewrote the chart (every crash -> ride) reported a
+                # perfectly steady count and got called "skipped" (breaker INV16). The count
+                # is still read, but only for the tally arithmetic below.
                 _n_now = self._a2m_count_note_ons(midi_path)
-                _moved = (_n_pre is not None and _n_now is not None and _n_now != _n_pre)
+                _sig_now = self._a2m_chart_sig(midi_path)
+                _moved = (_sig_pre is not None and _sig_now is not None
+                          and _sig_now != _sig_pre)
                 if _rewrote or _moved:
                     # Count what it removed before dying, so a later failed re-count can't
                     # re-inflate the total (INV9/INV14). _tallied guards double-counting

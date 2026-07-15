@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.20  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.21  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,29 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.21   --   2026-07-15
+------------------------------------------------------------------------------
+  Audio -> MIDI:
+  - FIXED: songs with a very long title could silently lose Tom Detection = OFF.
+    ParaKit writes the tom removal through a temporary file next to your chart,
+    and that file's name was built from the song's own file name. Windows limits
+    any single file name to 255 characters, so a long enough title pushed the
+    temporary name over the limit, the tom removal failed, and the log said
+    "skipped" -- leaving every tom in a chart you had asked to have none. The
+    temporary name no longer contains the song title, so the length of your song
+    titles cannot affect it at all.
+  - FIXED: if the cleanup pass failed partway through, and the work it had
+    already done only RE-LABELLED cymbals (crash -> ride, say) without adding or
+    removing any notes, the log still called it "skipped" -- the same word used
+    when your chart genuinely is untouched. ParaKit now compares the chart file
+    itself before and after, so a re-labelled chart is never reported as skipped.
+    Your charts were correct either way; only the log line was wrong.
+
+  Notes:
+  - No change to detection, charting, or any conversion setting. Charts convert
+    exactly as they did in v4.7.18 through v4.7.20.
 
 ------------------------------------------------------------------------------
   v4.7.20   --   2026-07-15
