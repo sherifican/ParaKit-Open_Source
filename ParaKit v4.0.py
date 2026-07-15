@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.17"
+    VERSION = "4.7.18"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -26378,6 +26378,13 @@ demucs.separate.main()
         -- NO protected-fn / detection change. Any non-OFF preset, or any failure, is a
         no-op (chart kept exactly as detected). Runs independently of the cleanup-pass
         toggles -- OFF is a detection-sensitivity choice, not part of the cleanup."""
+        # v4.7.18 — reset the post-pass removal tally for THIS conversion. Both output
+        # passes add what they delete here, so _a2m_count_notes_on_disk can report an
+        # exact post-pass bound if it ever fails to re-read the chart (breaker INV9)
+        # instead of falling back to the inflated pre-cleanup detector total. This runs
+        # before the OFF check on purpose: the strip is the first post-pass on the
+        # conversion path, so it owns the reset even when it has nothing to strip.
+        self._a2m_post_pass_removed = 0
         try:
             # v4.7.12 — use the preset SNAPSHOTTED at conversion start (_a2m_run_flags),
             # NEVER the live Tk var. The tom dropdown isn't locked during a conversion and
@@ -26408,6 +26415,10 @@ demucs.separate.main()
                 tr[:] = kept
             if removed:
                 mid.save(midi_path)
+            # v4.7.18 — report what we deleted so a failed re-count can still bound the
+            # real note total instead of reporting the pre-cleanup number (INV9).
+            self._a2m_post_pass_removed = (
+                int(getattr(self, "_a2m_post_pass_removed", 0) or 0) + int(removed))
             try:
                 self._a2m_log(f"Tom detection OFF: removed {removed} tom note(s)")
             except Exception:
@@ -26438,8 +26449,26 @@ demucs.separate.main()
                     if _msg.type == "note_on" and _msg.velocity > 0:
                         n += 1
             return n
-        except Exception:
-            return fallback
+        except Exception as _e:
+            # v4.7.18 — a FAILED re-count must NEVER report the raw `fallback`
+            # (= len(events), the PRE-cleanup detector total). That is the exact
+            # inflated number v4.7.17 existed to kill, and returning it re-told the
+            # lie whenever the chart couldn't be re-read (breaker INV9: pre=18,
+            # on-disk=17, reported 18). A log warning alone is not enough — the
+            # completion DIALOG shows this number and nobody reads the log for it.
+            # So subtract what the post-passes actually removed: they each report
+            # their own deletions into _a2m_post_pass_removed, which makes this an
+            # exact post-pass bound rather than a guess. Never blocks a conversion.
+            _removed = int(getattr(self, "_a2m_post_pass_removed", 0) or 0)
+            _bounded = max(0, int(fallback) - _removed)
+            try:
+                self._a2m_log(
+                    f"  ⚠  Couldn't re-read the chart to count its notes "
+                    f"({type(_e).__name__}); reporting the detector total minus the "
+                    f"{_removed} note(s) the cleanup removed.")
+            except Exception:
+                pass
+            return _bounded
 
     def _a2m_apply_cleanup_pass(self, midi_path):
         """v4.5.0-1 — apply the trained detection CLEANUP PASS (cymbal re-classifier
@@ -26462,22 +26491,37 @@ demucs.separate.main()
             # conversion (i.e. on the main thread), where a Tk read is safe.
             _f = getattr(self, "_a2m_run_flags", None) or {}
 
-            def _flag(key, var_name):
-                if key in _f:
-                    return bool(_f[key])
-                _v = getattr(self, var_name, None)
-                return bool(_v is not None and _v.get())
-
-            if not _flag("cleanup_pass", "a2m_cleanup_pass_var"):
+            # v4.7.18 — FAIL CLOSED, and NEVER touch a Tk var here.
+            # v4.7.17 kept a `getattr(self, var).get()` fallback for missing keys,
+            # commented as "main-thread callers only". That comment was wrong twice:
+            # (a) _a2m_do_convert (the WORKER) is now the only live caller, so the
+            #     fallback could ONLY ever fire off the main thread, and
+            # (b) an off-thread BooleanVar.get() raises RuntimeError on Windows, which
+            #     the outer except swallows -> the cleanup silently no-ops while the UI
+            #     still shows it ON (breaker INV10: off_main_Tk_gets=1, chart unclean).
+            # _a2m_start always writes a COMPLETE snapshot, so a missing key means the
+            # flags are malformed — say so loudly and skip, never guess from Tk.
+            if "cleanup_pass" not in _f:
+                try:
+                    self._a2m_log("Cleanup pass:      skipped (internal: run flags "
+                                  "incomplete — no cleanup was applied)")
+                except Exception:
+                    pass
                 return
-            do_cymbal = _flag("cleanup_cymbal", "a2m_cleanup_cymbal_var")
-            do_kick = _flag("cleanup_kick", "a2m_cleanup_kick_var")
+
+            def _flag(key):
+                return bool(_f.get(key, False))
+
+            if not _flag("cleanup_pass"):
+                return
+            do_cymbal = _flag("cleanup_cymbal")
+            do_kick = _flag("cleanup_kick")
             if not (do_cymbal or do_kick):
                 return
             # Ride-detection toggle is authoritative over the cleanup: when ride
             # detection is OFF the user wants no rides, so the cymbal re-classifier
             # must not promote onsets into the ride lane (it folds them to crash).
-            allow_ride = _flag("allow_ride", "a2m_ride_var")
+            allow_ride = _flag("allow_ride")
             audio_path = getattr(self, "_a2m_source_file", None)
             if not audio_path or not os.path.isfile(audio_path):
                 try:
@@ -26511,6 +26555,12 @@ demucs.separate.main()
             summary = clean_a2m_midi(midi_path, audio_path,
                                      do_cymbal=do_cymbal, do_kick=do_kick,
                                      allow_ride=allow_ride)
+            # v4.7.18 — report deletions so _a2m_count_notes_on_disk can bound the true
+            # total if it fails to re-read the chart (INV9). Only the kick remover
+            # DELETES notes; the cymbal pass RE-LABELS lanes, so it changes no count.
+            self._a2m_post_pass_removed = (
+                int(getattr(self, "_a2m_post_pass_removed", 0) or 0)
+                + int(summary.get("n_kicks_removed", 0) or 0))
             try:
                 self._a2m_log(
                     "Cleanup pass:      "
@@ -26528,54 +26578,40 @@ demucs.separate.main()
             except Exception:
                 pass
 
-    def _me_open_from_a2m(self, midi_path):
-        """Auto-load into the editor after a FRESH Audio→MIDI conversion.
-
-        ⛔ EXCLUSIVE to a just-finished A2M conversion. This entry point applies the
-        tom-OFF strip, which REWRITES ``midi_path`` IN PLACE and deletes every tom
-        note. Any caller that merely OPENS AN EXISTING chart (preview-last, Sheet
-        Music → MIDI, …) must call ``_me_open_chart()`` instead — otherwise an
-        Audio→MIDI setting silently erases toms from a file the user never asked to
-        modify, permanently.
-
-        (v4.7.10/4.7.11 shipped exactly that bug: the strip was attached here while
-        _a2m_preview_last + the two Sheet-Music converters also called this helper,
-        so tom sensitivity = OFF turned "open an old chart" into an in-place tom
-        eraser. Found by an independent adversarial audit; fixed in v4.7.12 by
-        splitting the shared body out into _me_open_chart.)
-        """
-        # v4.7.9.1 — OFF means zero toms: strip the tom lanes from the FRESHLY
-        # CONVERTED output .mid before cleanup + editor load (the sensitivity gate
-        # can't reach floor toms). Fresh-conversion output ONLY — see above.
-        self._a2m_strip_toms_if_off(midi_path)
-        # v4.7.14 — the cleanup pass moved HERE from _me_open_chart. It rewrites the
-        # .mid IN PLACE using self._a2m_source_file, so like the tom strip it belongs
-        # to a FRESH conversion only: on the shared open path it re-wrote every chart
-        # you merely opened, pairing it with whatever audio was converted last. Today
-        # that was survivable only by accident (Sheet Music emits 2 tempo events so the
-        # sidecar's multi-tempo guard bails, and preview-last happens to carry matching
-        # audio) — an accidental guard is not a safety design. Found by the breaker run.
-        self._a2m_apply_cleanup_pass(midi_path)
-        self._me_open_chart(midi_path)
+    # ── v4.7.18 — `_me_open_from_a2m` was REMOVED here. ────────────────────────────
+    # v4.7.17 moved BOTH in-place post-passes (the tom-OFF strip and the cleanup pass)
+    # into _a2m_do_convert, so they finish before the conversion is announced, and
+    # pointed the deferred callback at _me_open_chart. That left _me_open_from_a2m
+    # ORPHANED: nothing called it, yet it still applied both passes — so resurrecting
+    # it would have DOUBLE-applied them to an already-cleaned chart. Dead code that
+    # rewrites files in place is a loaded gun, so it was deleted rather than left
+    # lying around. (History worth keeping: 4.7.10/4.7.11 shipped the strip attached
+    # to that shared helper, which quietly turned "open an old chart" into an in-place
+    # tom eraser for preview-last and Sheet Music output. An adversarial audit found
+    # it, 4.7.12 split the shared body out, 4.7.17 moved the passes to the worker.
+    # INV1 in _breaker/invariants.py is the permanent guard: opening never rewrites.)
 
     def _me_open_chart(self, midi_path, inherit_a2m_source=True):
-        """Shared 'open a chart into the MIDI Editor' path: cleanup pass + load.
+        """Shared 'open a chart into the MIDI Editor': load + attach provenance.
 
-        Does NOT strip toms, so it is safe for opening EXISTING charts (preview-last,
-        Sheet Music output). Only _me_open_from_a2m — a fresh A2M conversion — strips.
+        Opening a chart is a READ — this path never rewrites ``midi_path``. It is safe
+        for EXISTING charts (preview-last, Sheet Music output) and is also the callback
+        a fresh conversion uses, because the conversion already ran its post-passes on
+        the worker before announcing itself.
 
         ``inherit_a2m_source``: whether this chart may claim the last Audio→MIDI source
         audio as its provenance. TRUE only for charts that actually came from A→MIDI
         (a fresh conversion, or preview-last re-opening that same output). Sheet Music
         output must pass FALSE — see the note at the assignment below.
 
-        ⛔ v4.7.14 — this path MUST NOT REWRITE ``midi_path``. Opening a chart is a
-        read. Both in-place rewriting passes (the tom-OFF strip and the cleanup pass)
-        now live in _me_open_from_a2m, i.e. fresh conversions only. Do not add another
-        one here: cleanup used to run on this shared path and re-wrote every chart the
-        user merely opened, using whatever audio was converted last. Nothing was
-        corrupted only because Sheet Music's 2 tempo events happened to trip the
-        sidecar's multi-tempo guard — safety by accident.
+        ⛔ THIS PATH MUST NOT REWRITE ``midi_path``. Opening a chart is a read. Both
+        in-place rewriting passes (the tom-OFF strip and the cleanup pass) run inside
+        _a2m_do_convert on the conversion worker (v4.7.17), i.e. fresh conversions
+        only — never here. Do not add another one: cleanup used to run on this shared
+        path and re-wrote every chart the user merely opened, pairing it with whatever
+        audio was converted last. Nothing was corrupted only because Sheet Music's 2
+        tempo events happened to trip the sidecar's multi-tempo guard — safety by
+        accident. INV1 in _breaker/invariants.py fails the build if this regresses.
         """
         # R2-1: load FIRST — on decline, me_midi_var and _me_source_audio keep
         # pointing at the OLD chart (setting them before the load mispaired

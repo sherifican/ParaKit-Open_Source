@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-late-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.7.17`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.18`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -178,7 +178,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.7.17`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.18`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -575,6 +575,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.7.18**<br>2026-07-15 | <ul><li>**Follow-up to 4.7.17 — the note count stays honest even when something goes wrong.** If ParaKit couldn't re-read your finished chart to count it (locked, missing or damaged file), it quietly fell back to the detector's **pre-cleanup** total again — the same too-high number 4.7.17 set out to fix. It now subtracts exactly what the cleanup removed, so the figure stays right even when the re-count fails, and says so in the log.</li><li>**Fixed:** an internal safety fallback in the cleanup could read a setting from the wrong thread, which on Windows failed and made the cleanup **skip itself silently** — while the checkbox still showed it ON. It now refuses to guess and logs it.</li><li>Removed an unused internal path that could have applied the cleanup and tom removal to a chart a second time.</li></ul> |
 | **v4.7.17**<br>2026-07-15 | <ul><li>**Audio → MIDI — the note count you're shown is now the chart you actually got.** "Total notes" (in the log and the **Conversion Complete!** dialog) was the number the *detector* found, counted **before** the cleanup pass ran — so it was too high once the cleanup removed phantom kicks (our test track reported **1513** when the chart on disk had **1505**). ParaKit now finishes the cleanup first and counts the finished chart.</li><li>**Fixed: the cleanup now runs and reports *before* the conversion is announced.** Previously `Done!` and the completion dialog appeared while the chart was still being rewritten, and the `Cleanup pass:` line always turned up at the very bottom of the log — making it look like the cleanup never ran.</li><li>Changing a cleanup toggle mid-conversion no longer affects the conversion already running — those settings are captured when you press Convert, like every other Audio → MIDI setting.</li></ul> |
 | **v4.7.16**<br>2026-07-15 | <ul><li>**Fixed the GPU install command shown on startup (RTX 50-series).** When dependencies are missing, ParaKit's install message pointed at the **cu121** PyTorch build — which does **not** support **RTX 50-series (Blackwell)** cards. Anyone with a 5060/5070/5080/5090 who followed our own instructions silently ended up on **CPU-only stem splitting** — the exact "splitting is slow / my GPU isn't used" problem `docs/TROUBLESHOOTING.md` describes. It now says **cu128**, which works on 50-series *and* older cards, and matches the troubleshooting doc.</li></ul> |
 | **v4.7.15**<br>2026-07-15 | <ul><li>**Damaged files now say what's wrong instead of failing silently.** Choosing an audio file that is **empty (0 bytes)**, is actually a **folder**, or is another file renamed to `.wav` used to start the conversion anyway — Convert greyed out, the run died with a technical error buried in the log, and you got no chart and no explanation. ParaKit now checks the file **before anything starts** and tells you plainly what's wrong.</li><li>**Same for the drum model file** — an empty `.onnx`, or a folder named `.onnx`, passed the old check and the conversion failed mid-run with a technical error. You now get a clear **"Bad Model File"** message pointing at the Download Model button.</li></ul> |

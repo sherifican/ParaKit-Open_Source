@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.17  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.18  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,25 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.18   --   2026-07-15
+------------------------------------------------------------------------------
+  Follow-up to 4.7.17: the note count stays honest even when something goes wrong.
+
+  Audio -> MIDI:
+  - FIXED: if ParaKit couldn't re-read your finished chart to count it (a locked,
+    missing or damaged file), it quietly fell back to reporting the detector's
+    pre-cleanup total again -- the same too-high number 4.7.17 set out to fix.
+    ParaKit now subtracts exactly what the cleanup removed, so the figure stays
+    right even when the re-count fails, and it tells you in the log when that
+    happens.
+  - FIXED: an internal safety fallback in the cleanup pass could read a setting
+    from the wrong thread, which on Windows failed and made the cleanup skip
+    itself silently -- while the checkbox still showed it as ON. It now refuses
+    to guess and says so in the log instead.
+  - Removed an unused internal code path that could have applied the cleanup and
+    tom removal to a chart a second time.
 
 ------------------------------------------------------------------------------
   v4.7.17   --   2026-07-15
