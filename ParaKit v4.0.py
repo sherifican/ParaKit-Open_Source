@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.22"
+    VERSION = "4.7.23"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -15710,6 +15710,49 @@ demucs.separate.main()
 
         self._a2m_set_onnx_status("missing", "")
 
+    def _a2m_model_is_loadable(self, path):
+        """v4.7.23 — does this file actually LOAD as a detector model? Returns (ok, why).
+
+        The old guard asked `isfile()` + `getsize() >= 1024` — whether the bytes were
+        PLAUSIBLE, never whether they were a model. Any >=1 KB file named .onnx cleared
+        it, the load then threw INSIDE the conversion worker, and the run silently
+        continued on SPECTRAL while the dialog still said "Conversion Complete!". A user
+        who picked "ML (pure)" got a 100% spectral chart — 12 notes where the real model
+        found 20 — with the only trace one line mid-log (breaker INV21). Worse, the status
+        label showed a green "✅ Model ready" for 2 MB of junk AND that disabled the Get
+        Model button, so the user couldn't re-download their way out. A self-reinforcing
+        trap: the UI vouched for the corrupt file.
+
+        Cached on (path, size, mtime) — the label refreshes far more often than the file
+        changes, and a real session build costs ~100 ms.
+        """
+        try:
+            _st = os.stat(path)
+            _key = (os.path.abspath(path), _st.st_size, _st.st_mtime_ns)
+        except Exception as _e:
+            return False, f"that file can't be read ({type(_e).__name__})"
+        _cache = getattr(self, "_a2m_model_ok_cache", None)
+        if _cache is None:
+            _cache = self._a2m_model_ok_cache = {}
+        if _key in _cache:
+            return _cache[_key]
+        try:
+            import onnxruntime as _ort
+            _ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+            _res = (True, None)
+        except ImportError:
+            # onnxruntime absent => we CANNOT tell whether the model is good. "Couldn't
+            # check" is NOT "invalid" — the same lesson v4.7.22 learned the hard way when
+            # an unreadable chart scored identically to an unchanged one. Without the
+            # runtime the ML path can't run at all and that surfaces on its own; don't
+            # slander a perfectly good model here on the strength of a missing import.
+            _res = (True, None)
+        except Exception as _e:
+            _res = (False, str(_e).strip().splitlines()[0] if str(_e).strip()
+                    else type(_e).__name__)
+        _cache[_key] = _res
+        return _res
+
     def _a2m_set_onnx_status(self, state, path):
         """Update the ONNX model status label and gate the Get Model button.
 
@@ -15718,6 +15761,17 @@ demucs.separate.main()
         and saving a redundant click. Re-enabled when missing or errored so the
         user can retry the download.
         """
+        # v4.7.23 — "Model ready" is a claim about whether the thing LOADS, so check that
+        # it loads. Callers pass "ok" purely on the strength of the file existing, which
+        # is how 2 MB of junk earned a green tick identical to the real model's — and,
+        # because "ok" also disables Get Model below, left the user no way to re-download
+        # out of it (breaker 4722 F1). Demote to "error" here rather than at every call
+        # site, so no caller can forget.
+        if state == "ok" and path:
+            _ok, _why = self._a2m_model_is_loadable(path)
+            if not _ok:
+                state = "error"
+                path = f"{os.path.basename(path)} isn't a usable model ({_why})"
         try:
             if state == "ok":
                 fname = os.path.basename(path)
@@ -16181,6 +16235,20 @@ demucs.separate.main()
                                           "drum model — it's probably truncated.")
                 except OSError as _mdl_err:
                     _model_problem = f"That file can't be read ({_mdl_err})."
+                # v4.7.23 — and now ACTUALLY LOAD IT. The size check above only ever asked
+                # whether the bytes were plausible; any >=1 KB file cleared it, the load
+                # then threw on the WORKER, and _a2m_do_convert's handler quietly rewrote
+                # detection_engine to "spectral" and carried on to a plain "Conversion
+                # Complete!" — so asking for "ML (pure)" could hand back a 100% spectral
+                # chart with no dialog, no status-bar note, nothing in the .mid, and one
+                # line mid-log (breaker INV21). Catching it HERE, on the main thread before
+                # any worker starts, means that fallback is never reached for a bad file
+                # and the user gets a real dialog naming the real problem.
+                if not _model_problem:
+                    _ok, _why = self._a2m_model_is_loadable(onnx_model_path)
+                    if not _ok:
+                        _model_problem = (f"That file isn't a model ParaKit can load "
+                                          f"({_why}).")
             if _model_problem:
                 messagebox.showerror(
                     "Bad Model File",
@@ -16251,6 +16319,13 @@ demucs.separate.main()
         # violation — one site even constructed a tk.BooleanVar off-thread),
         # which also meant flipping a checkbox mid-conversion changed the run
         # already in progress. Capture-at-start matches every other setting.
+        # v4.7.23 — clear last run's engine-downgrade notice. This is instance state read by
+        # the completion dialog, so a stale value would make THIS run's dialog announce the
+        # PREVIOUS run's fallback — the same shape as the _a2m_post_pass_removed tally that
+        # had to learn this lesson (its reset is the first statement of the first post-pass).
+        # Reset here, on the main thread at kickoff, next to the flags snapshot: one place,
+        # before any worker exists, so it cannot race the thing that sets it.
+        self._a2m_engine_downgraded = None
         self._a2m_run_flags = {
             "post_classify": bool(self.a2m_post_classify_cymbals_var.get()),
             "cymbal_resolver": bool(
@@ -16863,6 +16938,23 @@ demucs.separate.main()
                 except (ImportError, ValueError, Exception) as _ml_err:
                     self._a2m_log(f"\n  ⚠  ML detection failed: {_ml_err}")
                     self._a2m_log("  Falling back to Spectral detection automatically...")
+                    # v4.7.23 (owner-approved protected edit) — REMEMBER that we downgraded,
+                    # so the completion dialog can say so. This fallback is correct — a
+                    # chart beats no chart — but it was SILENT where the user actually
+                    # looks: the dialog said a plain "Conversion Complete!", the status bar
+                    # said nothing, and asking for "ML (pure)" could hand back a 100%
+                    # spectral chart (12 notes where the real model found 20) with the only
+                    # trace one line mid-log that nobody reads (breaker INV21).
+                    # v4.7.23's _a2m_start guard now refuses an unloadable model up front,
+                    # so this path is only reachable when the model breaks BETWEEN that
+                    # check and this load (an AV/OneDrive lock, a file swap) — rare, but
+                    # rare is exactly when a silent downgrade is least expected and most
+                    # misleading. The engine the user picked is a promise; breaking it
+                    # quietly is the lie, not the fallback itself.
+                    self._a2m_engine_downgraded = (
+                        f"{detection_engine.upper()} detection couldn't run "
+                        f"({type(_ml_err).__name__}), so this chart was made with "
+                        f"Spectral detection instead.")
                     detection_engine = "spectral"
                     ml_results = None
                     ml_conf    = None
@@ -17756,12 +17848,18 @@ demucs.separate.main()
             # (len(events) ignores every note the passes above removed). Falls back to the
             # old value if the re-count fails, so this can never block a conversion.
             total_notes = self._a2m_count_notes_on_disk(midi_path, len(events))
+            # v4.7.23 (owner-approved protected edit) — did we quietly hand back a chart
+            # from an engine the user did not choose? Say so HERE, where it's read.
+            _downgrade = getattr(self, "_a2m_engine_downgraded", None)
             self._a2m_log(f"\n✓ Done!")
+            if _downgrade:
+                self._a2m_log(f"  ⚠  {_downgrade}")
             self._a2m_log(f"  Total notes: {total_notes}")
             self._a2m_log(f"  BPM: {bpm:.1f}")
             self._a2m_log(f"  MIDI saved to: {midi_path}")
-            self.root.after(0, lambda p=midi_path: self._set_global_status(
-                f"Audio to MIDI complete: {os.path.basename(p)}", 6000))
+            self.root.after(0, lambda p=midi_path, d=bool(_downgrade): self._set_global_status(
+                (f"Audio to MIDI complete (Spectral fallback): {os.path.basename(p)}" if d
+                 else f"Audio to MIDI complete: {os.path.basename(p)}"), 6000))
 
             # v4.7.9: the old "Smart ride suggestion" was tied to the retired detect-side
             # ride toggle (it advised toggling "Ride Detection" ON/OFF). Rides are now kept
@@ -17774,12 +17872,19 @@ demucs.separate.main()
             self._a2m_log(f"  tab with your backing track to create your .rlrr!")
             self._a2m_log(f"{'='*50}")
 
-            self.root.after(0, lambda: messagebox.showinfo(
-                "Conversion Complete!",
-                f"MIDI file created:\n{midi_path}\n\n"
-                f"{total_notes} notes detected at {bpm:.1f} BPM.\n\n"
-                f"Load this MIDI into the Single Song Creator\n"
-                f"along with your backing track to make your .rlrr!"
+            # v4.7.23 (owner-approved protected edit) — the dialog is where the user
+            # actually reads the result, so a run that could not use the engine they chose
+            # says so HERE, in the title and the body. Title changes too: "Conversion
+            # Complete!" is a claim that what they asked for is what they got.
+            self.root.after(0, lambda d=_downgrade: messagebox.showinfo(
+                "Conversion Complete" + (" — Spectral fallback" if d else "!"),
+                (f"⚠  {d}\n\n" if d else "")
+                + f"MIDI file created:\n{midi_path}\n\n"
+                + f"{total_notes} notes detected at {bpm:.1f} BPM.\n\n"
+                + ("Check your model file, then re-convert if you wanted ML detection.\n\n"
+                   if d else "")
+                + f"Load this MIDI into the Single Song Creator\n"
+                + f"along with your backing track to make your .rlrr!"
             ))
 
         except Exception as e:

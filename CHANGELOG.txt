@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.22  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.23  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,33 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.23   --   2026-07-15
+------------------------------------------------------------------------------
+  Audio -> MIDI -- ML / Hybrid detection:
+  - FIXED: a damaged or wrong model file could give you a chart made by an
+    engine you did not choose, without telling you. ParaKit only checked that
+    the model file existed and was at least 1 KB -- never that it was actually
+    a model. Any file that cleared that check failed later, during the
+    conversion, and ParaKit quietly switched to Spectral detection and reported
+    a normal "Conversion Complete!". If you had selected ML, you got a chart
+    with no ML detection in it at all (in our test: 12 notes where the real
+    model found 20), and the only clue was one line in the middle of the log.
+  - FIXED: the model status line showed a green "Model ready" for a file that
+    was not a usable model -- and because "ready" also greys out the Get Model
+    button, there was no obvious way to download a good copy. ParaKit now loads
+    the model to check it, shows "Model error" when it cannot, and leaves Get
+    Model available so you can fetch a fresh one.
+  - ParaKit now checks the model when you press Convert and refuses a bad one
+    with a clear message BEFORE starting, instead of failing halfway through.
+  - If detection ever does have to fall back (for example, antivirus or OneDrive
+    locks the model file at the wrong moment), the completion window now says so
+    in its title and its text, and so do the log and the status bar.
+
+  Notes:
+  - No change to detection results, charting, or any conversion setting. A
+    conversion that was working before produces exactly the same chart.
 
 ------------------------------------------------------------------------------
   v4.7.22   --   2026-07-15
