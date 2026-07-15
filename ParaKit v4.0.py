@@ -3535,6 +3535,10 @@ def _apply_tom_sensitivity_preset(preset_name):
         A2M_HYBRID_ML_ONLY_MIN_CONF[_lane] = min_conf
         A2M_HYBRID_ML_ONLY_THRESH_BOOST[_lane] = thresh_boost
         A2M_ML_CLASS_CONF_BOOST[_lane] = conf_boost
+    # v4.7.12: return the preset ACTUALLY applied (post-choke-point normalisation) so
+    # the caller can snapshot it for the run — the post-conversion tom strip must use
+    # this value, never the live Tk var (which the user can change mid-conversion).
+    return preset_name
 
 
 def _a2m_filter_hybrid_ml_candidates(class_name, spec_times, ml_times, ml_confs,
@@ -5738,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.11"
+    VERSION = "4.7.12"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -15446,7 +15450,10 @@ demucs.separate.main()
             messagebox.showwarning("No Result",
                                    "No MIDI has been generated yet this session.")
             return
-        self._me_open_from_a2m(path)
+        # v4.7.12 — _me_open_chart, NOT _me_open_from_a2m: this re-opens an EXISTING
+        # chart, so it must never run the tom-OFF strip (that would permanently erase
+        # toms from a file the user converted earlier at a different sensitivity).
+        self._me_open_chart(path)
         self.notebook.select(5)  # Switch to MIDI Editor tab
 
     def _a2m_browse_input(self):
@@ -16105,8 +16112,16 @@ demucs.separate.main()
         # ML-only gate constants right before conversion. This is OUTSIDE
         # _a2m_do_convert's protected body — the same module-level-constant mechanism
         # as the shipped hi-hat recovery (it never alters a protected function).
+        # v4.7.12 — capture the preset ACTUALLY applied for this run and snapshot it
+        # into _a2m_run_flags below. The post-conversion tom strip MUST use that
+        # snapshot: the tom dropdown is not locked during a conversion and its tooltip
+        # promises changes take effect on the NEXT conversion, so reading the live var
+        # after the run let a mid-run switch to OFF wipe a Moderate conversion's toms
+        # (and a switch away from OFF leave toms in a chart the user asked to be OFF).
+        _applied_tom_preset = "Moderate"
         if hasattr(self, "a2m_tom_sensitivity_var"):
-            _apply_tom_sensitivity_preset(self.a2m_tom_sensitivity_var.get())
+            _applied_tom_preset = _apply_tom_sensitivity_preset(
+                self.a2m_tom_sensitivity_var.get())
 
         # F2 (owner-approved 2026-07-07): snapshot the remaining run toggles on
         # the MAIN thread before the worker spawns. _a2m_do_convert previously
@@ -16122,6 +16137,9 @@ demucs.separate.main()
             # v4.7.11 — Enhanced Detection retired (LarsNet never installed = no-op);
             # hard-forced OFF so the now-unreachable enhanced pass never runs.
             "enhanced_mode": "off",
+            # v4.7.12 — the tom preset applied to THIS run's gates. The post-conversion
+            # strip reads this, not the live var (capture-at-start, like every flag here).
+            "tom_sensitivity": _applied_tom_preset,
         }
 
         thread = threading.Thread(
@@ -26208,8 +26226,14 @@ demucs.separate.main()
         no-op (chart kept exactly as detected). Runs independently of the cleanup-pass
         toggles -- OFF is a detection-sensitivity choice, not part of the cleanup."""
         try:
-            var = getattr(self, "a2m_tom_sensitivity_var", None)
-            if var is None or var.get() != "OFF":
+            # v4.7.12 — use the preset SNAPSHOTTED at conversion start (_a2m_run_flags),
+            # NEVER the live Tk var. The tom dropdown isn't locked during a conversion and
+            # its tooltip promises changes take effect on the NEXT conversion, so reading
+            # it live let a mid-run switch to OFF delete a Moderate conversion's toms, and
+            # a mid-run switch AWAY from OFF leave toms in a chart converted as OFF.
+            # Fail SAFE: no snapshot (i.e. not a tracked conversion) => never strip.
+            _flags = getattr(self, "_a2m_run_flags", None) or {}
+            if _flags.get("tom_sensitivity") != "OFF":
                 return
             import mido as _mido
             # GM tom lanes: low/high floor (41/43), low/low-mid/hi-mid/high rack (45/47/48/50)
@@ -26316,13 +26340,36 @@ demucs.separate.main()
                 pass
 
     def _me_open_from_a2m(self, midi_path):
-        """Called by Audio→MIDI tab after conversion to auto-load into editor."""
-        # v4.5.0-1 — detection cleanup pass on the just-written MIDI BEFORE it loads
-        # (operates on the detector OUTPUT + audio; NO protected-fn / detection
-        # change). Gated by the adv_frame toggles; master OFF = passthrough.
-        # v4.7.9.1 — OFF means zero toms: strip the tom lanes from the OUTPUT .mid
-        # BEFORE cleanup + editor load (the sensitivity gate can't reach floor toms).
+        """Auto-load into the editor after a FRESH Audio→MIDI conversion.
+
+        ⛔ EXCLUSIVE to a just-finished A2M conversion. This entry point applies the
+        tom-OFF strip, which REWRITES ``midi_path`` IN PLACE and deletes every tom
+        note. Any caller that merely OPENS AN EXISTING chart (preview-last, Sheet
+        Music → MIDI, …) must call ``_me_open_chart()`` instead — otherwise an
+        Audio→MIDI setting silently erases toms from a file the user never asked to
+        modify, permanently.
+
+        (v4.7.10/4.7.11 shipped exactly that bug: the strip was attached here while
+        _a2m_preview_last + the two Sheet-Music converters also called this helper,
+        so tom sensitivity = OFF turned "open an old chart" into an in-place tom
+        eraser. Found by an independent adversarial audit; fixed in v4.7.12 by
+        splitting the shared body out into _me_open_chart.)
+        """
+        # v4.7.9.1 — OFF means zero toms: strip the tom lanes from the FRESHLY
+        # CONVERTED output .mid before cleanup + editor load (the sensitivity gate
+        # can't reach floor toms). Fresh-conversion output ONLY — see above.
         self._a2m_strip_toms_if_off(midi_path)
+        self._me_open_chart(midi_path)
+
+    def _me_open_chart(self, midi_path):
+        """Shared 'open a chart into the MIDI Editor' path: cleanup pass + load.
+
+        Does NOT strip toms, so it is safe for opening EXISTING charts (preview-last,
+        Sheet Music output). Only _me_open_from_a2m — a fresh A2M conversion — strips.
+        """
+        # v4.5.0-1 — detection cleanup pass on the MIDI BEFORE it loads (operates on
+        # the detector OUTPUT + audio; NO protected-fn / detection change). Gated by
+        # the adv_frame toggles; master OFF = passthrough.
         self._a2m_apply_cleanup_pass(midi_path)
         # R2-1: load FIRST — on decline, me_midi_var and _me_source_audio keep
         # pointing at the OLD chart (setting them before the load mispaired
@@ -27468,7 +27515,10 @@ demucs.separate.main()
                     # unsaved conversion, permanently.
                     self._register_session_temp(midi_path)
                 self._sm_log("  Opening in MIDI Editor...")
-                self.root.after(100, lambda p=midi_path: self._me_open_from_a2m(p))
+                # v4.7.12 — _me_open_chart, NOT _me_open_from_a2m: Sheet Music output
+                # must never run the Audio→MIDI tom-OFF strip, which would erase this
+                # chart's toms in place because of an unrelated A→MIDI setting.
+                self.root.after(100, lambda p=midi_path: self._me_open_chart(p))
                 self.root.after(150, lambda: self.notebook.select(5))
 
             if self.sm_send_creator_var.get():
@@ -28020,7 +28070,10 @@ demucs.separate.main()
                     # unsaved conversion, permanently.
                     self._register_session_temp(midi_path)
                 self._sm_log("  Opening in MIDI Editor...")
-                self.root.after(100, lambda p=midi_path: self._me_open_from_a2m(p))
+                # v4.7.12 — _me_open_chart, NOT _me_open_from_a2m: Sheet Music output
+                # must never run the Audio→MIDI tom-OFF strip, which would erase this
+                # chart's toms in place because of an unrelated A→MIDI setting.
+                self.root.after(100, lambda p=midi_path: self._me_open_chart(p))
                 self.root.after(150, lambda: self.notebook.select(5))
 
             if self.sm_send_creator_var.get():
@@ -32350,20 +32403,10 @@ demucs.separate.main()
         ttk.Button(btn_row, text="▶  Collapse All",
                    command=_collapse_all).pack(side=tk.LEFT)
 
-        # Cyan note (owner 2026-06-25) — prominent, near the top of the Help tab, so
-        # users aren't confused by the optional ".alt_detector.mid" comparison files.
-        # Cyan to stand out (the Help tab has no red heads-up of its own up here).
-        ttk.Label(main,
-                  text="💡  What are the '.alt_detector.mid' files next to my songs?  When Enhanced "
-                       "Detection is on, Audio → MIDI writes an extra comparison MIDI beside your chart. "
-                       "It's a deliberately over-eager detection pass that fills a chart with lots of "
-                       "candidate tom hits -- most are wrong, but some catch real toms the normal pass "
-                       "missed. Open it in the MIDI Editor's Ghost Overlay as a layer UNDER your main "
-                       "chart and use the opacity slider to spot the good ones, then place those toms "
-                       "into your real chart. It never changes your main MIDI -- safe to ignore or "
-                       "delete if you don't use it.",
-                  style="Sub.TLabel", foreground="#00d4d4",
-                  justify=tk.LEFT, wraplength=900).pack(anchor="w", pady=(0, 10))
+        # (v4.7.12 — the cyan ".alt_detector.mid" note was removed with Enhanced
+        # Detection: that comparison file was only ever written by the enhanced pass,
+        # which is retired, so no such file is produced anymore. This Help-tab copy
+        # outlived the A2M-tab copy removed in v4.7.11 — caught by an audit.)
 
         # ── Two-column body ───────────────────────────────────────────────────
         body = ttk.Frame(main)
@@ -35196,9 +35239,10 @@ demucs.separate.main()
                     "   → Bump Tom detection sensitivity to Aggressive (Audio→MIDI ▸ Advanced) to\n"
                     "     recover more toms, then regenerate.\n"
                     "   → Or add the missing toms by hand in the MIDI Editor — Reclassify a nearby\n"
-                    "     hit to the correct tom lane, or drag it to the right row.\n"
-                    "   → Load the over-eager .alt_detector.mid as a Ghost Overlay to spot\n"
-                    "     candidate tom positions.")
+                    "     hit to the correct tom lane, or drag it to the right row.")
+                    # v4.7.12 — dropped the ".alt_detector.mid Ghost Overlay" tip: that file was
+                    # only ever written by the retired Enhanced Detection pass, so it never exists
+                    # now and the bullet sent users hunting for a file that isn't there.
                 if _sv and _sv.get() != "Aggressive":
                     _act("Raise Tom detection sensitivity",
                          f"{_sv.get()} → Aggressive",
