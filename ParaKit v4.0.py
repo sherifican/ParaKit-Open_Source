@@ -13024,7 +13024,8 @@ class MidiToRlrrApp:
         # (b) Open Stems — only when already split. Col 8.
         if split:
             open_chip = _mk_chip("Open Stems", "#46d18a",
-                                 self._a2m_lib_on_open_stems, 8)
+                                 self._a2m_lib_on_open_stems, 8,
+                                 border="#46d18a")   # green outline (matches the green Stem Splitter tab) — same as the Stem Splitter library's chip
             self._add_tooltip(open_chip,
                               "Opens your folder containing your drum stems")
 
@@ -30156,10 +30157,12 @@ demucs.separate.main()
         _divider.grid(row=0, column=4, padx=(6, 2), sticky="e")
         row._yt_color_targets.append(_divider)
 
-        send_chip = _mk_chip("Send →", ACCENT, self._send_audio_to_stem, 7)
+        send_chip = _mk_chip("Send →", ACCENT, self._send_audio_to_stem, 7,
+                             border="#bd02c1")   # magenta outline — same stem-splitting action as the library's Split chip
         self._add_tooltip(send_chip, "Sends this song to the Stem Splitter")
         if split:
-            open_chip = _mk_chip("Open Stems", "#46d18a", self._open_stems_folder, 8)
+            open_chip = _mk_chip("Open Stems", "#46d18a", self._open_stems_folder, 8,
+                                 border="#46d18a")   # green outline (matches the green Stem Splitter tab)
             # Tooltip — attach BEFORE _bind_recursive (which uses add="+") so the
             # tooltip's <Enter>/<Leave> and the row-hover bindings coexist.
             self._add_tooltip(open_chip, "Opens your folder containing your drum stems")

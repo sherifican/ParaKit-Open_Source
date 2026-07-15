@@ -42,6 +42,11 @@
     needs, so every tab stays reachable at any size (including if you resize the
     window small), and the first-run window is wider so the tabs start on one
     clean row. If you already have a saved window size, it is left alone.
+  - Finished the library chip outlines: "Open Stems" now has its green outline on
+    ALL three libraries (it was still grey on the Audio -> MIDI and YouTube tabs),
+    and the YouTube library's "Send" chip -- which sends a song to the Stem
+    Splitter -- now carries the same magenta outline as the Stem Splitter
+    library's "Split" chip.
 
   Audio -> MIDI:
   - FIXED: starting a SECOND conversion from the menu while one was still running
