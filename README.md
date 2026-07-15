@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-late-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.7.13`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.14`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -178,7 +178,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.7.13`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.14`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -575,6 +575,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.7.14**<br>2026-07-15 | <ul><li>⚠️ **Important fix — opening a chart no longer rewrites it.** The detection **cleanup pass ran on every chart you opened** — "Preview last", or a chart from the **Sheet Music → MIDI** tab — not just on a chart you had just converted, and it paired that chart with whatever audio you converted **last** (for a Sheet Music chart, an unrelated song). In practice nothing was corrupted — Sheet Music charts happened to trip a guard inside the cleanup, and "Preview last" happened to carry the right audio — but that was luck, not design. Cleanup now runs **only on a chart you just converted**, the same rule the tom **OFF** step got in v4.7.12. **Opening a chart is now strictly a read.**</li></ul> |
 | **v4.7.13**<br>2026-07-15 | <ul><li>⚠️ **Important fix — the last three tabs were unreachable on a fresh install.** The colour-coded tab bar (v4.7.10) put all twelve tabs in one fixed row needing ~1410px, but the first-run window was 1100px and the old fallback tab strip is hidden — so **Song Tester, Preview/Practice Track and Quick Start & FAQ were cut off entirely**, meaning a new user couldn't even open the Help tab. The bar now **wraps onto as many rows as your window needs** (every tab stays reachable at any size, even resized small), and the first-run window is wider so tabs start on one clean row. Saved window sizes are untouched.</li><li>**Fixed: a second conversion started from the menu while one was still running** (the Convert button is disabled during a run, but the menu item wasn't) made both runs share one set of settings — the second run's Tom setting could be applied to the first run's finished chart, and both could write the same output. A second conversion is now refused until the first finishes.</li><li>**Fixed: Sheet Music → MIDI charts were tagged with whatever audio you last converted** on Audio → MIDI. "Re-run ML" trusted that tag, so it would quietly re-convert that unrelated song — skipping the overwrite warning — and could replace an Audio → MIDI chart you were editing.</li></ul> |
 | **v4.7.12**<br>2026-07-14 | <ul><li>⚠️ **Important fix — Tom "OFF" could erase toms from charts you were only opening.** With Tom sensitivity set to **OFF**, simply *opening* an existing chart could permanently delete every tom from that file: it hit **"Preview last"** (re-opening a chart you converted earlier at a different sensitivity) and **Sheet Music → MIDI** output, which has nothing to do with the Audio → MIDI setting. The tom-OFF step was attached to the shared "open in the MIDI Editor" helper instead of to a freshly finished conversion, so it also ran on charts you were merely opening. It now only ever touches the chart from the conversion that just finished. **Update if you use Tom OFF.** (Charts already damaged can't be recovered by the app — re-convert if you still have the audio.)</li><li>**Fixed: changing Tom sensitivity mid-conversion affected the running conversion**, despite the setting saying it applies to the *next* one — switching to OFF mid-run could wipe a Moderate conversion's toms, and switching away from OFF could leave toms in a chart you asked to be OFF. The tom setting is now captured when the conversion starts, like every other Audio → MIDI setting.</li><li>Removed two leftover mentions of the `.alt_detector.mid` comparison file (Help tab + the detection troubleshooter) — that file was only written by the retired Enhanced Detection pass, so it never exists.</li></ul> |
 | **v4.7.11**<br>2026-07-14 | <ul><li>**Audio → MIDI — Enhanced Detection folded into the default.** The experimental **Enhanced Detection** options (Crash / Toms / Crash + Toms) have been folded into the default detection pipeline and removed as a separate toggle — the fine-tuned model plus the cleanup pass now handle crash and tom detection directly on every conversion, so there's nothing extra to switch on. A short note where the toggle used to be (and in the Help tab) explains it. Your detection results don't change — the default pipeline is what conversions were already using.</li></ul> |

@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.13"
+    VERSION = "4.7.14"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -26438,6 +26438,14 @@ demucs.separate.main()
         # CONVERTED output .mid before cleanup + editor load (the sensitivity gate
         # can't reach floor toms). Fresh-conversion output ONLY — see above.
         self._a2m_strip_toms_if_off(midi_path)
+        # v4.7.14 — the cleanup pass moved HERE from _me_open_chart. It rewrites the
+        # .mid IN PLACE using self._a2m_source_file, so like the tom strip it belongs
+        # to a FRESH conversion only: on the shared open path it re-wrote every chart
+        # you merely opened, pairing it with whatever audio was converted last. Today
+        # that was survivable only by accident (Sheet Music emits 2 tempo events so the
+        # sidecar's multi-tempo guard bails, and preview-last happens to carry matching
+        # audio) — an accidental guard is not a safety design. Found by the breaker run.
+        self._a2m_apply_cleanup_pass(midi_path)
         self._me_open_chart(midi_path)
 
     def _me_open_chart(self, midi_path, inherit_a2m_source=True):
@@ -26450,11 +26458,15 @@ demucs.separate.main()
         audio as its provenance. TRUE only for charts that actually came from A→MIDI
         (a fresh conversion, or preview-last re-opening that same output). Sheet Music
         output must pass FALSE — see the note at the assignment below.
+
+        ⛔ v4.7.14 — this path MUST NOT REWRITE ``midi_path``. Opening a chart is a
+        read. Both in-place rewriting passes (the tom-OFF strip and the cleanup pass)
+        now live in _me_open_from_a2m, i.e. fresh conversions only. Do not add another
+        one here: cleanup used to run on this shared path and re-wrote every chart the
+        user merely opened, using whatever audio was converted last. Nothing was
+        corrupted only because Sheet Music's 2 tempo events happened to trip the
+        sidecar's multi-tempo guard — safety by accident.
         """
-        # v4.5.0-1 — detection cleanup pass on the MIDI BEFORE it loads (operates on
-        # the detector OUTPUT + audio; NO protected-fn / detection change). Gated by
-        # the adv_frame toggles; master OFF = passthrough.
-        self._a2m_apply_cleanup_pass(midi_path)
         # R2-1: load FIRST — on decline, me_midi_var and _me_source_audio keep
         # pointing at the OLD chart (setting them before the load mispaired
         # the source audio with the old chart on decline). The converted MIDI

@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.13  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.14  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,23 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.14   --   2026-07-15
+------------------------------------------------------------------------------
+  Opening a chart no longer rewrites it.
+
+  Audio -> MIDI / MIDI Editor:
+  - FIXED: simply OPENING a chart re-wrote that file on disk. The detection
+    cleanup pass ran on every chart you opened -- "Preview last", or a chart from
+    the Sheet Music -> MIDI tab -- not just on a chart you had just converted. It
+    also paired the chart with whatever audio you converted LAST, which for a
+    Sheet Music chart is an unrelated song. In practice nothing was corrupted
+    (Sheet Music charts happened to trip a guard inside the cleanup, and
+    "Preview last" happened to carry the right audio), but it was luck, not
+    design -- one change elsewhere and it would have started damaging files.
+    Cleanup now runs ONLY on a chart you just converted, the same rule the tom
+    "OFF" step got in v4.7.12. Opening a chart is now strictly a read.
 
 ------------------------------------------------------------------------------
   v4.7.13   --   2026-07-15
