@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.18"
+    VERSION = "4.7.19"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -26414,7 +26414,29 @@ demucs.separate.main()
                     carry = 0
                 tr[:] = kept
             if removed:
-                mid.save(midi_path)
+                # v4.7.19 — ATOMIC in-place write, matching what the sibling post-pass has
+                # done since 4.5.0 (parakit_cleanup/midi_io.py write_midi). A plain
+                # mid.save(midi_path) writes STRAIGHT OVER the user's chart, so a save that
+                # dies mid-write (disk full, a OneDrive/network stall — the charts live under
+                # OneDrive — an AV lock, a kill) truncated a 900-note chart to a 22-byte stub,
+                # while the docstring above promises "any failure is a no-op (chart kept
+                # exactly as detected)". The breaker proved that contract false (INV11).
+                # Serialize to a temp file in the SAME dir, then os.replace() over the target:
+                # the original survives intact until a fully-written replacement swaps in
+                # atomically (same-fs). On failure we re-raise so the outer handler logs the
+                # skip and leaves _a2m_post_pass_removed at 0 — which is now the TRUTH, since
+                # the chart still holds every note it did before this pass ran.
+                _tmp = midi_path + ".pktomstrip.tmp"
+                try:
+                    mid.save(_tmp)
+                    os.replace(_tmp, midi_path)
+                except Exception:
+                    try:
+                        if os.path.exists(_tmp):
+                            os.remove(_tmp)
+                    except Exception:
+                        pass
+                    raise
             # v4.7.18 — report what we deleted so a failed re-count can still bound the
             # real note total instead of reporting the pre-cleanup number (INV9).
             self._a2m_post_pass_removed = (
@@ -26429,6 +26451,24 @@ demucs.separate.main()
             except Exception:
                 pass
 
+    def _a2m_count_note_ons(self, midi_path):
+        """v4.7.19 — raw note-on count of a chart on disk, or None if it can't be read.
+
+        The one place that knows how ParaKit counts a note (``note_on`` with velocity > 0
+        — a velocity-0 note_on is a note-off alias and must not count). Returns None rather
+        than a number on failure, so callers can tell "0 notes" apart from "couldn't look",
+        which is exactly the distinction the old fallback blurred.
+
+        Worker-safe: pure file I/O, no Tk.
+        """
+        try:
+            import mido as _mido
+            return sum(1 for _tr in _mido.MidiFile(midi_path).tracks
+                       for _msg in _tr
+                       if _msg.type == "note_on" and _msg.velocity > 0)
+        except Exception:
+            return None
+
     def _a2m_count_notes_on_disk(self, midi_path, fallback):
         """v4.7.17 — count the note-ons actually present in the written chart.
 
@@ -26438,37 +26478,35 @@ demucs.separate.main()
         quoted N while the real file on disk had fewer (e.g. 8 phantom kicks lighter).
         Counting the file is the honest number.
 
-        Worker-safe: pure file I/O, no Tk. Any failure returns ``fallback`` (the old
-        len(events) value), so a bad re-count can never break or block a conversion.
+        Worker-safe: pure file I/O, no Tk. If the chart can't be re-read, falls back to a
+        bound derived from ``fallback`` (the old len(events) value) so a bad re-count can
+        never break or block a conversion.
         """
-        try:
-            import mido as _mido
-            n = 0
-            for _tr in _mido.MidiFile(midi_path).tracks:
-                for _msg in _tr:
-                    if _msg.type == "note_on" and _msg.velocity > 0:
-                        n += 1
+        n = self._a2m_count_note_ons(midi_path)      # v4.7.19 — one shared counter
+        if n is not None:
             return n
-        except Exception as _e:
-            # v4.7.18 — a FAILED re-count must NEVER report the raw `fallback`
-            # (= len(events), the PRE-cleanup detector total). That is the exact
-            # inflated number v4.7.17 existed to kill, and returning it re-told the
-            # lie whenever the chart couldn't be re-read (breaker INV9: pre=18,
-            # on-disk=17, reported 18). A log warning alone is not enough — the
-            # completion DIALOG shows this number and nobody reads the log for it.
-            # So subtract what the post-passes actually removed: they each report
-            # their own deletions into _a2m_post_pass_removed, which makes this an
-            # exact post-pass bound rather than a guess. Never blocks a conversion.
-            _removed = int(getattr(self, "_a2m_post_pass_removed", 0) or 0)
-            _bounded = max(0, int(fallback) - _removed)
-            try:
-                self._a2m_log(
-                    f"  ⚠  Couldn't re-read the chart to count its notes "
-                    f"({type(_e).__name__}); reporting the detector total minus the "
-                    f"{_removed} note(s) the cleanup removed.")
-            except Exception:
-                pass
-            return _bounded
+        # v4.7.18 — a FAILED re-count must NEVER report the raw `fallback` (= len(events),
+        # the PRE-cleanup detector total). That is the exact inflated number v4.7.17 existed
+        # to kill, and returning it re-told the lie whenever the chart couldn't be re-read
+        # (breaker INV9: pre=18, on-disk=17, reported 18). A log warning alone is not enough
+        # — the completion DIALOG shows this number and nobody reads the log for it. So
+        # subtract what the post-passes actually removed. Never blocks a conversion.
+        #
+        # v4.7.19 — on how exact this is, honestly: the tally is now MEASURED off the chart
+        # by each pass (not self-reported), and since 4.7.19 a pass that fails leaves the
+        # chart readable, so the "both the pass and the re-count failed" case that made this
+        # a guess is largely gone. It is still a bound, not a count: if the chart became
+        # unreadable AFTER the passes ran (deleted, locked, truncated by something else),
+        # this reports what the passes left behind, which is the best number available.
+        _removed = int(getattr(self, "_a2m_post_pass_removed", 0) or 0)
+        _bounded = max(0, int(fallback) - _removed)
+        try:
+            self._a2m_log(
+                f"  ⚠  Couldn't re-read the chart to count its notes; reporting the "
+                f"detector total minus the {_removed} note(s) the post-passes removed.")
+        except Exception:
+            pass
+        return _bounded
 
     def _a2m_apply_cleanup_pass(self, midi_path):
         """v4.5.0-1 — apply the trained detection CLEANUP PASS (cymbal re-classifier
@@ -26479,6 +26517,10 @@ demucs.separate.main()
         master OFF, both sub-passes off, or no source audio => no-op (output is
         byte-identical to pre-4.5). Any failure is caught + logged so a cleanup
         error never blocks loading the chart."""
+        # v4.7.19 — did clean_a2m_midi actually run? Set the moment it returns, i.e. the
+        # moment the chart on disk has been rewritten. The except below must never say
+        # "skipped" once this is True (breaker INV12).
+        _rewrote = False
         try:
             # v4.7.17 — read the RUN SNAPSHOT (_a2m_run_flags), not the live Tk vars.
             # This pass now runs on the CONVERSION WORKER THREAD (so it finishes before
@@ -26552,15 +26594,34 @@ demucs.separate.main()
             except Exception:
                 pass   # unreadable here -> let the sidecar's own guards handle it
             from parakit_cleanup import clean_a2m_midi
+            # v4.7.19 — MEASURE the cleanup's deletions off the chart itself; do not trust
+            # the sidecar's self-report. parakit_cleanup is a SEPARATELY VERSIONED module,
+            # so `summary["n_kicks_removed"]` is a contract that can drift out from under us
+            # — and a summary that merely stops carrying the key needs no exception at all
+            # to silently zero the tally, which would quietly re-inflate the "Total notes" a
+            # failed re-count reports (breaker INV12). Counting before/after is exact
+            # regardless of what the sidecar says, and costs one small file read.
+            _n_pre = self._a2m_count_note_ons(midi_path)
             summary = clean_a2m_midi(midi_path, audio_path,
                                      do_cymbal=do_cymbal, do_kick=do_kick,
                                      allow_ride=allow_ride)
-            # v4.7.18 — report deletions so _a2m_count_notes_on_disk can bound the true
-            # total if it fails to re-read the chart (INV9). Only the kick remover
-            # DELETES notes; the cymbal pass RE-LABELS lanes, so it changes no count.
+            # ── PAST THIS LINE THE CHART IS ALREADY REWRITTEN. ────────────────────────
+            # Everything below is bookkeeping/logging, and none of it may report "skipped".
+            # v4.7.18 put fallible work (summary.get + int()) inside the same try as the
+            # irreversible write, so a sidecar returning a non-dict logged "Cleanup pass:
+            # skipped (AttributeError)" about a pass that had ALREADY deleted 4 notes.
+            _rewrote = True
+            _n_post = self._a2m_count_note_ons(midi_path)
+            if _n_pre is not None and _n_post is not None:
+                _n_removed = max(0, _n_pre - _n_post)      # measured — always right
+            else:
+                # Couldn't read the chart either side; the self-report is all we have left.
+                try:
+                    _n_removed = int((summary or {}).get("n_kicks_removed", 0) or 0)
+                except Exception:
+                    _n_removed = 0
             self._a2m_post_pass_removed = (
-                int(getattr(self, "_a2m_post_pass_removed", 0) or 0)
-                + int(summary.get("n_kicks_removed", 0) or 0))
+                int(getattr(self, "_a2m_post_pass_removed", 0) or 0) + _n_removed)
             try:
                 self._a2m_log(
                     "Cleanup pass:      "
@@ -26568,13 +26629,24 @@ demucs.separate.main()
                         + ("" if allow_ride else " (ride off -> folded to crash)"))
                        if do_cymbal else "cymbals off")
                     + ", "
-                    + (f"{summary.get('n_kicks_removed', 0)} phantom kick(s) removed"
+                    # v4.7.19 — the MEASURED count, not summary['n_kicks_removed']: the log
+                    # should agree with the chart on disk, not with the sidecar's opinion.
+                    + (f"{_n_removed} phantom kick(s) removed"
                        if do_kick else "kick remover off"))
             except Exception:
                 pass
         except Exception as _e:
             try:
-                self._a2m_log(f"Cleanup pass:      skipped ({type(_e).__name__})")
+                # v4.7.19 — "skipped" is a factual claim about the chart on disk, so it may
+                # only be made when the chart was NOT touched. Once clean_a2m_midi has
+                # returned, the rewrite is done and irreversible; anything failing after
+                # that is a reporting failure, not a skip (breaker INV12).
+                if _rewrote:
+                    self._a2m_log(f"  ⚠  Cleanup pass ran and updated the chart, but "
+                                  f"reporting it failed ({type(_e).__name__}); the note "
+                                  f"total below may be slightly high.")
+                else:
+                    self._a2m_log(f"Cleanup pass:      skipped ({type(_e).__name__})")
             except Exception:
                 pass
 

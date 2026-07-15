@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.18  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.19  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,32 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.19   --   2026-07-15
+------------------------------------------------------------------------------
+  A rare way to lose a finished chart is gone.
+
+  Audio -> MIDI:
+  - FIXED (important): with Tom Detection set to OFF, ParaKit removed the toms by
+    writing directly over your finished chart. If that write was interrupted --
+    a full disk, a OneDrive or network sync stall, an antivirus lock -- the chart
+    was left truncated and unopenable, and ParaKit still said "Conversion
+    Complete!" and quoted the full note count. ParaKit now writes the change to a
+    temporary file and swaps it in only once it is complete, so an interrupted
+    write leaves your chart exactly as it was detected. This is the same
+    protection the cleanup pass has had since v4.5.0; the tom removal, added
+    later, never received it.
+  - FIXED: in that situation the reported "Total notes" could also be too high --
+    the pre-cleanup figure that v4.7.17 and v4.7.18 set out to correct.
+  - FIXED: the cleanup pass could log "skipped" when it had in fact run and
+    updated your chart. ParaKit now counts the change directly from the chart on
+    disk instead of relying on what the cleanup reports about itself, so the log
+    and the note total always agree with the file you actually have.
+
+  Notes:
+  - No change to detection, charting, or any conversion setting. Charts convert
+    exactly as they did in v4.7.18.
 
 ------------------------------------------------------------------------------
   v4.7.18   --   2026-07-15
