@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.12"
+    VERSION = "4.7.13"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -5825,13 +5825,26 @@ class MidiToRlrrApp:
         # ── Restore window size/position ──────────────────────────────────────
         cfg = load_config()
         geom = cfg.get("window_geometry")
+        # v4.7.13 — fresh-install default widened from the old hard-coded 1100x800: the
+        # v4.7.10 custom tab bar needs ~1410px to show all 12 tabs in one row, so 1100
+        # clipped the last three (Song Tester / Preview-Practice / Quick Start & FAQ) —
+        # unreachable, because the native tab strip is hidden. The bar now also WRAPS
+        # (see _relayout_tab_bar), so narrow windows stay fully usable; this just makes
+        # the out-of-box window show one clean row. Clamped to the real screen so small
+        # displays don't get a window larger than their desktop.
+        try:
+            _dw = max(900, min(1480, self.root.winfo_screenwidth() - 80))
+            _dh = max(640, min(820, self.root.winfo_screenheight() - 80))
+            _default_geom = f"{_dw}x{_dh}"
+        except Exception:
+            _default_geom = "1100x800"
         if geom:
             try:
                 self.root.geometry(geom)
             except Exception:
-                self.root.geometry("1100x800")
+                self.root.geometry(_default_geom)
         else:
-            self.root.geometry("1100x800")
+            self.root.geometry(_default_geom)
 
         try:
             self.root.update_idletasks()
@@ -6219,12 +6232,49 @@ class MidiToRlrrApp:
             lbl = tk.Label(self._tabbar, text=f" {icon} {label} ", bg=bg, fg=fg,
                            font=fnt, padx=(4 if compact else 7),
                            pady=(3 if compact else 5), cursor="hand2", bd=0)
-            lbl.pack(side=tk.LEFT, padx=1)
+            # v4.7.13 — GRID (not pack): _relayout_tab_bar reflows these into as many
+            # rows as the current width needs. See that method for why.
+            lbl.grid(row=0, column=idx, padx=1, pady=1, sticky="w")
             lbl.bind("<Button-1>", lambda e, i=idx: self.notebook.select(i))
             lbl.bind("<Enter>", lambda e, i=idx: self._tab_hover(i, True))
             lbl.bind("<Leave>", lambda e, i=idx: self._tab_hover(i, False))
             self._tab_buttons.append(lbl)
+        self._tabbar_last_w = -1
+        self._tabbar.bind("<Configure>", self._relayout_tab_bar)
+        self.root.after_idle(self._relayout_tab_bar)
         self._sync_tab_buttons()
+
+    def _relayout_tab_bar(self, event=None):
+        """Reflow the tab buttons into as many rows as the current width needs.
+
+        ⚠ v4.7.13 — this exists because the tab bar is a CUSTOM widget: v4.7.10 hid the
+        native ttk tab strip (``style.layout("TNotebook.Tab", [])``) and packed all 12
+        buttons into ONE fixed row. Nothing wraps a custom row, so on any window
+        narrower than ~1410px the trailing tabs were clipped clean off and became
+        UNREACHABLE — at the old 1100px fresh-install default that silently ate Song
+        Tester, Preview/Practice Track and Quick Start & FAQ, so a new user couldn't
+        even open the Help tab. Wrapping keeps every tab reachable at ANY width, which
+        the fresh-default widening alone would not (a user can still resize narrow).
+
+        No-ops unless the width actually changed, so re-gridding can't re-trigger
+        <Configure> into a loop.
+        """
+        try:
+            w = int(event.width) if event is not None else self._tabbar.winfo_width()
+            if w <= 1 or w == getattr(self, "_tabbar_last_w", -1):
+                return
+            self._tabbar_last_w = w
+            row = col = x = 0
+            for b in self._tab_buttons:
+                bw = b.winfo_reqwidth() + 2          # +2 = the 1px padx on each side
+                if col and (x + bw) > w:             # would overflow -> start a new row
+                    row += 1
+                    col = x = 0
+                b.grid(row=row, column=col, padx=1, pady=1, sticky="w")
+                col += 1
+                x += bw
+        except Exception:
+            pass
 
     @staticmethod
     def _lighten(hexc, amt=0.24):
@@ -16000,6 +16050,23 @@ demucs.separate.main()
         # side try/finally would reset it before this ever runs).
         suppress_overwrite = getattr(self, "_a2m_suppress_overwrite_prompt", False)
         self._a2m_suppress_overwrite_prompt = False
+        # (consumed BEFORE the in-progress guard below on purpose: a suppression armed
+        # for a run we then refuse must not leak into some later conversion.)
+
+        # v4.7.13 — refuse a SECOND conversion while one is running. The Convert button
+        # is disabled during a run, but the MENU item only checked that input+output
+        # were set, so a menu start could run concurrently. Two runs share ONE
+        # _a2m_run_flags snapshot and the module-level tom gates, so run B's settings
+        # could reach run A's post-conversion tom strip and delete A's toms — and both
+        # workers could write the same output file. Found by audit.
+        _t = getattr(self, "_a2m_thread", None)
+        if _t is not None and _t.is_alive():
+            messagebox.showinfo(
+                "Conversion in progress",
+                "An Audio → MIDI conversion is already running.\n\n"
+                "Wait for it to finish before starting another one — running two at "
+                "once can mix up their settings and overwrite each other's output.")
+            return
 
         input_path = self.a2m_input_var.get().strip()
         output_dir = self.a2m_output_var.get().strip()
@@ -16155,6 +16222,11 @@ demucs.separate.main()
                   peak_scan_ms, trigger_align_ms,
                   detection_engine, onnx_model_path, ml_threshold, remove_flams),
             daemon=True)
+        # v4.7.13 — keep a handle so the guard at the top of this method can refuse a
+        # SECOND concurrent conversion. Thread liveness IS the state (no flag to leak
+        # if a run dies), which matters because the run's end lives inside the
+        # protected _a2m_do_convert and can't clear a flag for us.
+        self._a2m_thread = thread
         thread.start()
 
     def _a2m_genre_params(self, genre):
@@ -26367,11 +26439,16 @@ demucs.separate.main()
         self._a2m_strip_toms_if_off(midi_path)
         self._me_open_chart(midi_path)
 
-    def _me_open_chart(self, midi_path):
+    def _me_open_chart(self, midi_path, inherit_a2m_source=True):
         """Shared 'open a chart into the MIDI Editor' path: cleanup pass + load.
 
         Does NOT strip toms, so it is safe for opening EXISTING charts (preview-last,
         Sheet Music output). Only _me_open_from_a2m — a fresh A2M conversion — strips.
+
+        ``inherit_a2m_source``: whether this chart may claim the last Audio→MIDI source
+        audio as its provenance. TRUE only for charts that actually came from A→MIDI
+        (a fresh conversion, or preview-last re-opening that same output). Sheet Music
+        output must pass FALSE — see the note at the assignment below.
         """
         # v4.5.0-1 — detection cleanup pass on the MIDI BEFORE it loads (operates on
         # the detector OUTPUT + audio; NO protected-fn / detection change). Gated by
@@ -26393,8 +26470,15 @@ demucs.separate.main()
                 if c is not None:
                     note["conf"] = c
             self._me_redraw()
-        # Store source file for per-song settings and re-run ML
-        self._me_source_audio = getattr(self, '_a2m_source_file', None)
+        # Store source file for per-song settings and re-run ML.
+        # v4.7.13 — ONLY charts that actually came from Audio→MIDI may inherit
+        # _a2m_source_file. Sheet Music output has nothing to do with whatever audio was
+        # last converted, but it used to be tagged with it anyway — and "Re-run ML"
+        # trusts this provenance AND suppresses the overwrite prompt, so it would
+        # silently re-convert the WRONG song and could overwrite an edited A→MIDI chart
+        # while the user was working on the sheet-music one. Found by audit.
+        self._me_source_audio = (getattr(self, '_a2m_source_file', None)
+                                 if inherit_a2m_source else None)
 
     # =========================================================================
     # Tab 7 — Sheet Music → MIDI
@@ -27524,7 +27608,11 @@ demucs.separate.main()
                 # v4.7.12 — _me_open_chart, NOT _me_open_from_a2m: Sheet Music output
                 # must never run the Audio→MIDI tom-OFF strip, which would erase this
                 # chart's toms in place because of an unrelated A→MIDI setting.
-                self.root.after(100, lambda p=midi_path: self._me_open_chart(p))
+                # v4.7.13 — inherit_a2m_source=False: this chart did NOT come from
+                # Audio→MIDI, so it must not claim the last A2M source audio (that made
+                # "Re-run ML" convert the wrong song and skip the overwrite prompt).
+                self.root.after(100, lambda p=midi_path:
+                                self._me_open_chart(p, inherit_a2m_source=False))
                 self.root.after(150, lambda: self.notebook.select(5))
 
             if self.sm_send_creator_var.get():
@@ -28079,7 +28167,11 @@ demucs.separate.main()
                 # v4.7.12 — _me_open_chart, NOT _me_open_from_a2m: Sheet Music output
                 # must never run the Audio→MIDI tom-OFF strip, which would erase this
                 # chart's toms in place because of an unrelated A→MIDI setting.
-                self.root.after(100, lambda p=midi_path: self._me_open_chart(p))
+                # v4.7.13 — inherit_a2m_source=False: this chart did NOT come from
+                # Audio→MIDI, so it must not claim the last A2M source audio (that made
+                # "Re-run ML" convert the wrong song and skip the overwrite prompt).
+                self.root.after(100, lambda p=midi_path:
+                                self._me_open_chart(p, inherit_a2m_source=False))
                 self.root.after(150, lambda: self.notebook.select(5))
 
             if self.sm_send_creator_var.get():

@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.12  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.13  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,35 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.13   --   2026-07-15
+------------------------------------------------------------------------------
+  Three fixes from an independent audit -- tabs that could go missing, and two
+  ways Audio -> MIDI could act on the wrong song.
+
+  Interface:
+  - FIXED (important): on a fresh install the last three tabs -- Song Tester,
+    Preview/Practice Track and Quick Start & FAQ -- were cut off and completely
+    unreachable. The colour-coded tab bar added in v4.7.10 put all twelve tabs in
+    one fixed row that needs about 1410 pixels, but the first-run window was only
+    1100 wide, and the old fallback tab strip is hidden -- so a new user could not
+    even open the Help tab. The bar now WRAPS onto as many rows as your window
+    needs, so every tab stays reachable at any size (including if you resize the
+    window small), and the first-run window is wider so the tabs start on one
+    clean row. If you already have a saved window size, it is left alone.
+
+  Audio -> MIDI:
+  - FIXED: starting a SECOND conversion from the menu while one was still running
+    (the Convert button is disabled during a run, but the menu item was not) made
+    the two runs share one set of settings -- the second run's Tom setting could
+    be applied to the first run's finished chart, and both runs could write the
+    same output file. A second conversion is now refused until the first finishes.
+  - FIXED: a chart created on the Sheet Music -> MIDI tab was tagged with whatever
+    audio you last converted on Audio -> MIDI. "Re-run ML" trusted that tag, so it
+    would quietly re-convert that unrelated song -- skipping the usual overwrite
+    warning -- and could replace an Audio -> MIDI chart you had been editing.
+    Sheet Music charts no longer claim someone else's audio.
 
 ------------------------------------------------------------------------------
   v4.7.12   --   2026-07-14
