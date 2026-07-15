@@ -6214,8 +6214,8 @@ class MidiToRlrrApp:
             ("🎹", "Audio → MIDI",          "#e6c84a", DRK),   # 4  yellow (MIDI-creation flow)
             ("🎼", "MIDI Editor",           "#ff9f43", DRK),   # 5  orange
             ("🎼", "Sheet Music → MIDI",    PUR,       WHT),   # 6
-            ("▶",  "YouTube → FLAC",        "#00d4d4", DRK),   # 7  cyan
-            ("🎨", "Asset Manager",         "#e63946", WHT),   # 8  red (snare)
+            ("▶",  "YouTube → FLAC",        "#e63946", WHT),   # 7  red (snare / YouTube's own brand red)
+            ("🎨", "Asset Manager",         "#00d4d4", DRK),   # 8  cyan
             ("🔬", "Song Tester",           PUR,       WHT),   # 9
             ("🥁", "Preview/Practice Track", PUR,      WHT),   # 10
             ("📖", "Quick Start & FAQ",     "#bd02c1", WHT),   # 11 magenta

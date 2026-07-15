@@ -40,6 +40,12 @@
     docs/TROUBLESHOOTING.md describes. The message now says "cu128", which works
     on 50-series AND older cards, and matches the troubleshooting doc.
 
+  Interface:
+  - Swapped two tab colours: the Asset Manager tab is now CYAN and the
+    YouTube -> FLAC tab is now RED (they were the other way round). Red is both
+    the in-game snare colour and YouTube's own brand colour, so it reads more
+    naturally there; cyan suits the Asset Manager.
+
 ------------------------------------------------------------------------------
   v4.7.15   --   2026-07-15
 ------------------------------------------------------------------------------
