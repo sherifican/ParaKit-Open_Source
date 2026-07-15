@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.19"
+    VERSION = "4.7.20"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -26426,7 +26426,27 @@ demucs.separate.main()
                 # atomically (same-fs). On failure we re-raise so the outer handler logs the
                 # skip and leaves _a2m_post_pass_removed at 0 — which is now the TRUTH, since
                 # the chart still holds every note it did before this pass ran.
-                _tmp = midi_path + ".pktomstrip.tmp"
+                # v4.7.20 — a UNIQUE temp name, not a fixed one. v4.7.19 used the fixed
+                # name `<chart>.pktomstrip.tmp`, which was a REGRESSION: if a conversion was
+                # killed between the save and the replace, that exact file orphaned in the
+                # user's MIDIs folder forever (nothing deletes it — the only os.remove is in
+                # the except a killed process never reaches). Every later conversion of THAT
+                # SONG then targeted the same name, so if the orphan was un-writable (an AV
+                # scan / OneDrive upload / backup tool holding a handle, or a read-only
+                # attribute) the strip raised PermissionError and tom-OFF silently did
+                # NOTHING — permanently, for that song, while the chart itself was perfectly
+                # writable. Pre-4.7.19 stripped 36/36 toms in that scenario; 4.7.19 stripped
+                # 0/36 (breaker INV15). mkstemp can never collide with a stale orphan.
+                # Atomicity lives in the os.replace, never in the name.
+                # The `<chart>.pktomstrip.` PREFIX is deliberate: it keeps the temp adjacent
+                # to its chart (same dir => same filesystem => os.replace stays atomic), makes
+                # a stray orphan self-explanatory to anyone who finds one, and keeps INV11's
+                # sabotage — which keys on the chart path — landing on the real save.
+                import tempfile as _tempfile   # local, as everywhere else in this file
+                _fd, _tmp = _tempfile.mkstemp(
+                    prefix=os.path.basename(midi_path) + ".pktomstrip.",
+                    suffix=".tmp", dir=os.path.dirname(midi_path) or ".")
+                os.close(_fd)          # mido reopens by name
                 try:
                     mid.save(_tmp)
                     os.replace(_tmp, midi_path)
@@ -26517,10 +26537,19 @@ demucs.separate.main()
         master OFF, both sub-passes off, or no source audio => no-op (output is
         byte-identical to pre-4.5). Any failure is caught + logged so a cleanup
         error never blocks loading the chart."""
-        # v4.7.19 — did clean_a2m_midi actually run? Set the moment it returns, i.e. the
-        # moment the chart on disk has been rewritten. The except below must never say
+        # v4.7.19 — did clean_a2m_midi actually run? The except below must never say
         # "skipped" once this is True (breaker INV12).
+        # v4.7.20 — this flag alone is NOT enough, and its old comment ("set the moment the
+        # chart on disk has been rewritten") was false: it is set when clean_a2m_midi
+        # RETURNS, but the sidecar writes the chart at cleanup.py:120 and then runs a
+        # fallible tail (:122-131) before returning. A raise in that tail left the chart
+        # rewritten, this flag False, and the except logging "skipped" — INV12's bug one
+        # level down (breaker INV13). So we also remember the pre-cleanup count and, on
+        # failure, ASK THE CHART whether it moved rather than trusting any flag. Same lesson
+        # as the tally itself: measure, don't trust a self-report.
         _rewrote = False
+        _n_pre = None
+        _tallied = False
         try:
             # v4.7.17 — read the RUN SNAPSHOT (_a2m_run_flags), not the live Tk vars.
             # This pass now runs on the CONVERSION WORKER THREAD (so it finishes before
@@ -26613,7 +26642,12 @@ demucs.separate.main()
             _rewrote = True
             _n_post = self._a2m_count_note_ons(midi_path)
             if _n_pre is not None and _n_post is not None:
-                _n_removed = max(0, _n_pre - _n_post)      # measured — always right
+                # Measured off the chart, so a drifted sidecar can't under-report it.
+                # NOT "always right": max(0, …) floors a negative delta, so this is only
+                # exact while the cleanup can never ADD note-ons. That holds on the shipped
+                # path (breaker-verified: relabel is count-preserving, kick removal only
+                # deletes) — it is a property of the sidecar, not a guarantee of this line.
+                _n_removed = max(0, _n_pre - _n_post)
             else:
                 # Couldn't read the chart either side; the self-report is all we have left.
                 try:
@@ -26622,6 +26656,7 @@ demucs.separate.main()
                     _n_removed = 0
             self._a2m_post_pass_removed = (
                 int(getattr(self, "_a2m_post_pass_removed", 0) or 0) + _n_removed)
+            _tallied = True     # v4.7.20 — so the except can't double-count it
             try:
                 self._a2m_log(
                     "Cleanup pass:      "
@@ -26638,13 +26673,25 @@ demucs.separate.main()
         except Exception as _e:
             try:
                 # v4.7.19 — "skipped" is a factual claim about the chart on disk, so it may
-                # only be made when the chart was NOT touched. Once clean_a2m_midi has
-                # returned, the rewrite is done and irreversible; anything failing after
-                # that is a reporting failure, not a skip (breaker INV12).
-                if _rewrote:
+                # only be made when the chart was NOT touched (breaker INV12).
+                # v4.7.20 — ASK THE CHART, don't trust the flag. _rewrote only catches a
+                # failure AFTER clean_a2m_midi returned; the sidecar writes and THEN runs a
+                # fallible tail, so a raise in there leaves _rewrote False on a chart that
+                # was very much rewritten (breaker INV13). A moved note count proves the
+                # write happened regardless of where it died.
+                _n_now = self._a2m_count_note_ons(midi_path)
+                _moved = (_n_pre is not None and _n_now is not None and _n_now != _n_pre)
+                if _rewrote or _moved:
+                    # Count what it removed before dying, so a later failed re-count can't
+                    # re-inflate the total (INV9/INV14). _tallied guards double-counting
+                    # when the failure came after the tally line.
+                    if not _tallied and _n_pre is not None and _n_now is not None:
+                        self._a2m_post_pass_removed = (
+                            int(getattr(self, "_a2m_post_pass_removed", 0) or 0)
+                            + max(0, _n_pre - _n_now))
                     self._a2m_log(f"  ⚠  Cleanup pass ran and updated the chart, but "
-                                  f"reporting it failed ({type(_e).__name__}); the note "
-                                  f"total below may be slightly high.")
+                                  f"reporting it failed ({type(_e).__name__}); your chart "
+                                  f"is fine — only the summary below is incomplete.")
                 else:
                     self._a2m_log(f"Cleanup pass:      skipped ({type(_e).__name__})")
             except Exception:

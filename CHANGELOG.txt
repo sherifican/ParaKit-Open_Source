@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.19  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.20  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,33 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.20   --   2026-07-15
+------------------------------------------------------------------------------
+  Fixes a problem introduced by v4.7.19 earlier the same day. If you are on
+  v4.7.19 and use Tom Detection = OFF, please update.
+
+  Audio -> MIDI:
+  - FIXED (a v4.7.19 regression): v4.7.19 made the tom removal safe against an
+    interrupted write by going through a temporary file next to your chart. That
+    temporary file always had the same name, so if a conversion was interrupted
+    at exactly the wrong moment it could be left behind -- and if something then
+    held onto it (an antivirus scan, a OneDrive upload, a backup tool, or a
+    read-only flag), every later conversion of THAT SONG hit the same leftover
+    file, and Tom Detection = OFF silently did nothing at all, permanently, for
+    that song. The log said "skipped" and nothing else went wrong, so the only
+    visible symptom was toms you had switched off. ParaKit now uses a unique
+    temporary name each time, which cannot collide with a leftover.
+    Only v4.7.19 was affected; v4.7.18 and earlier never used a temporary file.
+  - FIXED: if the cleanup pass failed partway through its own work, the log could
+    still report it as "skipped" and the "Total notes" figure could read high.
+    ParaKit now checks the chart itself to see whether it changed, rather than
+    relying on the cleanup to report on itself.
+
+  Notes:
+  - No change to detection, charting, or any conversion setting. Charts convert
+    exactly as they did in v4.7.18 and v4.7.19.
 
 ------------------------------------------------------------------------------
   v4.7.19   --   2026-07-15
