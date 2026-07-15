@@ -36,6 +36,7 @@ every lane and the gate's round-trip is exact.
 from __future__ import annotations
 
 import os
+import tempfile
 
 import numpy as np
 import mido
@@ -259,7 +260,28 @@ def write_midi(path, notes, ticks_per_beat=DEFAULT_TPB, tempo=DEFAULT_TEMPO):
     # os.replace() it over the target. A crash / disk-full DURING the save can
     # then never leave the user's MIDI truncated -- the original stays intact
     # until the fully-written replacement is swapped in atomically (same-fs).
-    tmp = path + ".pkcleanup.tmp"
+    #
+    # v4.7.22 -- a UNIQUE, SHORT temp name. This line was `path + ".pkcleanup.tmp"`
+    # from 4.5.0 until now, and carried TWO bugs that the tom-OFF strip took three
+    # versions to shed -- because the strip COPIED this pattern in 4.7.19 (citing
+    # this function by name as its standard of correctness), then found both bugs in
+    # the copy and fixed them THERE ONLY. Nobody came back to the original:
+    #   * FIXED NAME -> a conversion killed between the save and the replace orphans
+    #     that exact file forever; every later cleanup of THAT SONG targets it, so an
+    #     un-writable orphan (AV scan / OneDrive upload / backup tool holding a
+    #     handle, or a read-only flag) makes the cleanup raise PermissionError and
+    #     silently no-op FOREVER for that song, while the chart is perfectly writable.
+    #   * THE CHART'S PATH INSIDE A PATH COMPONENT -> NTFS caps every component at 255
+    #     bytes (LongPathsEnabled does NOT lift it), so a long song title overran it:
+    #     basename 241 works, 242 raises OSError. Both were reported "skipped".
+    # Both were breaker-verified against this real function (INV19/INV20).
+    # Atomicity lives in the os.replace, never in the name; the name only has to be
+    # unique and identifiable. The component is now a fixed 23 bytes, whatever the song
+    # is called. NOTE: none of this changes a single output byte -- the sidecar stays
+    # bit-exact -- it only changes which scratch file the bytes pass through.
+    _fd, tmp = tempfile.mkstemp(prefix=".pkcleanup.", suffix=".tmp",
+                                dir=os.path.dirname(path) or ".")
+    os.close(_fd)          # mido reopens by name
     try:
         mid.save(tmp)
         os.replace(tmp, path)

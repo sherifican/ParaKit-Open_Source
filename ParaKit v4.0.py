@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.21"
+    VERSION = "4.7.22"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -26728,8 +26728,19 @@ demucs.separate.main()
                 # is still read, but only for the tally arithmetic below.
                 _n_now = self._a2m_count_note_ons(midi_path)
                 _sig_now = self._a2m_chart_sig(midi_path)
-                _moved = (_sig_pre is not None and _sig_now is not None
-                          and _sig_now != _sig_pre)
+                # v4.7.22 — "no answer" is NOT "no". Both signature reads return None when
+                # the chart can't be read, and v4.7.21 folded that into the same False that
+                # "the bytes are unchanged" produces — then resolved the ambiguity as the
+                # STRONGER claim, "skipped", which asserts the chart was never touched. So a
+                # pass that rewrote the chart and deleted 4 notes reported "skipped" the
+                # moment something held the file (breaker INV18). Worse, it's the app's OWN
+                # documented scenario: an AV/OneDrive scanner opens a file the instant it is
+                # written — THE WRITE SUMMONS THE HANDLE THAT HIDES THE WRITE. That is the
+                # 4.7.18→4.7.19 lesson verbatim (correlated failures assumed independent),
+                # one level down. Every earlier fix here failed CLOSED; that one failed OPEN.
+                # Three states, three answers: moved / unknown / genuinely unchanged.
+                _unknown = (_sig_pre is None or _sig_now is None)
+                _moved = (not _unknown) and _sig_now != _sig_pre
                 if _rewrote or _moved:
                     # Count what it removed before dying, so a later failed re-count can't
                     # re-inflate the total (INV9/INV14). _tallied guards double-counting
@@ -26741,6 +26752,12 @@ demucs.separate.main()
                     self._a2m_log(f"  ⚠  Cleanup pass ran and updated the chart, but "
                                   f"reporting it failed ({type(_e).__name__}); your chart "
                                   f"is fine — only the summary below is incomplete.")
+                elif _unknown:
+                    # We could not read the chart, so we do not know whether the pass ran.
+                    # Say exactly that. "skipped" is a factual claim we have not earned.
+                    self._a2m_log(f"  ⚠  Cleanup pass stopped ({type(_e).__name__}) and the "
+                                  f"chart couldn't be re-read to check whether it changed — "
+                                  f"if the note count below looks off, re-convert.")
                 else:
                     self._a2m_log(f"Cleanup pass:      skipped ({type(_e).__name__})")
             except Exception:

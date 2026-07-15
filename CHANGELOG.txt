@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.21  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.22  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,32 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.22   --   2026-07-15
+------------------------------------------------------------------------------
+  Audio -> MIDI:
+  - FIXED: the SAME two temporary-file problems fixed for tom removal in v4.7.20
+    and v4.7.21 were still present in the CLEANUP PASS, where they have been
+    since v4.5.0. The cleanup writes through a temporary file next to your chart
+    whose name was built from the chart's own name, so (a) if a conversion was
+    interrupted at the wrong moment, the leftover could permanently and silently
+    disable the cleanup pass for that song, and (b) a song title long enough to
+    push that name past Windows' 255-character limit did the same. Both were
+    reported only as "skipped" in the log. The temporary name no longer contains
+    the chart's name at all. This changes no output: charts are byte-for-byte
+    what they were before.
+  - FIXED: if the cleanup pass stopped partway AND the chart could not be re-read
+    at that moment (an antivirus scan or OneDrive holding the file open -- which
+    the act of writing the chart can itself trigger), ParaKit reported the pass
+    as "skipped". "Skipped" means your chart was never touched, and that was not
+    true: the chart had been rewritten. ParaKit now says plainly that it could
+    not check, instead of claiming nothing happened. In that case the note count
+    may read high, and the log now tells you to re-convert if it looks off.
+
+  Notes:
+  - No change to detection, charting, or any conversion setting. Charts convert
+    exactly as they did in v4.7.18 through v4.7.21.
 
 ------------------------------------------------------------------------------
   v4.7.21   --   2026-07-15
