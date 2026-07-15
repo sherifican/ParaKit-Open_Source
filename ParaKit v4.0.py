@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.14"
+    VERSION = "4.7.15"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -16078,6 +16078,29 @@ demucs.separate.main()
         if not os.path.exists(input_path):
             messagebox.showerror("File Not Found", f"File not found:\n{input_path}")
             return
+        # v4.7.15 — exists() alone let a FOLDER, a 0-byte file, or a text file renamed
+        # .wav straight through: the worker span up, Convert went disabled, and the run
+        # died in a librosa traceback in the log with no chart and no explanation to the
+        # user. Validate here on the MAIN thread, before anything is disabled, so the
+        # failure is a plain dialog. (Found by the breaker's malformed-input run.)
+        if not os.path.isfile(input_path):
+            messagebox.showerror(
+                "Not a File",
+                f"This isn't a file:\n{input_path}\n\n"
+                "Pick an audio file (.ogg / .mp3 / .wav / .flac).")
+            return
+        try:
+            if os.path.getsize(input_path) == 0:
+                messagebox.showerror(
+                    "Empty Audio File",
+                    f"This audio file is empty (0 bytes):\n{os.path.basename(input_path)}\n\n"
+                    "Re-download or re-export it and try again.")
+                return
+        except OSError as _sz_err:
+            messagebox.showerror(
+                "Unreadable File",
+                f"This file can't be read:\n{input_path}\n\n{_sz_err}")
+            return
         if not output_dir:
             messagebox.showerror("No Output Folder", "Please select an output folder.")
             return
@@ -16142,6 +16165,31 @@ demucs.separate.main()
             self.a2m_btn.configure(state="normal", text="🎹  Convert Audio to MIDI")
             self._a2m_set_controls_locked(False)
             return
+        # v4.7.15 — exists() passed a FOLDER named *.onnx and a 0-byte file straight
+        # through to the loader, so the run died in an onnxruntime traceback instead of
+        # telling the user their model file is bad. Require a real, plausibly-sized file.
+        # (Found by the breaker's malformed-input run. The shipped model is ~1.8 MB, so
+        # anything under 1 KB is empty/truncated, never a real model.)
+        if detection_engine in ("ml", "hybrid"):
+            _model_problem = None
+            if not os.path.isfile(onnx_model_path):
+                _model_problem = "That path isn't a file (it looks like a folder)."
+            else:
+                try:
+                    if os.path.getsize(onnx_model_path) < 1024:
+                        _model_problem = ("That file is empty or far too small to be a "
+                                          "drum model — it's probably truncated.")
+                except OSError as _mdl_err:
+                    _model_problem = f"That file can't be read ({_mdl_err})."
+            if _model_problem:
+                messagebox.showerror(
+                    "Bad Model File",
+                    f"{_model_problem}\n\n{onnx_model_path}\n\n"
+                    "Point at parakit_drum_model.onnx, or click '↓ Download Model' to "
+                    "fetch a fresh copy.")
+                self.a2m_btn.configure(state="normal", text="🎹  Convert Audio to MIDI")
+                self._a2m_set_controls_locked(False)
+                return
 
         # Dedup gaps — use stored values for the active engine
         dedup_mode = "hybrid" if detection_engine == "hybrid" else "spectral"

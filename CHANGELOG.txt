@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.14  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.15  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,22 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.15   --   2026-07-15
+------------------------------------------------------------------------------
+  Damaged files now tell you what's wrong instead of failing silently.
+
+  Audio -> MIDI:
+  - FIXED: choosing an audio file that is empty (0 bytes), is actually a folder,
+    or is some other file renamed to .wav started the conversion anyway -- the
+    Convert button greyed out, the run died with a technical error buried in the
+    log, and you got no chart and no explanation. ParaKit now checks the file
+    before anything starts and tells you plainly what is wrong.
+  - FIXED: the same for the drum model file. An empty .onnx, or a folder named
+    .onnx, passed the old check and the conversion failed mid-run with a
+    technical error. You now get a clear "Bad Model File" message pointing at the
+    Download Model button.
 
 ------------------------------------------------------------------------------
   v4.7.14   --   2026-07-15
