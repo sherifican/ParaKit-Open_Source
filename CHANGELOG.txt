@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.15  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.16  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,20 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.16   --   2026-07-15
+------------------------------------------------------------------------------
+  Fixed the GPU install command shown on startup (RTX 50-series cards).
+
+  Startup:
+  - FIXED: when dependencies are missing, ParaKit's install message told you to
+    install PyTorch from the "cu121" download URL. Those builds do NOT support
+    RTX 50-series (Blackwell) cards, so anyone with a 5060 / 5070 / 5080 / 5090
+    who followed that line silently ended up on CPU-only stem splitting -- the
+    exact "splitting is really slow / my GPU isn't being used" problem that
+    docs/TROUBLESHOOTING.md describes. The message now says "cu128", which works
+    on 50-series AND older cards, and matches the troubleshooting doc.
 
 ------------------------------------------------------------------------------
   v4.7.15   --   2026-07-15

@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.15"
+    VERSION = "4.7.16"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -43959,8 +43959,12 @@ def main():
             f"  {', '.join(missing)}\n\n"
             f"Install them by opening Command Prompt and running:\n\n"
             f"  pip install mido librosa soundfile numpy pydub demucs tkinterdnd2\n\n"
+            # cu128, not cu121: RTX 50-series (Blackwell, sm_120) is UNSUPPORTED by the
+            # cu121 wheels and silently falls back to CPU for stem splitting — the exact
+            # bug docs/TROUBLESHOOTING.md documents. cu128 covers older cards too, and is
+            # the command that doc already gives. Keep these two in sync.
             f"For GPU acceleration (recommended) also run:\n"
-            f"  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121\n\n"
+            f"  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128\n\n"
             f"Then run this script again."
         )
         sys.exit(1)

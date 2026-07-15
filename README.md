@@ -5,7 +5,7 @@
 >ParaKit is actively being developed/supported. v5 Major Update/Rebuild is in the works (release in mid-late-July), until that ships
 >v4 will continue getting regular updates often.
 
-> **Version in this release:** `4.7.15`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.16`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -178,7 +178,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.7.15`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.7.16`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
@@ -575,6 +575,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.7.16**<br>2026-07-15 | <ul><li>**Fixed the GPU install command shown on startup (RTX 50-series).** When dependencies are missing, ParaKit's install message pointed at the **cu121** PyTorch build — which does **not** support **RTX 50-series (Blackwell)** cards. Anyone with a 5060/5070/5080/5090 who followed our own instructions silently ended up on **CPU-only stem splitting** — the exact "splitting is slow / my GPU isn't used" problem `docs/TROUBLESHOOTING.md` describes. It now says **cu128**, which works on 50-series *and* older cards, and matches the troubleshooting doc.</li></ul> |
 | **v4.7.15**<br>2026-07-15 | <ul><li>**Damaged files now say what's wrong instead of failing silently.** Choosing an audio file that is **empty (0 bytes)**, is actually a **folder**, or is another file renamed to `.wav` used to start the conversion anyway — Convert greyed out, the run died with a technical error buried in the log, and you got no chart and no explanation. ParaKit now checks the file **before anything starts** and tells you plainly what's wrong.</li><li>**Same for the drum model file** — an empty `.onnx`, or a folder named `.onnx`, passed the old check and the conversion failed mid-run with a technical error. You now get a clear **"Bad Model File"** message pointing at the Download Model button.</li></ul> |
 | **v4.7.14**<br>2026-07-15 | <ul><li>⚠️ **Important fix — opening a chart no longer rewrites it.** The detection **cleanup pass ran on every chart you opened** — "Preview last", or a chart from the **Sheet Music → MIDI** tab — not just on a chart you had just converted, and it paired that chart with whatever audio you converted **last** (for a Sheet Music chart, an unrelated song). In practice nothing was corrupted — Sheet Music charts happened to trip a guard inside the cleanup, and "Preview last" happened to carry the right audio — but that was luck, not design. Cleanup now runs **only on a chart you just converted**, the same rule the tom **OFF** step got in v4.7.12. **Opening a chart is now strictly a read.**</li></ul> |
 | **v4.7.13**<br>2026-07-15 | <ul><li>⚠️ **Important fix — the last three tabs were unreachable on a fresh install.** The colour-coded tab bar (v4.7.10) put all twelve tabs in one fixed row needing ~1410px, but the first-run window was 1100px and the old fallback tab strip is hidden — so **Song Tester, Preview/Practice Track and Quick Start & FAQ were cut off entirely**, meaning a new user couldn't even open the Help tab. The bar now **wraps onto as many rows as your window needs** (every tab stays reachable at any size, even resized small), and the first-run window is wider so tabs start on one clean row. Saved window sizes are untouched.</li><li>**Fixed: a second conversion started from the menu while one was still running** (the Convert button is disabled during a run, but the menu item wasn't) made both runs share one set of settings — the second run's Tom setting could be applied to the first run's finished chart, and both could write the same output. A second conversion is now refused until the first finishes.</li><li>**Fixed: Sheet Music → MIDI charts were tagged with whatever audio you last converted** on Audio → MIDI. "Re-run ML" trusted that tag, so it would quietly re-convert that unrelated song — skipping the overwrite warning — and could replace an Audio → MIDI chart you were editing.</li></ul> |
