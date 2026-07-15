@@ -15045,12 +15045,18 @@ demucs.separate.main()
         # Store global dedup label so _a2m_switch_dedup_mode can update it
         self._a2m_global_dedup_lbl = global_dedup_lbl
 
+        # v4.7.12 — the "Ride" row was REMOVED: it was a dead control. Its gap is only
+        # consumed by the detect-side spectral ride path, which v4.7.9 retired
+        # (ride_detect is hard-forced False), and the cleanup reclassifier that actually
+        # creates rides now is never handed a ride gap — so moving the slider changed
+        # nothing while the panel claimed it overrode the gap for Ride. (Found by audit.)
+        # The "ride" KEY still exists in dedup_gaps — it's built from a hard-coded key
+        # list, and the readers fall back to the global gap — so nothing KeyErrors.
         per_instruments = [
             ("kick",      "Kick",       55.0),
             ("snare",     "Snare",      30.0),
             ("hihat",     "Hi-Hat",     20.0),
             ("crash",     "Crash",      30.0),
-            ("ride",      "Ride",       30.0),
             ("floor_tom", "Floor Tom",  30.0),
             ("tom",       "Toms",       30.0),
         ]

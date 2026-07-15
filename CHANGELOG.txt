@@ -41,13 +41,18 @@
     helper instead of to a freshly finished Audio -> MIDI conversion, so it ran on
     charts you were only opening. It now only ever touches the chart from the
     conversion that just finished. Charts already damaged by this cannot be
-    recovered by the app -- re-convert the song if you still have the audio.
+    recovered by the app -- re-convert the song if you have the audio.
   - FIXED: changing Tom sensitivity WHILE a conversion was running could change how
     that running conversion's toms were handled -- even though the setting says it
     takes effect on the next conversion. Switching to OFF mid-run could wipe the
     toms from a chart that was converted at Moderate; switching away from OFF mid-run
     could leave toms in a chart you asked to be OFF. The tom setting is now captured
     when the conversion starts, exactly like every other Audio -> MIDI setting.
+  - Removed the per-instrument "Ride" dedup-gap slider -- it was a dead control.
+    Its gap only ever fed the detect-side spectral ride path that v4.7.9 retired,
+    and the cleanup pass that actually creates rides is never handed a ride gap, so
+    moving the slider changed nothing while the panel claimed it overrode the gap
+    for Ride. The other per-instrument gaps are unchanged.
   - Removed two leftover mentions of the ".alt_detector.mid" comparison file (the
     Help tab note and the detection troubleshooter's "not enough toms" tip). That
     file was only ever written by the retired Enhanced Detection pass, so it is
