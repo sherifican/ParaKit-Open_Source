@@ -29,6 +29,38 @@
 ------------------------------------------------------------------------------
   v4.7.24   --   2026-07-15
 ------------------------------------------------------------------------------
+
+  ** IF YOU USE SPECTRAL, OR TRIED HYBRID BEFORE AND HAD TROUBLE: READ THIS **
+
+  Hybrid is now the default engine on a fresh install, and it is worth another
+  look even if you have written it off.
+
+  Almost all of ParaKit's detection work over the last several releases applies
+  ONLY to the ML / Hybrid engine. If you have been on Spectral, you have not
+  been getting any of it:
+
+    - v4.5.1-1 fixed Hybrid throwing away hi-hats it had genuinely detected.
+      Soft and fast hats -- intros, fast hat patterns -- were being dropped by
+      an over-strict confirmation gate. Validated across a 60-song corpus plus
+      14 fresh songs spanning pop, R&B, rock, metalcore, funk and electronic;
+      hi-hat accuracy improved on every genre with no false-hat blowups.
+    - v4.5.2-1 added the Tom Sensitivity control, re-swept in v4.7.9 for the
+      current model.
+    - On Spectral, none of that runs. The Tom Sensitivity dropdown does nothing
+      at all on Spectral, except OFF.
+    - v4.7.11 also retired the old "Enhanced Detection" toggle, which never did
+      anything. The model plus the cleanup pass handle that work directly now.
+
+  So if Hybrid disappointed you at some point, the things that most likely
+  disappointed you have since been fixed -- and the fixes never reached
+  Spectral. Expect better accuracy and recall, most noticeably on hi-hats and
+  toms.
+
+  How to switch: Audio -> MIDI, scroll the "Basic Detection Settings" card to
+  the "Detection Engine" section at the bottom, and pick Hybrid. Your choice is
+  remembered. Hybrid needs parakit_drum_model.onnx (shipped with ParaKit); if
+  it is missing, ParaKit stays on Spectral rather than failing.
+
   Audio -> MIDI -- detection engine:
   - NEW: on a FRESH install, ParaKit now defaults to the Hybrid engine when a
     working drum model is present (it falls back to Spectral if the model is

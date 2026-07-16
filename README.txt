@@ -17,6 +17,36 @@
   Paradiddle:  https://www.paradiddleapp.com/
 
 ------------------------------------------------------------------------------
+  NEW IN v4.7.24 -- IF YOU USE SPECTRAL, TRY HYBRID
+------------------------------------------------------------------------------
+
+  Hybrid is now the default detection engine on a fresh install, and it is
+  worth another look even if you tried it before and wrote it off.
+
+  Almost all of ParaKit's detection work over the last several releases applies
+  ONLY to the ML / Hybrid engine. On Spectral you have not been getting any of
+  it:
+
+    - v4.5.1-1 fixed Hybrid throwing away hi-hats it had genuinely detected.
+      Soft and fast hats -- intros, fast hat patterns -- were being dropped by
+      an over-strict confirmation gate. Validated across a 60-song corpus plus
+      14 fresh songs spanning pop, R&B, rock, metalcore, funk and electronic;
+      hi-hat accuracy improved on every genre with no false-hat blowups.
+    - v4.5.2-1 added the Tom Sensitivity control, re-swept in v4.7.9 for the
+      current model. On Spectral, that dropdown does nothing at all except OFF.
+    - v4.7.11 retired the old "Enhanced Detection" toggle, which never did
+      anything.
+
+  So if Hybrid disappointed you once, the things that most likely disappointed
+  you have since been fixed -- and those fixes never reached Spectral. Expect
+  better accuracy and recall, most noticeably on hi-hats and toms.
+
+  To switch:  Audio -> MIDI  ▸  scroll the "Basic Detection Settings" card to
+  the "Detection Engine" section at the bottom  ▸  pick Hybrid. Your choice is
+  remembered. Hybrid needs parakit_drum_model.onnx (shipped with ParaKit); if
+  it is missing, ParaKit stays on Spectral rather than failing.
+
+------------------------------------------------------------------------------
   DOWNLOADS & LINKS
 ------------------------------------------------------------------------------
 

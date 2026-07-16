@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "8ad6837ab1b21a33d86707fea3d03b3cd3c5f099b6318ad068ef8dc865e495b6"
+      "sha256": "cf5b1b2e3054db88f486dc5e42c1e53d50d55ce874c580c80b8321ffd07f7473"
     },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
@@ -52,11 +52,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "49d4158a70e3f7e6b232e1338328dc3264fb3cf5377ac2fa465553b0df59e34e"
+      "sha256": "d42d7961fc47cf7b10743cc2bc15065db41750d466786d9d102962af517a7a48"
     },
     {
       "path": "README.txt",
-      "sha256": "61dd1a81e4b45941f9c241037b6d6450ece831d81589780d976795159d36c838"
+      "sha256": "c7c60b7c8003b64bd11fbb4952c63c966bca6b1548abeed6edf5a459539d5e30"
     },
     {
       "path": "Run ParaKit v4.0.bat",
