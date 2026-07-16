@@ -2037,8 +2037,20 @@ def midi_notes_to_ch(midi_notes, ticks_per_beat, bpm, offset, resolution=192):
 
 
 def _ch_escape(value):
-    """Escape a value for notes.chart quoted song metadata."""
-    return str(value).replace("\\", "\\\\").replace("\"", "\\\"")
+    """Escape a value for notes.chart quoted song metadata.
+
+    v4.7.26 fold r3 (breaker 4726-r3, Fable) — NEWLINES ARE STRUCTURE in .chart:
+    every value this returns is emitted inside a single quoted line of the [Song]
+    block, so an interior CR/LF in a title split the block early, injected
+    attacker-named sections, orphaned MusicStream, and duplicated [ExpertDrums] —
+    a pack Clone Hero mis-parses or rejects, delivered under a normal "converted"
+    message. And the vector is ordinary: _try_autofill_metadata sets the title
+    from an audio file's TITLE tag via .strip(), which keeps INTERIOR newlines;
+    paste does too. This leaf covers all three exporters (single-song, batch,
+    Pd→CH), so the scrub lives here: any run of CR/LF collapses to one space.
+    """
+    s = " ".join(str(value).replace("\r\n", "\n").replace("\r", "\n").split("\n"))
+    return s.replace("\\", "\\\\").replace("\"", "\\\"")
 
 
 def build_chart(ch_events, bpm, title, artist, album="", year="",
@@ -2087,6 +2099,14 @@ def write_song_ini(title, artist, album="", year="", charter="ParaKit",
 
     diff_drums: 1=Easy 2=Medium 3=Hard 4=Expert
     """
+    # v4.7.26 fold r3 (breaker 4726-r3, Fable) — song.ini values are UNQUOTED
+    # one-per-line ini fields, so an interior CR/LF in any of them injected stray
+    # lines that configparser (and Clone Hero) refuse or mis-read. Same scrub as
+    # _ch_escape, at this leaf so every exporter is covered: CR/LF runs → one space.
+    def _flat(v):
+        return " ".join(str(v).replace("\r\n", "\n").replace("\r", "\n").split("\n"))
+    title, artist, album, year, charter = (
+        _flat(title), _flat(artist), _flat(album), _flat(year), _flat(charter))
     lines = ["[song]", f"name = {title}", f"artist = {artist}"]
     if album:
         lines.append(f"album = {album}")
@@ -5742,7 +5762,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.25"
+    VERSION = "4.7.26"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -15762,7 +15782,9 @@ demucs.separate.main()
             if not _p:
                 return "spectral"
             _ok, _why = self._a2m_model_is_loadable(_p)
-            return "hybrid" if _ok else "spectral"
+            # v4.7.26 — `is True` only. None = "couldn't check", and a first-run default
+            # must not bet the user's first conversion on a model we never verified.
+            return "hybrid" if _ok is True else "spectral"
         except Exception:
             return "spectral"
 
@@ -15779,19 +15801,14 @@ demucs.separate.main()
         Model button, so the user couldn't re-download their way out. A self-reinforcing
         trap: the UI vouched for the corrupt file.
 
-        Cached on (path, size, mtime) — the label refreshes far more often than the file
-        changes, and a real session build costs ~100 ms.
+        NOT cached — deliberately, since the v4.7.26 fold. The memo this function
+        carried ("cached on (path, size, mtime) … a real session build costs ~100 ms")
+        is gone; see the comment at the return for the measured reasons.
         """
         try:
-            _st = os.stat(path)
-            _key = (os.path.abspath(path), _st.st_size, _st.st_mtime_ns)
+            os.stat(path)
         except Exception as _e:
             return False, f"that file can't be read ({type(_e).__name__})"
-        _cache = getattr(self, "_a2m_model_ok_cache", None)
-        if _cache is None:
-            _cache = self._a2m_model_ok_cache = {}
-        if _key in _cache:
-            return _cache[_key]
         try:
             import onnxruntime as _ort
         except Exception:
@@ -15803,7 +15820,8 @@ demucs.separate.main()
             # onnxruntime re-raises the ORIGINAL exception type from its capi import, so an
             # OSError (missing VC++ DLL) / RuntimeError (numpy ABI) escapes and the user is
             # told THEIR MODEL FILE is broken. Returned UNCACHED, deliberately.
-            return True, None
+            # v4.7.26 — returns None ("unknown"), not True. See the None note below.
+            return None, "onnxruntime isn't available, so the model couldn't be checked"
         try:
             _ort.InferenceSession(path, providers=["CPUExecutionProvider"])
             _res = (True, None)
@@ -15832,11 +15850,32 @@ demucs.separate.main()
             # be blocked, no proxy to be wrong about.
             #   bytes load  -> the path failure was ACCESS, not contents  -> usable, UNCACHED
             #   bytes fail  -> the contents really are bad                -> refuse + cache
+            # v4.7.26 — bound the read (breaker INV28). MemoryError is NOT an OSError, and
+            # v4.7.25 created the only exception that can escape this function: read(1)
+            # allocated one byte, read() allocates the whole file. On the main thread inside
+            # _a2m_start that escapes between the control lock and the only restore, so
+            # Convert sticks on "Converting..." forever with no dialog and, in a windowed
+            # build, not even a traceback. The shipped model is ~1.8 MB; nothing this large
+            # is our model, and we don't need to read it to know we can't judge it.
+            try:
+                if os.path.getsize(path) > 256 * 1024 * 1024:
+                    return None, "that file is far too large to be a drum model"
+            except OSError:
+                return None, "that file couldn't be read"
             try:
                 with open(path, "rb") as _fh:
                     _blob = _fh.read()
-            except OSError:
-                return True, None          # couldn't read at all: we learned nothing
+            except (OSError, MemoryError):
+                # v4.7.26 — None ("unknown"), NOT True. `True` is what the status label
+                # renders as a green "Model ready" AND what disables Get Model, so
+                # "couldn't check" and "verified good" were the SAME return value: under an
+                # AV lock, 2 MB of junk earned a green tick, the label never re-probed so it
+                # OUTLIVED the scan, and Convert then refused the file the label vouched for
+                # while naming a button the app had greyed out — v4.7.22's trap verbatim,
+                # the one this function's docstring claims to have fixed (breaker INV27).
+                # Callers must branch on `is False` / `is None`, never on truthiness: the
+                # gate at _a2m_start still has to FAIL OPEN on unknown or INV24/INV25 break.
+                return None, "the model file couldn't be read just now"
             try:
                 _ort.InferenceSession(_blob, providers=["CPUExecutionProvider"])
                 return True, None          # good bytes; uncached — it'll load once free
@@ -15844,7 +15883,22 @@ demucs.separate.main()
                 pass                       # genuinely not a model -> fall through and cache
             _res = (False, str(_e).strip().splitlines()[0] if str(_e).strip()
                     else type(_e).__name__)
-        _cache[_key] = _res
+        # v4.7.26 fold (breaker 4726 — Claude + Grok, independently converged) — NO MEMO AT
+        # ALL. The first cut of .26 kept "cache only a yes" on the claim that "if the bytes
+        # change the key rotates" — eleven lines below a comment proving (path, size,
+        # mtime_ns) CANNOT identify the bytes. Both sentences were about the same key; the
+        # second was wrong. A size-stable in-place rewrite with mtime preserved (a cloud
+        # dehydrate, a restore, a torn rewrite — the very shapes INV26 accepts as real) kept
+        # a green "Model ready" + a DISABLED Get Model over junk, and the 🔍 Check button
+        # routed through the same memo, so the one control that re-asks could not clear it:
+        # v4.7.22's vouch-and-trap, mirror direction (breaker INV29). What the memo bought
+        # was MEASURED, not guessed: a real session build is ~5.6 ms median (the docstring
+        # claimed ~100 ms), and every caller is a discrete user action — the 600 ms startup
+        # probe, a Check click, an engine radio change, Convert. No timer, no trace, no
+        # redraw loop. ~6 ms a handful of times per session bought a lying label. So: no
+        # cache, no key, no staleness — in either direction, and the whole class closes
+        # instead of its fourth door. Never re-add memoisation here without a key that
+        # identifies the BYTES.
         return _res
 
     def _a2m_set_onnx_status(self, state, path):
@@ -15863,9 +15917,19 @@ demucs.separate.main()
         # site, so no caller can forget.
         if state == "ok" and path:
             _ok, _why = self._a2m_model_is_loadable(path)
-            if not _ok:
+            if _ok is False:
                 state = "error"
                 path = f"{os.path.basename(path)} isn't a usable model ({_why})"
+            elif _ok is None:
+                # v4.7.26 — "couldn't check" is its own state (breaker INV27). It used to
+                # come back as True and render as a green "✅ Model ready", which ALSO
+                # disabled Get Model — so an unreadable/unverifiable file got a tick
+                # identical to a verified one, the label never re-probed so it outlived the
+                # cause, and Convert then refused the very file the label vouched for while
+                # naming the greyed-out button as the remedy. Say what we actually know, and
+                # crucially leave Get Model ENABLED (state != "ok"), so the user is never
+                # told to click something we've disabled.
+                state = "unknown"
         try:
             if state == "ok":
                 fname = os.path.basename(path)
@@ -15882,6 +15946,16 @@ demucs.separate.main()
                 self.a2m_onnx_status_lbl.configure(
                     text=f"❌  Model error — {path}",
                     foreground="#e63946")
+            elif state == "unknown":
+                # v4.7.26 — neither a tick nor a cross: we genuinely don't know yet, and
+                # saying so beats guessing in either direction. Amber, like "no model
+                # found", because the user's next step is the same: point at a model or
+                # fetch one — and Get Model stays clickable to let them.
+                self.a2m_onnx_status_lbl.configure(
+                    text=f"⚠  Model found, but it couldn't be checked just now "
+                         f"({os.path.basename(path) if path else 'model'}) — "
+                         f"ParaKit will try again when you convert",
+                    foreground="#e09a3a")
         except Exception:
             pass
         # Gate the Get Model button — disabled when model is ready, enabled
@@ -16340,7 +16414,12 @@ demucs.separate.main()
                 # and the user gets a real dialog naming the real problem.
                 if not _model_problem:
                     _ok, _why = self._a2m_model_is_loadable(onnx_model_path)
-                    if not _ok:
+                    # v4.7.26 — `is False` only. This gate must FAIL OPEN on None
+                    # ("couldn't check"): refusing there is exactly the 4.7.23 bug, and
+                    # INV24/INV25 both assert we don't. An unverifiable model goes to the
+                    # worker, where the ML load either works or falls back to spectral WITH
+                    # the disclosure (INV22).
+                    if _ok is False:
                         _model_problem = (f"That file isn't a model ParaKit can load "
                                           f"({_why}).")
             if _model_problem:
@@ -23376,7 +23455,60 @@ demucs.separate.main()
                             f"{_bak_err}\n\nOverwrite WITHOUT a backup?"):
                         return None
 
-            mid.save(path)
+            # v4.7.26 fold (breaker 4726, Fable) — ATOMIC in-place write. mido's save()
+            # opens 'wb', which TRUNCATES on open, so a save that died part-way (disk
+            # full, an AV/OneDrive stall, a kill) left the user's chart a 22-byte stub —
+            # on the very write this tab exists for, the one carrying their hand edits.
+            # The app has held every other in-place MIDI write to an explicit standard
+            # since 4.5.0 (parakit_cleanup/midi_io.py write_midi: "a crash/disk-full can
+            # never leave the user's MIDI truncated") and the tom-OFF strip was dragged to
+            # it in 4.7.19 (INV11) — this Save never was. Same pattern as the strip: a
+            # UNIQUE, SHORT, FIXED-LENGTH temp component (never the basename — the NTFS
+            # 255-byte component cap re-broke the strip in 4.7.20, INV17), same dir so
+            # os.replace stays same-filesystem atomic; the original survives intact until
+            # a fully-written replacement swaps in. On failure the temp is removed and the
+            # exception re-raises into the "Save Failed" dialog below — which is now the
+            # truth: the file on disk still holds exactly what it held before Save.
+            import tempfile as _tempfile   # local, as everywhere else in this file
+            _fd, _tmp = _tempfile.mkstemp(
+                prefix=".pkmesave.", suffix=".tmp",
+                dir=os.path.dirname(path) or ".")
+            os.close(_fd)          # mido reopens by name
+            try:
+                mid.save(_tmp)
+                try:
+                    os.replace(_tmp, path)
+                except PermissionError:
+                    # v4.7.26 fold, round 2 (breaker 4726-fold, Grok — a true regression of
+                    # THIS fold's atomic-save fix, caught one round later): os.replace needs
+                    # DELETE access on the target, and a backup agent / sync client /
+                    # indexer holding the chart with share=READ|WRITE but NOT DELETE
+                    # refuses it — while a plain in-place write is still allowed. The
+                    # atomic path alone turned a save the OS would have accepted into a
+                    # false "Save Failed" with the user's edits stranded in memory. Fall
+                    # back ONLY when the replace itself is denied, and only with the
+                    # COMPLETE serialized chart already on disk in _tmp: one whole-buffer
+                    # in-place rewrite, never mido re-serialization. The truncation window
+                    # this reopens is "the rewrite dies mid-flight AFTER a full temp write
+                    # just succeeded on the same volume" — narrow, accepted, and documented
+                    # as INV34's waiver (INV30 still guards every other path). If even the
+                    # rewrite is refused (a true exclusive lock), the original is intact
+                    # and the raise below tells the truth.
+                    with open(_tmp, "rb") as _src:
+                        _payload = _src.read()
+                    with open(path, "wb") as _dst:
+                        _dst.write(_payload)
+                    try:
+                        os.remove(_tmp)
+                    except Exception:
+                        pass
+            except Exception:
+                try:
+                    if os.path.exists(_tmp):
+                        os.remove(_tmp)
+                except Exception:
+                    pass
+                raise
             self._me_session_saved_paths.add(
                 os.path.normcase(os.path.abspath(path)))
             self._me_last_midi = path
@@ -29940,6 +30072,27 @@ demucs.separate.main()
             self._yt_lib_art_refs.pop(path, None)
         except Exception:
             pass
+        if action == "list":
+            # v4.7.26 fold, round 2 (breaker 4726-fold, Grok — the door the round-1 fix
+            # left open): the round-1 fix cleared the PATH-keyed art-undo pair only on a
+            # DISK delete. A list-only removal kept it, and the path can still be recycled
+            # (yt-dlp names by title, so a later re-download of the same track lands
+            # exactly here) — the stale pair then offered "Undo album art search" on the
+            # newcomer and embedded the dead row's cover into it, silently. The undo offer
+            # must not outlive the library row. WAIVER (per the fix-regression-catcher
+            # rule): this trades away one legitimate undo — remove-from-list then re-add
+            # the SAME untouched file — accepted, because nothing ties the backup to the
+            # file's content across that gap, so the offer can't be trusted after the row
+            # dies.
+            for _p in self._yt_art_undo_paths(path):
+                try:
+                    if os.path.isfile(_p):
+                        os.remove(_p)
+                except Exception:
+                    pass
+            # v4.7.26 fold r3 — the removes above are best-effort and a no-DELETE-share
+            # hold defeats them silently (breaker 4726-r3, Grok+Opus); seal any leftover.
+            self._yt_art_undo_seal_if_stuck(path)
         if action == "disk":
             try:
                 if os.path.isfile(path):
@@ -29949,6 +30102,24 @@ demucs.separate.main()
                     "Delete failed",
                     "Removed it from the library, but the file itself could not "
                     f"be deleted:\n{e}")
+            # v4.7.26 fold (breaker 4726, Fable) — the art-undo backup is keyed on the
+            # PATH alone (sha1 of the normcased abspath), and a path is an address, not
+            # an identity: yt-dlp names by title, so a later re-download of the same
+            # track lands on this exact path. Leaving the backup behind meant "Undo
+            # album art search" was still offered on the NEWCOMER and, taken, embedded
+            # the DELETED song's cover into it with no dialog. The dead song's undo
+            # dies with the song. Guarded on the file actually being gone so a FAILED
+            # disk delete (the messagebox above) keeps the still-valid backup.
+            if not os.path.isfile(path):
+                for _p in self._yt_art_undo_paths(path):
+                    try:
+                        if os.path.isfile(_p):
+                            os.remove(_p)
+                    except Exception:
+                        pass
+                # v4.7.26 fold r3 — same seal as the list branch: a held half must
+                # not keep the offer alive after the song is verifiably gone.
+                self._yt_art_undo_seal_if_stuck(path)
         self._yt_library_refresh()
 
     # ── Registry (standalone, atomic — clone of save_config discipline) ──────
@@ -30960,7 +31131,12 @@ demucs.separate.main()
                 "That download is no longer on disk:\n" + str(path))
             return
         jpg, noart = self._yt_art_undo_paths(path)
-        if not (os.path.isfile(jpg) or os.path.isfile(noart)):
+        # v4.7.26 fold r3 — this function gates on the raw files, NOT on
+        # _yt_art_undo_available, so it needs the tombstone check too: a sealed pair
+        # belongs to a DELETED row and must never be redeemed against whoever lives at
+        # this path now (see _yt_art_undo_seal_if_stuck).
+        if (os.path.isfile(self._yt_art_undo_tombstone(path))
+                or not (os.path.isfile(jpg) or os.path.isfile(noart))):
             messagebox.showinfo(
                 "Nothing to undo",
                 "No album-art search has been run on this song to undo.\n\n"
@@ -31335,7 +31511,11 @@ demucs.separate.main()
             norm = os.path.normcase(os.path.abspath(path))
         except Exception:
             norm = path
-        return hashlib.sha1(norm.encode("utf-8")).hexdigest()
+        # v4.7.26 fold r3 (Grok, noted in passing) — surrogatepass: a path carrying a
+        # lone surrogate made this raise UnicodeEncodeError MID-DELETE (after the
+        # library row was already removed), aborting the cleanup half-done. Exotic,
+        # but keying must be total: every path the OS can hand us gets a key.
+        return hashlib.sha1(norm.encode("utf-8", "surrogatepass")).hexdigest()
 
     def _yt_art_undo_paths(self, path):
         """(jpg_backup, noart_marker) for this song's pre-search art backup."""
@@ -31343,8 +31523,42 @@ demucs.separate.main()
         return (os.path.join(YT_ART_UNDO_DIR, key + ".jpg"),
                 os.path.join(YT_ART_UNDO_DIR, key + ".noart"))
 
+    def _yt_art_undo_tombstone(self, path):
+        """The pair's kill-switch marker — see _yt_art_undo_seal_if_stuck."""
+        return os.path.join(YT_ART_UNDO_DIR, self._yt_art_undo_key(path) + ".deleted")
+
+    def _yt_art_undo_seal_if_stuck(self, path):
+        """v4.7.26 fold r3 (breaker 4726-r3 — Grok + Opus converged independently,
+        both 'INV39'): the delete-time clear best-efforts `os.remove` on each half of
+        the undo pair and swallows failures. A handle that does not share DELETE — the
+        thumbnailer / AV / Search-indexer shape, measured to block os.remove with
+        WinError 32 — defeated it silently: the `.noart` went, the `.jpg` stayed, the
+        offer survived the row, and a same-title re-download at the recycled path was
+        handed the DEAD song's cover. Deleting AND renaming both need DELETE access,
+        so under the very hold that causes this neither can work — but CREATING a
+        sibling file needs no access to the held file at all. So: if either half
+        survived the removes, drop a tombstone beside them. The offer
+        (_yt_art_undo_available) and the action (_yt_lib_undo_art_search) both treat a
+        tombstoned pair as gone; a FRESH art search re-arms undo legitimately by
+        clearing the tombstone along with the old pair (_yt_art_backup_before_search).
+        Residual: if even the tombstone can't be written (disk full), the stale offer
+        survives — creation-under-hold has no failure mode short of the volume itself."""
+        jpg, noart = self._yt_art_undo_paths(path)
+        try:
+            if os.path.isfile(jpg) or os.path.isfile(noart):
+                open(self._yt_art_undo_tombstone(path), "wb").close()
+        except Exception:
+            pass
+
     def _yt_art_undo_available(self, path):
         jpg, noart = self._yt_art_undo_paths(path)
+        # v4.7.26 fold r3 — a tombstoned pair is a DELETED pair the OS wouldn't let us
+        # remove; never offer it (see _yt_art_undo_seal_if_stuck).
+        try:
+            if os.path.isfile(self._yt_art_undo_tombstone(path)):
+                return False
+        except Exception:
+            pass
         return os.path.isfile(jpg) or os.path.isfile(noart)
 
     def _yt_art_backup_before_search(self, path):
@@ -31356,7 +31570,10 @@ demucs.separate.main()
         except Exception:
             return
         jpg, noart = self._yt_art_undo_paths(path)
-        for p in (jpg, noart):
+        # v4.7.26 fold r3 — the tombstone is cleared along with the old pair: a FRESH
+        # art search on whoever lives at this path NOW legitimately re-arms undo (the
+        # new backup is taken from the new file, so the pair matches its subject).
+        for p in (jpg, noart, self._yt_art_undo_tombstone(path)):
             try:
                 if os.path.isfile(p):
                     os.remove(p)
@@ -40774,6 +40991,17 @@ demucs.separate.main()
 
             self._tester_log(f"  BPM: {midi_bpm:.2f}")
             self._tester_log(f"  Total notes ({source_label}): {len(note_events)}")
+            # v4.7.26 fold, round 2 (breaker 4726-fold, Fable): a note-less MIDI or an
+            # empty-events .rlrr reached the [-1] below and dumped a raw IndexError
+            # traceback into the Tester log — while the identical access 8 lines down was
+            # already guarded, and _tester_start only checks that the files EXIST. Say
+            # what's wrong and stop; the finally in _tester_run restores the button.
+            if not note_events:
+                self._tester_log(
+                    f"\n  ⚠ No notes found in the {source_label} source — nothing to "
+                    f"analyze.\n    Check that this is the right file and that it "
+                    f"actually contains drum notes.", "#ffcc00")
+                return
             self._tester_log(f"  Duration: {note_events[-1]:.1f}s\n")
 
             # ── Detect audio onsets ───────────────────────────────────────────
@@ -41479,6 +41707,27 @@ demucs.separate.main()
             success_count = 0
             fail_count = 0
             converted_paths = []
+            # v4.7.26 fold (breaker 4726, Fable) — every input used to flatten into this
+            # ONE folder by basename, so two inputs sharing a name (track-numbered rips:
+            # '01 Intro.wav' on two albums; every Demucs song folder's 'drums.wav'; a
+            # DAW's 'Master.wav') resolved to the SAME output path — the second silently
+            # overwrote the first while success_count still counted BOTH: "2 file(s)
+            # converted successfully!" with one file on disk and a song gone, no warning
+            # at any point. The number that dialog shows must be a fact about the user's
+            # disk, so a within-run collision now resolves to a unique name
+            # ('01 Intro (2).ogg') and the rename is logged. A BARE name that merely
+            # exists from an EARLIER run is still overwritten on purpose — re-converting
+            # the same song replaces its old .ogg instead of accreting '(2)' copies.
+            # v4.7.26 fold, round 2 (breaker 4726-fold — Grok and Opus converged on this
+            # independently): "earlier-run overwrite is intentional" is ONLY true for the
+            # bare stem.ogg. The collision walk itself consulted nothing but _claimed, so
+            # a renamed output could land on an EXISTING 'stem (N).ogg' from an earlier
+            # run — a different song's parked file, silently destroyed while the dialog
+            # counted a clean success (proven with real libvorbis: a 2.5 s track replaced
+            # by a 0.4 s one, no warning, no input in the run named for it). The walk now
+            # also skips any candidate that exists on disk: collision renames may only
+            # CREATE files, never replace one.
+            _claimed = set()
 
             for filepath in files:
                 filename = os.path.basename(filepath)
@@ -41486,10 +41735,23 @@ demucs.separate.main()
                 out_path = os.path.join(out_dir, stem + ".ogg")
 
                 self._ogg_log(f"Converting: {filename}")
+                if os.path.normcase(out_path) in _claimed:
+                    _n = 2
+                    while True:
+                        _cand = os.path.join(out_dir, f"{stem} ({_n}).ogg")
+                        if (os.path.normcase(_cand) not in _claimed
+                                and not os.path.exists(_cand)):
+                            break
+                        _n += 1
+                    out_path = _cand
+                    self._ogg_log(f"  ⚠ Another file this run is already saving as "
+                                  f"{stem}.ogg — saving this one as: "
+                                  f"{os.path.basename(out_path)}")
+                _claimed.add(os.path.normcase(out_path))
                 try:
                     audio = AudioSegment.from_file(filepath)
                     audio.export(out_path, format="ogg", codec="libvorbis")
-                    self._ogg_log(f"  ✓ Saved: {stem}.ogg")
+                    self._ogg_log(f"  ✓ Saved: {os.path.basename(out_path)}")
                     success_count += 1
                     converted_paths.append(out_path)
                 except Exception as e:
@@ -42886,6 +43148,19 @@ demucs.separate.main()
                 if slot["reduce_var"].get() and diff != "Expert":
                     rlrr["events"] = reduce_notes_for_difficulty(rlrr["events"], bpm, diff)
 
+                # v4.7.26 fold (breaker 4726, Fable) — the zero-event guard the Single
+                # Song Creator has had all along (its _convert: "ERROR: No events
+                # generated. Check MIDI file and BPM." and nothing written). This slot —
+                # the SOLE batch-side build_rlrr call site, shared by Create Multiple
+                # Songs and the folder/template path — wrote the note-less .rlrr, copied
+                # the audio next to it, logged "Done - 0 events", returned True, and was
+                # counted into "N/N songs converted successfully". Two paths, one helper,
+                # opposite answers to the same input. The guard lives HERE at the call
+                # site: build_rlrr is protected and unchanged.
+                if not rlrr["events"]:
+                    self._batch_log("  ERROR: No events generated. Check MIDI file and BPM.\n")
+                    return False
+
                 os.makedirs(out_dir, exist_ok=True)
                 rlrr_path = os.path.join(out_dir, f"{fs_title}_{diff}.rlrr")
                 with open(rlrr_path, "w", newline="\r\n") as f:
@@ -42943,6 +43218,13 @@ demucs.separate.main()
                         os.rmdir(ch_dir)
                     except OSError:
                         pass
+                    # v4.7.26 fold — a Clone-Hero-ONLY slot that reaches here wrote
+                    # NOTHING, so returning True counted it into "N/N songs converted
+                    # successfully" (the same lie the .rlrr zero-event guard above
+                    # closes). For fmt "both" the .rlrr already on disk is real, so
+                    # that shape keeps its partial-success behavior.
+                    if fmt == "clonehero":
+                        return False
                     ch_count = 0
                 else:
                     audio_path = slot["audio_var"].get()

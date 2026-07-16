@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.25  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.26  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,112 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.26   --   2026-07-16
+------------------------------------------------------------------------------
+  One release, three hardening rounds. After 4.7.25 shipped we pointed three
+  independent automated "breakers" at ParaKit -- programs whose only job is to
+  make the app misbehave by actually running it -- then fixed everything they
+  proved, and re-ran them on the fixes, three rounds deep. Twelve distinct
+  bugs were found and fixed this way, most of them the quiet kind you would
+  never see in a log: files silently overwritten, a save that could destroy
+  your work, a "success" message standing on nothing. None of them changes
+  detection results or charting.
+
+  MIDI Editor -- your chart is now safe to save, no matter what:
+  - FIXED: a save that failed part-way (disk full, an antivirus or sync tool
+    stalling the write, a crash) could DESTROY the chart you were saving --
+    the file on disk was truncated to a useless stub, taking an editing
+    session's hand-fixes with it. The save is now atomic: ParaKit writes a
+    complete replacement next to your file first, and only swaps it in once
+    it is fully on disk. If anything goes wrong mid-save, the file you had is
+    untouched, and "Save Failed" now means exactly that -- nothing was lost.
+  - FIXED (a bug the atomic save itself introduced, caught by the next breaker
+    round): with the swap-in approach, a backup tool / sync client / indexer
+    merely holding your chart open could make the final swap fail -- so a save
+    Windows would happily have accepted was refused, with your edits stranded
+    in the editor. ParaKit now detects that specific refusal and falls back to
+    writing the already-complete data directly over the file, so the save
+    lands either way. You keep both guarantees: a failed save never destroys
+    the chart, and a save the system permits actually saves.
+
+  Audio -> .ogg Converter -- the count you're shown is now the files you have:
+  - FIXED: converting two files with the same name (think "01 Intro.wav" from
+    two different albums, or the "drums.wav" every stem-split folder contains)
+    silently collapsed them into ONE output file -- the second overwrote the
+    first, and the dialog still said "2 file(s) converted successfully!". One
+    of your songs was just gone. Same-named files in a batch now come out as
+    "01 Intro.ogg" and "01 Intro (2).ogg", the rename is noted in the log, and
+    the completion count always matches what is actually on disk.
+  - FIXED (follow-up the breakers forced on the fix above): a "(2)" file
+    created by an EARLIER batch could still be silently replaced by a later
+    batch's rename. Collision renames now only ever CREATE new files -- the
+    only file a conversion will overwrite is the plain "<song>.ogg" of the
+    song you are deliberately re-converting.
+
+  Create Multiple Songs (batch):
+  - FIXED: a song whose chart came out with zero playable notes (for example
+    a bad manual offset pushing every note before the start) was still written
+    to disk, audio copied in beside it, and counted into "N/N songs converted
+    successfully" -- a folder that looks like a song and plays as nothing. The
+    batch now refuses it with the same "ERROR: No events generated. Check MIDI
+    file and BPM." message the Single Song Creator has always shown, and it
+    counts as a failure, not a win. (A Clone-Hero-only song with no drum
+    events likewise no longer counts as converted.)
+
+  YouTube -> FLAC library -- album art undo:
+  - FIXED: "Undo album art search" could put a DELETED song's cover into a
+    completely different song. The undo backup was tied to the file's PATH,
+    and paths get reused: delete a download, later download another version of
+    the same track (same title -> same filename), and the old backup was still
+    offered -- and silently embedded the dead song's art into the newcomer.
+    The undo backup is now removed together with the song, whether you delete
+    it from disk or just remove it from the library list -- and if something
+    on your PC (an antivirus scan, a thumbnailer, the search indexer) happens
+    to be holding one of the backup files open at that exact moment so it
+    cannot be deleted, ParaKit marks it dead instead, so the stale undo can
+    never be offered. A fresh art search on the new song re-enables Undo
+    normally.
+
+  Clone Hero export:
+  - FIXED: a song whose title contained a line break (which can arrive
+    automatically -- ParaKit can fill the title from an audio file's own tags,
+    and some files carry a stray newline in there) produced a broken Clone
+    Hero pack. The line break split the song-info block, so Clone Hero either
+    refused the song or read its details wrong -- and ParaKit still said
+    "converted". Titles are now cleaned of line breaks before the .chart and
+    song.ini are written; ordinary titles (quotes, apostrophes, symbols) are
+    unaffected.
+
+  Song Tester:
+  - FIXED: loading a MIDI or .rlrr with no notes in it crashed the analysis
+    with a raw error traceback in the Tester log. It now tells you plainly
+    that there is nothing to analyze and to check you picked the right file.
+
+  Audio -> MIDI -- ML / Hybrid model checking (completing 4.7.22-4.7.25's work):
+  - FIXED: the model status could still lie in one remaining direction. 4.7.25
+    made sure a GOOD model is never marked bad by a moment's interference; the
+    mirror case survived -- a model that had genuinely gone bad ON DISK (the
+    file replaced in place at the same size, as cloud-sync placeholder and
+    restore operations do) could keep its green "Model ready" tick for the
+    whole session, with the Get Model button greyed out and the recheck button
+    unable to clear it. ParaKit no longer remembers old answers about the
+    model file at all: every check reads the file as it is right now (measured
+    cost: a few milliseconds, only when you click something). The status you
+    see is always about the file you have.
+  - Also from this work: "couldn't check just now" (file busy) is shown as its
+    own amber status instead of being treated as good or bad, and Convert
+    proceeds normally in that case rather than refusing.
+
+  Notes:
+  - No change to detection results, charting, or any conversion setting: same
+    engine, same settings, same chart.
+  - Under the hood: ParaKit's self-test suite grew from 10 to 38 executable
+    checks across these rounds, each born from a real bug above and proven able
+    to catch it by deliberately re-introducing it (27 of 28 mutation-proven),
+    plus a new regression harness that diffs every batch of fixes against the
+    previous build before it can ship.
 
 ------------------------------------------------------------------------------
   v4.7.25   --   2026-07-15
