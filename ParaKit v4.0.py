@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.24"
+    VERSION = "4.7.25"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -15808,28 +15808,40 @@ demucs.separate.main()
             _ort.InferenceSession(path, providers=["CPUExecutionProvider"])
             _res = (True, None)
         except Exception as _e:
-            # v4.7.24 — "I couldn't READ it just now" is NOT "it isn't a model", and this
-            # is the whole bug v4.7.23 shipped. `_key` is derived ENTIRELY from the file
-            # (path, size, mtime_ns), so caching an ACCESS failure pins it for the entire
-            # session under a key that can never rotate to clear it — the file was never
-            # the problem, so its size and mtime never move. An AV scan / OneDrive / a
-            # backup agent holding a no-share handle makes InferenceSession fail on a
-            # byte-perfect model with "system error number 13" — EACCES. v4.7.23 filed that
-            # as a permanent verdict about the CONTENTS: the label read "Model error"
-            # forever, Convert was refused, and the dialog told the user to re-download a
-            # file that was already perfect. It needed no user action — the app probes the
-            # model itself 600 ms after launch, which on a cold boot is exactly when
-            # Defender is scanning. And it was a REGRESSION: the same scenario produced a
-            # working chart in 4.7.22 via the worker-side spectral fallback (breaker INV23).
-            # So: ask whether the file is READABLE. If it isn't, we didn't learn anything
-            # about it — return "usable" UNCACHED and let the worker-side fallback + the
-            # v4.7.23 disclosure handle it (they do; INV22 proves it). Refuse files we KNOW
-            # are bad, never files we merely couldn't read.
+            # "I couldn't READ it just now" is NOT "it isn't a model". `_key` is derived
+            # ENTIRELY from the file (path, size, mtime_ns), so caching an ACCESS failure
+            # pins it for the whole session under a key that can NEVER rotate to clear it —
+            # the file was never the problem, so its size and mtime never move. v4.7.23
+            # filed EACCES as a permanent verdict about the CONTENTS: the label read "Model
+            # error" forever on a byte-perfect model, Convert was refused, and the dialog
+            # told the user to re-download a file that was already fine — with no user
+            # action needed, since the app probes the model itself 600 ms after launch,
+            # exactly when Defender scans on a cold boot.
+            #
+            # v4.7.25 — DON'T PROXY what onnxruntime does to the file. v4.7.24 guessed at
+            # it with `open(path,"rb").read(1)`, which only catches an EXCLUSIVE lock. A
+            # WRITER that still shares read — OneDrive syncing, a backup agent, an indexer,
+            # or ParaKit's OWN Get-Model download finishing — leaves read(1) succeeding
+            # while the session still fails EACCES, so the check never fired and 4.7.23's
+            # bug survived through a narrower door (breaker INV25; matrix: writer+share_all,
+            # writer+share_read, writer_only all read OK / session FAIL). Guessing at
+            # another library's file access is what produced BOTH bugs.
+            #
+            # So stop guessing and ask the only question that matters: ARE THE BYTES A
+            # MODEL? Read them ourselves and load from memory — no second file access to
+            # be blocked, no proxy to be wrong about.
+            #   bytes load  -> the path failure was ACCESS, not contents  -> usable, UNCACHED
+            #   bytes fail  -> the contents really are bad                -> refuse + cache
             try:
                 with open(path, "rb") as _fh:
-                    _fh.read(1)
+                    _blob = _fh.read()
             except OSError:
-                return True, None
+                return True, None          # couldn't read at all: we learned nothing
+            try:
+                _ort.InferenceSession(_blob, providers=["CPUExecutionProvider"])
+                return True, None          # good bytes; uncached — it'll load once free
+            except Exception:
+                pass                       # genuinely not a model -> fall through and cache
             _res = (False, str(_e).strip().splitlines()[0] if str(_e).strip()
                     else type(_e).__name__)
         _cache[_key] = _res

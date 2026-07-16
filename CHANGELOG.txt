@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.24  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.25  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,30 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.25   --   2026-07-15
+------------------------------------------------------------------------------
+  Audio -> MIDI -- ML / Hybrid detection:
+  - FIXED: another program merely HAVING the model file open could still get it
+    marked bad for the rest of the session. v4.7.24 fixed the case where a file
+    was locked so tightly that ParaKit could not read it at all -- but that is
+    only half of it. A program that has the file open for WRITING while still
+    letting others read it (a sync client, a backup tool, a file indexer, or
+    ParaKit's own model download as it finishes) leaves the file perfectly
+    readable, while the part of ParaKit that loads the model still fails. So
+    the check ParaKit used to tell "bad file" from "busy file" quietly missed
+    it, and a perfectly good model got flagged as broken.
+    Same symptoms as before: "Model error" on a good file, Convert refused,
+    a suggestion to re-download a file that was already correct, and Hybrid
+    quietly dropping to Spectral on a fresh install.
+    ParaKit no longer guesses at this. If it can read the file at all, it now
+    loads the model straight from the data it just read -- so the answer is
+    about the model itself, never about who else had the file open.
+    Affected v4.7.23 and v4.7.24.
+
+  Notes:
+  - No change to detection results, charting, or any conversion setting.
 
 ------------------------------------------------------------------------------
   v4.7.24   --   2026-07-15
