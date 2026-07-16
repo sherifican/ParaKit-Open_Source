@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.23  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.24  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,37 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.7.24   --   2026-07-15
+------------------------------------------------------------------------------
+  Audio -> MIDI -- detection engine:
+  - NEW: on a FRESH install, ParaKit now defaults to the Hybrid engine when a
+    working drum model is present (it falls back to Spectral if the model is
+    missing or unusable). Hybrid was already the option labelled "recommended
+    for best accuracy", and the recent detection tuning only applies to it: the
+    Tom Sensitivity presets and the v4.5.1-1 hi-hat recovery both work on the
+    ML/Hybrid path only. On Spectral, the Tom Sensitivity dropdown does nothing
+    at all except OFF. Defaulting to Spectral meant new users never got any of
+    that work.
+    If you have ever picked an engine yourself, your choice is kept -- this only
+    affects installs with no saved setting.
+  - FIXED (a v4.7.23 regression): a model file that was briefly unreadable could
+    be marked bad permanently. v4.7.23 added a real check that the model loads,
+    but if something else was holding the file open at that moment -- antivirus
+    scanning it, OneDrive syncing it, a backup running -- the check failed and
+    ParaKit remembered that answer as if the file itself were broken. Because
+    ParaKit checks the model shortly after startup, a routine antivirus scan
+    could cause it: the status showed "Model error" on a perfectly good file for
+    the rest of the session, Convert refused to run, and the message suggested
+    re-downloading a file that was already fine. ParaKit now tells the difference
+    between "this isn't a model" and "I couldn't read it just now", and only
+    refuses the first.
+    Affected v4.7.23 only.
+
+  Notes:
+  - No change to detection results for an existing conversion: same engine, same
+    settings, same chart.
 
 ------------------------------------------------------------------------------
   v4.7.23   --   2026-07-15

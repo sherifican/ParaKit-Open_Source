@@ -5742,7 +5742,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.23"
+    VERSION = "4.7.24"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -15140,7 +15140,13 @@ demucs.separate.main()
 
         # ── Restore all a2m settings from config on startup ───────────────────
         _a2m_cfg = load_config()
-        _saved_engine = _a2m_cfg.get("a2m_engine", "spectral")
+        # v4.7.24 — FIRST RUN ONLY: no saved engine => pick the default (Hybrid when the
+        # model actually loads, else Spectral). `.get("a2m_engine")` with no fallback is
+        # deliberate: a saved value must always win, so nobody's choice is overridden and
+        # an existing user never pays the model check. See _a2m_pick_default_engine.
+        _saved_engine = _a2m_cfg.get("a2m_engine")
+        if _saved_engine is None:
+            _saved_engine = self._a2m_pick_default_engine()
         if _saved_engine in ("spectral", "ml", "hybrid"):
             self.a2m_engine_var.set(_saved_engine)
         _saved_thresh = _a2m_cfg.get("a2m_ml_threshold", 0.50)
@@ -15647,12 +15653,22 @@ demucs.separate.main()
             # Engine changed but dedup mode stayed same — refresh label to show match status
             self._a2m_switch_dedup_mode(new_mode=target_dedup, auto=True)
 
-    def _a2m_auto_detect_onnx(self):
-        """Check for parakit_drum_model.onnx in all plausible locations."""
+    def _a2m_find_model_path(self):
+        """v4.7.24 — WHERE is the drum model? Pure lookup: returns a path, or "".
+
+        Extracted from _a2m_auto_detect_onnx (which was search + UI + config-write in one)
+        so the startup engine default and the UI status ask the SAME question, from ONE
+        search. Deliberately NOT copy-pasted: the worst bug of the 4.7.17-23 chain was a
+        temp-name fix applied to a copy while the original it had been copied FROM kept
+        both bugs for three versions, silently, because nobody went back. One search, two
+        callers.
+
+        No side effects — no Tk, no config write — so it is safe to call during __init__
+        before the status label exists.
+        """
         current = self.a2m_onnx_path_var.get().strip()
         if current and os.path.exists(current):
-            self._a2m_set_onnx_status("ok", current)
-            return
+            return current
 
         # Build list of directories to search, most specific first
         search_dirs = []
@@ -15696,19 +15712,59 @@ demucs.separate.main()
             for fname in ("parakit_drum_model.onnx", "parakit_drum_model_v1.onnx"):
                 candidate = os.path.join(base, fname)
                 if os.path.exists(candidate):
-                    self.a2m_onnx_path_var.set(candidate)
-                    save_config({"onnx_model_path": candidate})
-                    self._a2m_set_onnx_status("ok", candidate)
-                    return
+                    return candidate
 
         # Check saved config path
         cfg_path = load_config().get("onnx_model_path", "")
         if cfg_path and os.path.exists(cfg_path):
-            self.a2m_onnx_path_var.set(cfg_path)
-            self._a2m_set_onnx_status("ok", cfg_path)
-            return
+            return cfg_path
 
-        self._a2m_set_onnx_status("missing", "")
+        return ""
+
+    def _a2m_auto_detect_onnx(self):
+        """Check for parakit_drum_model.onnx in all plausible locations, and reflect the
+        result in the UI. The SEARCH lives in _a2m_find_model_path; this is the UI half."""
+        found = self._a2m_find_model_path()
+        if not found:
+            self._a2m_set_onnx_status("missing", "")
+            return
+        if found != self.a2m_onnx_path_var.get().strip():
+            self.a2m_onnx_path_var.set(found)
+            save_config({"onnx_model_path": found})
+        self._a2m_set_onnx_status("ok", found)
+
+    def _a2m_pick_default_engine(self):
+        """v4.7.24 — the FIRST-RUN detection engine. Hybrid when the model really works.
+
+        Only consulted when the config has NO saved `a2m_engine`, so it costs an existing
+        user nothing and can never override a choice someone made.
+
+        WHY Hybrid: the app's own radio button already calls it "recommended for best
+        accuracy", and it is not just a label — the tuning is Hybrid-only. The tom
+        sensitivity presets (4.5.2-1) write into A2M_HYBRID_ML_ONLY_MIN_CONF /
+        A2M_HYBRID_ML_ONLY_THRESH_BOOST / A2M_ML_CLASS_CONF_BOOST, which are read solely by
+        _a2m_filter_hybrid_ml_candidates, which is called solely from the
+        `elif detection_engine == "hybrid"` branch (~:17206). The 4.5.1-1 hi-hat recovery
+        retuned the same class of ML-only gate constants. So a spectral-default user got
+        NONE of the detection work of 4.5.1-1 or 4.5.2-1, and their Tom sensitivity dropdown
+        did nothing at all (bar OFF, which is a post-pass). Default and tuning had drifted
+        apart; this closes that.
+
+        WHY conditional: v4.7.23 made an unloadable model a hard STOP at Convert, by design.
+        Defaulting to Hybrid makes the model load-bearing for someone who never asked for
+        ML, so if the model is missing or corrupt we must land on spectral — otherwise this
+        "improvement" blocks a first conversion that used to just work. Ask whether it
+        LOADS, not whether the file exists: existence is exactly the check 4.7.23 replaced.
+        Fails safe to spectral on any surprise.
+        """
+        try:
+            _p = self._a2m_find_model_path()
+            if not _p:
+                return "spectral"
+            _ok, _why = self._a2m_model_is_loadable(_p)
+            return "hybrid" if _ok else "spectral"
+        except Exception:
+            return "spectral"
 
     def _a2m_model_is_loadable(self, path):
         """v4.7.23 — does this file actually LOAD as a detector model? Returns (ok, why).
@@ -15738,16 +15794,42 @@ demucs.separate.main()
             return _cache[_key]
         try:
             import onnxruntime as _ort
+        except Exception:
+            # We CANNOT tell whether the model is good. "Couldn't check" is NOT "invalid" —
+            # the lesson v4.7.22 learned when an unreadable chart scored the same as an
+            # unchanged one. Without the runtime the ML path can't run at all and that
+            # surfaces on its own; don't slander a good model over a broken import.
+            # v4.7.24 — was `except ImportError`, which is NOT the only shape this takes:
+            # onnxruntime re-raises the ORIGINAL exception type from its capi import, so an
+            # OSError (missing VC++ DLL) / RuntimeError (numpy ABI) escapes and the user is
+            # told THEIR MODEL FILE is broken. Returned UNCACHED, deliberately.
+            return True, None
+        try:
             _ort.InferenceSession(path, providers=["CPUExecutionProvider"])
             _res = (True, None)
-        except ImportError:
-            # onnxruntime absent => we CANNOT tell whether the model is good. "Couldn't
-            # check" is NOT "invalid" — the same lesson v4.7.22 learned the hard way when
-            # an unreadable chart scored identically to an unchanged one. Without the
-            # runtime the ML path can't run at all and that surfaces on its own; don't
-            # slander a perfectly good model here on the strength of a missing import.
-            _res = (True, None)
         except Exception as _e:
+            # v4.7.24 — "I couldn't READ it just now" is NOT "it isn't a model", and this
+            # is the whole bug v4.7.23 shipped. `_key` is derived ENTIRELY from the file
+            # (path, size, mtime_ns), so caching an ACCESS failure pins it for the entire
+            # session under a key that can never rotate to clear it — the file was never
+            # the problem, so its size and mtime never move. An AV scan / OneDrive / a
+            # backup agent holding a no-share handle makes InferenceSession fail on a
+            # byte-perfect model with "system error number 13" — EACCES. v4.7.23 filed that
+            # as a permanent verdict about the CONTENTS: the label read "Model error"
+            # forever, Convert was refused, and the dialog told the user to re-download a
+            # file that was already perfect. It needed no user action — the app probes the
+            # model itself 600 ms after launch, which on a cold boot is exactly when
+            # Defender is scanning. And it was a REGRESSION: the same scenario produced a
+            # working chart in 4.7.22 via the worker-side spectral fallback (breaker INV23).
+            # So: ask whether the file is READABLE. If it isn't, we didn't learn anything
+            # about it — return "usable" UNCACHED and let the worker-side fallback + the
+            # v4.7.23 disclosure handle it (they do; INV22 proves it). Refuse files we KNOW
+            # are bad, never files we merely couldn't read.
+            try:
+                with open(path, "rb") as _fh:
+                    _fh.read(1)
+            except OSError:
+                return True, None
             _res = (False, str(_e).strip().splitlines()[0] if str(_e).strip()
                     else type(_e).__name__)
         _cache[_key] = _res
