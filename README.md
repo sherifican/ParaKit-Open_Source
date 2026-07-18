@@ -77,7 +77,12 @@ pile up or there are significant fixes. I will also compile the v5 rebiuld when 
 ---
 
 >**Putting this up at the top so its found easier.**
+
+>**FOR THOSE WHO ARE HAVING ISSUES WITH CONNECTING SOME E-KITS TO THEIR COMPUTER**
 >
+>On some E-Kits like Alesis Kits for example, on the module in the Utilities menu there's a setting called "LOC" and it's ON by default, you want to turn LOC OFF for the MIDI signal to be sent to your computer. I know this fix works with Windows 11, I can't say for certain about iOS or Linux, or if those OS' even have that same issue. Once you do that any issues with pairing/connected but no inputs getting through should be resolved.
+
+---
 >**KNOWN QUIRK WITH THE AUDIO TO MIDI CHART GENERATION:**
 >
 >**As of v4.4.66-1, ParaKit de-duplicates kicks at 55 ms by default**, so kicks that used to group
