@@ -66,7 +66,7 @@ That's it. To **update** to the latest version later, just run `git pull` inside
 
 >Note: the compiled .exe version is a little bit behind the .py version at the moment (4.4.52), I've seen a LOT more engagement
 with the .py version so that's what I'm more actively supporting, I will periodically update the .exe version when enough changes
-pile up or there are significant fixes. I will also compile the v5 rebiuld when it's finished for those who want it.
+pile up or there are significant fixes. I will also compile the v5 rebuild when it's finished for those who want it.
 
 > The old LimeWire links will *EXPIRE* if they are not downloaded at *least* once per 7 days so I made a website to host the .exe versions, but it's having some issues server side. So I'll try to have a fix and the site up before the LW expires.
 
