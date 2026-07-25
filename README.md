@@ -371,23 +371,35 @@ with hands-on testing on real songs, **with sources listed**, and the experiment
 ### 6 · MIDI Editor
 <img src="screenshots/app-06-midi-editor.png?v=20260620" width="900" alt="MIDI Editor">
 
-### 7 · Sheet Music → MIDI
+### 7 · Spectral Comparison
+Did the detector chart it right? The chart is overlaid on the audio's energy and the disagreements are
+flagged — a green `+` where the audio has a hit but nothing is charted (MISS), an orange `x` where a note
+is charted over silence (PHANTOM). Wrong notes can be fixed in place, then the corrected MIDI overwritten
+or exported. Detection itself is untouched — the tab only reads audio and chart files.
+
+*Per-Lane view — an energy ribbon plus the chart's notes for each drum:*
+<img src="screenshots/app-06b-spectral-comparison.png?v=20260725" width="900" alt="Spectral Comparison, Per-Lane view">
+
+*Spectrogram view — full heatmap with note rows:*
+<img src="screenshots/app-06c-spectral-spectrogram.png?v=20260725" width="900" alt="Spectral Comparison, Spectrogram view">
+
+### 8 · Sheet Music → MIDI
 <img src="screenshots/app-07-sheet-music-to-midi.png" width="900" alt="Sheet Music to MIDI">
 
-### 8 · YouTube → FLAC
+### 9 · YouTube → FLAC
 <img src="screenshots/app-08-youtube-to-flac.png?v=20260616c" width="900" alt="YouTube to FLAC">
 
-### 9 · Asset Manager
+### 10 · Asset Manager
 <img src="screenshots/app-09-asset-manager.png?v=20260616" width="900" alt="Asset Manager">
 
-### 10 · Song Tester
+### 11 · Song Tester
 <img src="screenshots/app-10-song-tester.png" width="900" alt="Song Tester">
 
-### 11 · Preview / Practice Track
-<img src="screenshots/app-11a-preview.png" width="900" alt="Preview subtab"><br><br>
-<img src="screenshots/app-11b-practice.png" width="900" alt="Practice subtab">
+### 12 · Preview / Practice Track
+<img src="screenshots/app-11a-preview.png?v=20260725" width="900" alt="Preview subtab"><br><br>
+<img src="screenshots/app-11b-practice.png?v=20260725" width="900" alt="Practice subtab">
 
-### 12 · Quick Start & FAQ
+### 13 · Quick Start & FAQ
 <img src="screenshots/app-12-quick-start-faq.png" width="900" alt="Quick Start & FAQ">
 
 </details>
