@@ -219,26 +219,56 @@ so anyone can run it from source, learn from it, fix it, or build their own vers
 
 ## What's in this repository
 
+### The app
 | Folder / file | What it is |
-|---------------|-----------|
-| **`ParaKit v4.0.py`** | The full ParaKit v4.x app (single file) |
+|---|---|
+| **`ParaKit v4.0.py`** | The ParaKit v4.x app — the main program |
+| **`parakit_spectral_tab.py`** · **`parakit_spectral_engine.py`** | The **Spectral Comparison** tab and its analysis engine |
+| **`parakit_preview_tab.py`** · **`parakit_preview_engine.py`** · **`parakit_preview_sprites.py`** | The **Preview** tab — falling-chart rendering |
+| **`parakit_practice_tab.py`** · **`parakit_practice_engine.py`** · **`parakit_practice_home.py`** · **`parakit_practice_widgets.py`** · **`parakit_practice_sprites.py`** | The **Practice** tab — play-along mode, home screen and UI |
+| **`parakit_synth_voices.py`** | The built-in **drum synth** — makes a chart audible with no linked audio |
 | **`Run ParaKit v4.0.bat`** | Windows double-click launcher |
-| **`requirements.txt`** | Python dependencies for the main app |
-| **`parakit_drum_model.onnx`** | Neural drum-detection model loaded by the ML / Hybrid Audio → MIDI engines |
-| **`parakit_separators/`** | Neural drum-stem **separator plug-ins** (Jarredou MDX23C) for the Audio → MIDI detection pipeline |
-| **`rlrr_parse.py`** | The `.rlrr` parsing core, shared by the app's MIDI Extractor and `extractor/` |
-| **`extractor/`** | **RLRR Extractor** — converts `.rlrr` charts back into `.mid` MIDI ([readme](extractor/README.md)) |
-| **`Practice Window v3 - Web Edition/`** | **Practice Mode v3 — Web Edition** — combined rebuild: v2's falling-note play + a built-in **Kit Studio** + song-library loading; the in-progress successor, offered **alongside v2** (see the section below) |
-| **`Practice Window v2 - Web Edition/`** | **Practice Mode v2 — Web Edition** — self-contained browser rebuild of the falling-note practice game; offered **alongside v3** so you can compare (see the section below) |
-| **`Preview Track v2 - Web Edition/`** | **Preview Track v2 — Web Edition** — falling-note review + live Edit Mode for catching & fixing chart issues (see the section below) |
-| **`Detection Research Notes - Web Edition/`** | **Detection Research Notes — Web Edition** — offline research hub (one HTML): how detection works + the published literature and hands-on testing behind it (see the section below) |
-| **`practice_v2/`** | **Practice Window v2 (Python)** — standalone falling-note practice mini-game (**alpha**, [readme](practice_v2/README.md)) |
-| **`docs/`** | Building from source, troubleshooting, roadmap |
-| **`LICENSE`** | GNU GPL v3 |
+| **`requirements.txt`** | Python dependencies |
 
-> **Practice v1 vs v2:** the **stable** Practice mode is **v1**, built into the main app.
-> `practice_v2/` is an **in-development alpha** — included so you can build on it. See its
-> [readme](practice_v2/README.md).
+> The `parakit_*.py` files above are **required** — the app imports them at startup. Keep them
+> beside `ParaKit v4.0.py`.
+
+### Detection
+| Folder / file | What it is |
+|---|---|
+| **`parakit_drum_model.onnx`** | Neural drum-detection model used by the ML / Hybrid Audio → MIDI engines |
+| **`parakit_cleanup/`** | Post-detection **cleanup pass** — cymbal re-classifier and phantom-kick removers |
+| **`parakit_separators/`** | Neural drum-stem **separator plug-ins** (Jarredou MDX23C) |
+| **`Detection Research Notes - Web Edition/`** | Offline **research notes** (one HTML file): how detection works, the literature behind it, and the experiments — including the ones that failed |
+
+### Charts & conversion
+| Folder / file | What it is |
+|---|---|
+| **`rlrr_parse.py`** | The `.rlrr` parsing core, shared by the app's MIDI Extractor and `extractor/` |
+| **`extractor/`** | **RLRR Extractor** — converts `.rlrr` charts back into `.mid` ([readme](extractor/README.md)) |
+
+### Optional standalone web tools
+| Folder / file | What it is |
+|---|---|
+| **`Preview Track v2 - Web Edition/`** | Browser version of falling-chart review + Edit Mode |
+| **`Practice Window v3 - Web Edition/`** | Browser practice with **Kit Studio** (the newer rebuild) |
+| **`Practice Window v2 - Web Edition/`** | The earlier browser practice edition |
+| **`practice_v2/`** · **`practice_minigame/`** | Python practice prototypes that preceded the in-app tab |
+
+> **These are prototypes, not the main way to use ParaKit.** Preview and Practice are now **built into
+> the app** as their own tabs. The standalone versions are kept for anyone who wants a no-install
+> browser copy — see [Optional: standalone web tools](#-optional-standalone-web-tools).
+
+### Docs & housekeeping
+| Folder / file | What it is |
+|---|---|
+| **`CHANGELOG.txt`** | Full version history — also the source of the app's in-app **What's New** |
+| **`README.txt`** | Plain-text companion to this file |
+| **`docs/`** | Building from source, troubleshooting, roadmap |
+| **`screenshots/`** | Images used by this README |
+| **`parakit.ico`** · **`parakit_header_logo.png`** · **`parakit_logo_FINAL.png`** · **`dot_*.png`** | App icon and interface images |
+| **`update_manifest.json`** · **`tools/`** | Used by the app's built-in updater to sync files; not needed to run ParaKit |
+| **`LICENSE`** | GNU GPL v3 |
 
 ---
 
