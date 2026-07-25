@@ -260,78 +260,20 @@ so anyone can run it from source, learn from it, fix it, or build their own vers
 
 ---
 
-## 🥁 Auto Difficulty Adjuster Update — Better Easy / Medium / Hard charts *(v4.5.3-1)*
+## 🥁 Detection & charting improvements
 
-The automatic **difficulty reduction** — the Easy / Medium / Hard versions ParaKit builds from your full chart —
-was **rebuilt.** The old version dropped the **kick and toms entirely** on Easy and Medium, so those charts were
-missing whole parts of the kit. It now **keeps a thinned-down kick and tom line** the way real charts do, matches
-the note density of human-made difficulties much more closely, and keeps the **strongest beats first** (downbeats
-before off-beats). **Expert charts are unchanged.** Instrument variants (alternate kicks/snares, china/splash
-cymbals) that used to vanish on lower difficulties are kept now too. Validated against the human-made Easy/Medium/Hard
-charts for 100+ Paradiddle songs.
+Two changes worth calling out for anyone comparing charts across versions. Full detail for these and
+everything since is in the **[Changelog](#changelog)** and `CHANGELOG.txt`.
 
-> **Heads-up / caveats:**
-> - **Hard** comes out closest to human charts, **Medium** is good, and **Easy** is the roughest tier.
-> - On the most heavily-thinned lanes — especially the **Easy kick and toms**, where a human keeps only a handful of
->   notes — the reduction keeps the *right lanes at about the right density*, but **which exact notes it keeps won't
->   always match a human's feel** (there are many equally-valid ways to thin an Easy chart).
-> - Reduced charts run **slightly busier** than a human's (a bit more kept than dropped).
-> - As always, give a reduced chart a quick once-over in the **MIDI Editor** — it's a strong starting point, not a
->   finished hand-made difficulty.
+**Auto Difficulty Adjuster** *(v4.5.3)* — the Easy / Medium / Hard versions ParaKit builds from your
+Expert chart were rebuilt. The old approach dropped the **kick and toms entirely** on Easy and Medium,
+which scored 0.00 against human-made charts for those lanes. It now **thins** each lane instead of
+removing it, with density matched to real human charts at each tier. Expert output is unchanged.
 
----
-
-## 🥁 Detection Update — Hi-Hat Recovery *(v4.5.1-1)*
-
-ParaKit was quietly **dropping hi-hats it had actually detected.** In Hybrid mode a hit is normally
-"confirmed" by the spectral engine — but spectral detects almost no hi-hats, so every hat had to clear a
-stricter confidence bar on its own, and softer / faster hats (intros, fast hat patterns) were being thrown
-out. **v4.5.1-1 retunes that hi-hat confidence gate so the real hits survive — hi-hat only; kick, snare,
-crash, ride and toms are untouched.** It was validated on the **final chart** (after the cleanup pass, the
-way it actually runs) two ways: a 60-song set scored against human charts, and 14 fresh songs across genres
-scored against the audio itself.
-
-<details>
-<summary><b>📊 Click to expand — corpus result (60 songs, final chart vs human charts)</b></summary>
-
-<br>
-
-| hi-hat | precision | recall | F-measure |
-|---|---|---|---|
-| before (v4.5.0-1) | 0.73 | 0.63 | 0.68 |
-| **after (v4.5.1-1)** | 0.63 | **0.81** | **0.71** |
-
-Recall **+0.17**, F **+0.03**. Every other drum lane held effectively unchanged (kick, snare, ride and toms
-identical; crash within 0.005) — the change is isolated to the hi-hat lane. Scored against human charts that
-*under*-chart hi-hats, so the real-world recovery is larger than the F number alone shows.
-
-</details>
-
-<details>
-<summary><b>🎚️ Click to expand — cross-genre check (14 fresh songs, vs the audio)</b></summary>
-
-<br>
-
-| genre | songs | hi-hat F change |
-|---|---|---|
-| pop | 2 | +0.13 |
-| pop-rock | 1 | +0.17 |
-| pop / R&B | 1 | +0.11 |
-| R&B | 1 | +0.10 |
-| rock | 2 | +0.08 |
-| metalcore | 2 | +0.05 |
-| metal | 1 | +0.14 |
-| funk | 1 | +0.10 |
-| electronic | 2 | +0.18 |
-| indie-pop | 1 | +0.08 |
-
-**Every one of the 14 fresh songs improved** — including the cymbal-heavy metalcore tracks, the worst case
-for false hi-hats — with no false-hat blowups on any genre. Scored against an audio-derived hi-hat reference,
-so these are relative/directional, not absolute accuracy.
-
-</details>
-
-> Full methodology and the experiments that *didn't* pan out live in the research hub below.
+**Hi-Hat Recovery** *(v4.5.1)* — hi-hats that the detector genuinely found were being discarded. In
+Hybrid mode a hit is normally confirmed by the spectral engine, but spectral finds almost no hi-hats,
+so every hat faced the strictest gate. The hi-hat confidence thresholds were retuned against a
+60-track corpus; **all other lanes are byte-identical.**
 
 ---
 

@@ -100,6 +100,10 @@
   .foot{font-size:12px;color:var(--muted);margin-top:34px;border-top:1px solid var(--line);padding-top:16px}
   code{font-family:ui-monospace,monospace;font-size:12px;background:var(--codebg);border:1px solid var(--codeline);border-radius:4px;padding:1px 5px}
   a{color:var(--teal)}
+  /* inline research charts — theme via CSS variables only */
+  .chart{margin:14px 0 4px;max-width:560px}
+  .chart svg{width:100%;height:auto;display:block;color:var(--ink);font-family:inherit}
+  .chart-cap{font-size:11.8px;color:var(--muted);margin:6px 0 2px;line-height:1.45;max-width:560px}
 </style>
 </head>
 <body>
@@ -109,7 +113,7 @@
     <h1>How ParaKit's Drum Detection Works — Research Notes</h1>
     <p>Background notes on how ParaKit turns audio into drum charts, and the research behind its detection
     cleanup. Each report pairs published drum-transcription literature with hands-on testing on real songs.
-    Shared for anyone curious how the app works, or wanting to build on it for their own project. Point-in-time, June 2026.</p>
+    Shared for anyone curious how the app works, or wanting to build on it for their own project. Point-in-time through July 2026 (app v4.9.3).</p>
   </div>
 </header>
 
@@ -117,6 +121,7 @@
   <div class="wrap">
     <button data-tab="hub" class="on">Overview</button>
     <button data-tab="overhaul">Detection Cleanup &amp; Results</button>
+    <button data-tab="later">Lane Routing &amp; Later Results</button>
     <button data-tab="mir">What the Field Knows</button>
     <button data-tab="litreview">Literature Review &amp; Findings</button>
     <button id="themeToggle" class="themebtn" type="button">🌙 Dark</button>
@@ -131,8 +136,9 @@
       <p class="lead" style="margin:0">ParaKit converts a song into a playable drum chart. The hardest part isn't
       finding <em>that</em> a drum was hit — it's identifying <em>which</em> drum, especially among the cymbals
       (hi-hat vs. crash vs. ride), which sound very similar. These notes cover what the academic field has
-      published about that problem and what I measured myself while improving ParaKit. I've kept the
-      experiments that <strong>didn't</strong> work in here too — they're part of the honest picture.</p>
+      published about that problem and what testing on real songs measured while improving ParaKit. Experiments that
+      <strong>didn't</strong> work stay in the record — negative and "change nothing" outcomes are the file's purpose,
+      not a side note.</p>
     </div>
 
     <div class="hubcards">
@@ -142,9 +148,20 @@
           <div class="tag">Findings &amp; Results</div>
           <h3>Detection Cleanup &amp; Results</h3>
           <p>How ParaKit cleans up the raw detector's output — a cymbal re-classifier and a false-kick remover —
-          and the measured before/after on a held-out set of songs.</p>
+          and the measured before/after on a held-out set of songs. Live since v4.5.0; still in v4.9.3.</p>
           <div class="stats"><span><b>2</b>cleanup tools</span><span><b>456</b>songs tested</span><span><b>held-out</b>validation</span></div>
           <button class="go" data-goto="overhaul">Read full report →</button>
+        </div>
+      </div>
+      <div class="hc">
+        <div class="band" style="background:var(--amber)"></div>
+        <div class="body">
+          <div class="tag">July 2026 Arc · v4.9.3</div>
+          <h3>Lane Routing &amp; Later Results</h3>
+          <p>Per-lane stem isolation, the kick spacing gate, reference-free scoring, cymbal filters, and measurement
+          hazards — mostly negative or keep-as-is outcomes on a 232-song corpus. What was tried, including what failed.</p>
+          <div class="stats"><span><b>232</b>song corpus</span><span><b>kick GO</b>shipped</span><span><b>negatives</b>kept</span></div>
+          <button class="go" data-goto="later">Read full report →</button>
         </div>
       </div>
       <div class="hc">
@@ -163,8 +180,8 @@
         <div class="body">
           <div class="tag">Deep Dive</div>
           <h3>Literature Review &amp; Findings</h3>
-          <p>A close read of 31 drum-transcription papers cross-checked against my own testing — what the
-          literature confirms, the per-class cymbal numbers, and what I tried that didn't pan out.</p>
+          <p>A close read of 31 drum-transcription papers cross-checked against testing on real songs — what the
+          literature confirms, the per-class cymbal numbers, and what was tried that did not pan out.</p>
           <div class="stats"><span><b>31</b>papers read</span><span><b>cited + tested</b></span><span><b>2026</b>current</span></div>
           <button class="go" data-goto="litreview">Read full report →</button>
         </div>
@@ -173,10 +190,10 @@
 
     <div class="legend" style="margin-top:18px">
       <span><span class="prov m-cite">CITED</span> drawn from published literature (referenced inline + listed per report)</span>
-      <span><span class="prov m-test">TESTED</span> measured in my own experiments on real songs</span>
+      <span><span class="prov m-test">TESTED</span> measured in hands-on experiments on real songs</span>
     </div>
-    <p class="sub" style="margin-top:14px">These notes are a point-in-time snapshot (June 2026) and are not maintained as the app evolves.
-    Numbers reflect my specific test setup and are not universal guarantees. External findings are attributed to their original authors.</p>
+    <p class="sub" style="margin-top:14px">These notes are a point-in-time snapshot (through July 2026; app v4.9.3) and are not maintained as the app evolves.
+    Numbers reflect the specific test setups described and are not universal guarantees. External findings are attributed to their original authors.</p>
   </section>
 
   <!-- ============ DETECTION CLEANUP & RESULTS ============ -->
@@ -192,7 +209,7 @@
       from nothing — with no loss on the instruments that were already accurate.</p>
     </div>
 
-    <div class="callout amber"><div class="t">Status — June 2026</div>The cleanup described here is <b>now live in ParaKit as of v4.5.0-1</b> — it runs automatically on Audio → MIDI conversions (toggleable under Advanced). This report documents the research behind it.</div>
+    <div class="callout amber"><div class="t">Status — July 2026 (app v4.9.3)</div>The cleanup described here shipped in <b>v4.5.0-1</b> and remains live in <b>v4.9.3</b> — it runs automatically on Audio → MIDI conversions (toggleable under Advanced). A later arc (2026-07-20 → 2026-07-25) added <b>kick-lane stem routing</b> and stress-tested several other ideas; those results, including negatives, live in the <b>Lane Routing &amp; Later Results</b> tab. This report documents the original cleanup research.</div>
 
     <div class="legend"><span><span class="prov m-test">TESTED</span> my own measurements</span>
       <span style="color:var(--ink)">All scores are <b>directional</b> — the reference charts are human-quantized (~50&nbsp;ms timing).</span></div>
@@ -205,7 +222,7 @@
         <ul class="tight">
           <li>threshold / gap sweeps for cymbals and toms — no safe gain (model-capacity ceiling)</li>
           <li>a single global sensitivity knob — net-negative</li>
-          <li>per-instrument detection on separated stems — clearly worse</li>
+          <li>blanket per-instrument detection on separated stems — earlier full trials were clearly worse; later <em>per-lane</em> routing is mixed (kick/snare GO, hi-hat NO-GO — see Later Results)</li>
           <li>swapping in an alternate model — input-format mismatch</li>
         </ul>
       </div>
@@ -487,11 +504,481 @@
     </ol>
   </section>
 
+  <!-- ============ LANE ROUTING & LATER RESULTS (July 2026) ============ -->
+  <section id="later" class="pane">
+    <h2><span class="n">D</span>Lane Routing &amp; Later Results</h2>
+    <p class="sub">Detection research arc 2026-07-20 → 2026-07-25, scored against human <code>.rlrr</code> charts on a sync-gated 232-song corpus unless noted. App state at write-up: <b>v4.9.3</b>.</p>
+
+    <div class="card">
+      <p class="lead" style="margin-top:0"><b>In brief.</b> After the cleanup stage shipped, a second research pass tested lane-isolated detection,
+      the kick minimum-gap gate, reference-free phantom scoring, and cymbal stem-energy filters. <b>Most headline
+      outcomes here are negative or "change nothing"</b> — that is the point of this file. Two lanes (kick, snare)
+      gained from isolation; hi-hat collapsed; toms/ride/crash remained unjudgeable at the detector's recall ceiling.
+      The tighter kick spacing gate stays. Cross-stem bleed alone is a review-queue prioritiser, not a phantom filter.
+      Combining weak signals with strong ones diluted results three times.</p>
+    </div>
+
+    <div class="callout red"><div class="t">Purpose of this tab — failures stay in the record</div>
+      Several results below are <b>NO-GO</b>, <b>INCONCLUSIVE</b>, or "keep the status quo." This tab exists to record what was tried
+      and measured — including what did not ship — so the next pass does not re-learn the same dead ends. Positive deltas are
+      called out where they exist; they are not the majority of the material.</div>
+
+    <div class="legend"><span><span class="prov m-test">TESTED</span> measured on real songs / charts</span>
+      <span style="color:var(--ink)">Verdict first, then evidence. Absolute numbers use the harness constants of that run — see §5.</span></div>
+
+    <!-- ===== Cross-cutting pattern (prominently near top) ===== -->
+    <h3>0 · Cross-cutting pattern: fusion diluted the strong signal</h3>
+    <div class="callout amber"><div class="t">Combining a weak signal with a strong one made results worse in three independent experiments <span class="prov m-test">TESTED</span></div>
+      <table>
+        <thead><tr><th>Experiment</th><th class="c">Strong / single baseline</th><th class="c">Fused / combined</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td>Fast-roll discriminators</td><td class="mono">0.813 (shipped model alone)</td><td class="mono neg">0.783 fused</td><td>fusion worse than the single shipped model</td></tr>
+          <tr><td>Reference-free scoring (AND-rule)</td><td class="mono">prec 0.853 · rec 0.346 (bleed alone)</td><td class="mono">prec 0.857 · rec <span class="neg">0.136</span></td><td>same precision, <b>2.5× less recall</b></td></tr>
+          <tr><td>Cymbal phantom filter (crash)</td><td class="mono">0.735 best single feature</td><td class="mono neg">0.725 fused</td><td>fusion ≤ best single; ride same pattern</td></tr>
+        </tbody>
+      </table>
+      <div class="chart" style="margin-top:14px">
+        <svg viewBox="0 0 560 250" width="100%" height="auto" role="img" aria-label="Paired bars: fused score versus best single feature across three experiments. In each pair the fused bar is lower.">
+          <title>Fusion diluted the strong signal — three experiments, fused vs best single</title>
+          <!-- axis -->
+          <line x1="168" y1="28" x2="168" y2="210" stroke="var(--line)" stroke-width="1"/>
+          <line x1="168" y1="210" x2="530" y2="210" stroke="var(--line)" stroke-width="1"/>
+          <!-- light grid at 0.25 / 0.5 / 0.75 / 1.0 -->
+          <g stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7">
+            <line x1="258.5" y1="28" x2="258.5" y2="210"/><!-- 0.25 -->
+            <line x1="349" y1="28" x2="349" y2="210"/><!-- 0.5 -->
+            <line x1="439.5" y1="28" x2="439.5" y2="210"/><!-- 0.75 -->
+            <line x1="530" y1="28" x2="530" y2="210"/><!-- 1.0 -->
+          </g>
+          <g fill="var(--muted)" font-size="10" text-anchor="middle">
+            <text x="168" y="224">0</text>
+            <text x="258.5" y="224">0.25</text>
+            <text x="349" y="224">0.5</text>
+            <text x="439.5" y="224">0.75</text>
+            <text x="530" y="224">1.0</text>
+          </g>
+          <!-- Exp 1: fast-roll AUROC — fused 0.783, best 0.813; bar width = val*362 -->
+          <text x="160" y="52" text-anchor="end" fill="var(--ink)" font-size="11.5" font-weight="600">fast-roll disc.</text>
+          <text x="160" y="66" text-anchor="end" fill="var(--muted)" font-size="10">AUROC</text>
+          <rect x="168" y="38" width="283.4" height="14" fill="var(--red)" opacity="0.85" rx="2"/>
+          <text x="456" y="49" fill="var(--ink)" font-size="11" font-weight="700">0.783 fused</text>
+          <rect x="168" y="56" width="294.3" height="14" fill="var(--green)" opacity="0.9" rx="2"/>
+          <text x="467" y="67" fill="var(--ink)" font-size="11" font-weight="700">0.813 best</text>
+          <!-- Exp 2: cymbal crash AUROC — fused 0.725, best 0.735 -->
+          <text x="160" y="112" text-anchor="end" fill="var(--ink)" font-size="11.5" font-weight="600">cymbal energy</text>
+          <text x="160" y="126" text-anchor="end" fill="var(--muted)" font-size="10">crash AUROC</text>
+          <rect x="168" y="98" width="262.5" height="14" fill="var(--red)" opacity="0.85" rx="2"/>
+          <text x="435" y="109" fill="var(--ink)" font-size="11" font-weight="700">0.725 fused</text>
+          <rect x="168" y="116" width="266.1" height="14" fill="var(--green)" opacity="0.9" rx="2"/>
+          <text x="439" y="127" fill="var(--ink)" font-size="11" font-weight="700">0.735 best</text>
+          <!-- Exp 3: ref-free recall — fused 0.136, best 0.346 -->
+          <text x="160" y="172" text-anchor="end" fill="var(--ink)" font-size="11.5" font-weight="600">ref-free scoring</text>
+          <text x="160" y="186" text-anchor="end" fill="var(--muted)" font-size="10">recall @ ~0.85 prec</text>
+          <rect x="168" y="158" width="49.2" height="14" fill="var(--red)" opacity="0.85" rx="2"/>
+          <text x="222" y="169" fill="var(--ink)" font-size="11" font-weight="700">0.136 fused</text>
+          <rect x="168" y="176" width="125.3" height="14" fill="var(--green)" opacity="0.9" rx="2"/>
+          <text x="298" y="187" fill="var(--ink)" font-size="11" font-weight="700">0.346 best</text>
+          <text x="168" y="242" fill="var(--muted)" font-size="10.5">Shared 0–1 axis · red = fused · green = best single</text>
+        </svg>
+        <p class="chart-cap">Three independent experiments, same result — combining a weak signal with a strong one made it worse. Always report the single-feature baseline beside any fused number.</p>
+      </div>
+      <div style="font-size:12.6px;margin-top:8px"><b>Recommendation:</b> treat "combine these signals" as <b>diluting until proven otherwise</b>. Always report the
+      single-feature baseline beside any fused number — otherwise the dilution is invisible.</div>
+    </div>
+
+    <!-- ===== A. Jarredou lane-routing ===== -->
+    <h3>1 · Jarredou lane-routing — detect a lane on its own isolated stem</h3>
+    <div class="callout green"><div class="t">Verdict — mixed by lane; kick shipped; isolation is not a general principle <span class="prov m-test">TESTED</span></div>
+      Method: separate the drums stem into per-instrument stems (Jarredou MDX23C DrumSep), detect <b>one</b> lane on its
+      isolated stem, take all other lanes from the raw drums stem, merge. Scored against human <code>.rlrr</code> charts on a
+      <b>232-song</b> sync-gated corpus. "Isolate the stem and detect that lane on it" is <b>not</b> a general principle —
+      it wins on kick and snare and fails badly on hi-hat. Each lane had to be tested.</div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Lane</th>
+            <th class="c">Baseline F1 → routed</th>
+            <th class="c">Δ</th>
+            <th class="c">False positives</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="hl"><td><b>kick</b></td><td class="mono">0.847 → 0.868</td><td class="mono pos">+0.020</td><td class="mono pos">−25.9%</td><td><b>GO</b> (shipped)</td></tr>
+          <tr class="hl"><td><b>snare</b></td><td class="mono">0.645 → 0.687</td><td class="mono pos">+0.042</td><td class="mono pos">−69.6%</td><td><b>GO</b></td></tr>
+          <tr><td><b>hi-hat</b></td><td class="mono">0.379 → 0.049</td><td class="mono neg">−0.330</td><td class="mono">−75.7%</td><td><b>NO-GO</b> — recall collapses 0.248 → 0.026; 208/232 songs worse</td></tr>
+          <tr><td>toms</td><td class="mono">0.063 → 0.055</td><td class="mono neg">−0.008</td><td class="mono flat">—</td><td><b>INCONCLUSIVE</b> — detector ceiling (baseline recall 3.9%)</td></tr>
+          <tr><td>ride</td><td class="mono">0.016 → 0.000</td><td class="mono neg">−0.016</td><td class="mono flat">—</td><td><b>INCONCLUSIVE</b> — ceiling (baseline recall 0.8%)</td></tr>
+          <tr><td>crash</td><td class="mono">0.080 → 0.008</td><td class="mono neg">−0.071</td><td class="mono flat">—</td><td><b>INCONCLUSIVE</b> — ceiling (baseline recall 4.3%)</td></tr>
+        </tbody>
+      </table>
+      <div class="chart" style="margin-top:14px">
+        <svg viewBox="0 0 560 248" width="100%" height="auto" role="img" aria-label="Diverging bar chart of F1 change per lane after isolation routing. Snare and kick positive; hi-hat strongly negative; toms, ride, and crash near zero.">
+          <title>Lane routing — ΔF1 per lane (diverging from zero)</title>
+          <!-- zero at x=290; scale 0.35 ΔF1 = 170 px; labels column at x=470+ -->
+          <line x1="290" y1="22" x2="290" y2="208" stroke="var(--muted)" stroke-width="1.5"/>
+          <g stroke="var(--line)" stroke-width="1" opacity="0.8">
+            <line x1="144.3" y1="22" x2="144.3" y2="208"/><!-- −0.30 -->
+            <line x1="217.1" y1="22" x2="217.1" y2="208"/><!-- −0.15 -->
+            <line x1="362.9" y1="22" x2="362.9" y2="208"/><!-- +0.15 -->
+            <line x1="435.7" y1="22" x2="435.7" y2="208"/><!-- +0.30 -->
+          </g>
+          <g fill="var(--muted)" font-size="10" text-anchor="middle">
+            <text x="144.3" y="16">−0.30</text>
+            <text x="217.1" y="16">−0.15</text>
+            <text x="290" y="16">0</text>
+            <text x="362.9" y="16">+0.15</text>
+            <text x="435.7" y="16">+0.30</text>
+          </g>
+          <!-- snare +0.042 → +20.4 px -->
+          <text x="76" y="47" text-anchor="end" fill="var(--ink)" font-size="12" font-weight="600">snare</text>
+          <rect x="290" y="36" width="20.4" height="18" fill="var(--green)" rx="2"/>
+          <text x="470" y="49" fill="var(--green)" font-size="11" font-weight="700">+0.042  GO</text>
+          <!-- kick +0.020 → +9.7 px -->
+          <text x="76" y="77" text-anchor="end" fill="var(--ink)" font-size="12" font-weight="600">kick</text>
+          <rect x="290" y="66" width="9.7" height="18" fill="var(--green)" rx="2"/>
+          <text x="470" y="79" fill="var(--green)" font-size="11" font-weight="700">+0.020  GO</text>
+          <!-- toms −0.008 → −3.9 px -->
+          <text x="76" y="107" text-anchor="end" fill="var(--ink)" font-size="12" font-weight="600">toms</text>
+          <rect x="286.1" y="96" width="3.9" height="18" fill="var(--muted)" opacity="0.55" rx="2"/>
+          <text x="470" y="109" fill="var(--muted)" font-size="11" font-weight="700">−0.008  unjudgeable</text>
+          <!-- ride −0.016 → −7.8 px -->
+          <text x="76" y="137" text-anchor="end" fill="var(--ink)" font-size="12" font-weight="600">ride</text>
+          <rect x="282.2" y="126" width="7.8" height="18" fill="var(--muted)" opacity="0.55" rx="2"/>
+          <text x="470" y="139" fill="var(--muted)" font-size="11" font-weight="700">−0.016  unjudgeable</text>
+          <!-- crash −0.071 → −34.5 px -->
+          <text x="76" y="167" text-anchor="end" fill="var(--ink)" font-size="12" font-weight="600">crash</text>
+          <rect x="255.5" y="156" width="34.5" height="18" fill="var(--muted)" opacity="0.55" rx="2"/>
+          <text x="470" y="169" fill="var(--muted)" font-size="11" font-weight="700">−0.071  unjudgeable</text>
+          <!-- hihat −0.330 → −160.3 px -->
+          <text x="76" y="197" text-anchor="end" fill="var(--ink)" font-size="12" font-weight="600">hihat</text>
+          <rect x="129.7" y="186" width="160.3" height="18" fill="var(--red)" rx="2"/>
+          <text x="470" y="199" fill="var(--red)" font-size="11" font-weight="700">−0.330  NO-GO</text>
+          <text x="290" y="232" text-anchor="middle" fill="var(--muted)" font-size="10.5">ΔF1 (routed − baseline) · green = GO · muted = unjudgeable · red = NO-GO</text>
+        </svg>
+        <p class="chart-cap">Positive ΔF1 for snare and kick (GO). Toms, ride, and crash are muted — inconclusive detector-ceiling cases, not disproven. Hi-hat is a clear NO-GO.</p>
+      </div>
+    </div>
+
+    <div class="kf">
+      <div class="item good"><div class="h">Snare win is precision, not recall</div><div class="d">Recall stayed flat (0.550 → 0.548) while false positives fell ~70%. The F1 gain is almost entirely fewer phantoms, not more real hits recovered.</div></div>
+      <div class="item good"><div class="h">Isolation beat a blended composite</div><div class="d">Twice tested: kick false positives −25.9% isolated vs −12.2% on a blended composite. The blend diluted the isolation effect.</div></div>
+      <div class="item warn"><div class="h">Toms / ride / crash are unjudgeable, not disproven</div><div class="d">A lane the detector barely finds at all cannot be improved by cleaning its stem. That is a different claim from "isolation does not work" — the experiment cannot speak to the method when baseline recall is ~1–4%.</div></div>
+      <div class="item bad"><div class="h">Retracted: ride was not a "phantom killer"</div><div class="d">An early read of ride false positives 705 → 0 was called a phantom killer. It was not. Ride recall went 0.008 → 0.000 — the lane was simply <b>empty</b>. An empty lane trivially has zero false positives. Reading a false-positive number without its recall number is the mistake.</div></div>
+    </div>
+
+    <!-- ===== B. Kick spacing gate ===== -->
+    <h3>2 · The frozen kick spacing gate — does it delete real drum hits?</h3>
+    <div class="callout green"><div class="t">Verdict — keep the tighter gate; gate loss is a minor channel next to detector miss <span class="prov m-test">TESTED</span></div>
+      The detector rejects a kick that falls too close after the previous one (a minimum-gap gate). Two questions drove the work:
+      does the gate delete real charted kicks, and should the gap be loosened? Answer: it deletes some real hits, but detector
+      non-proposal costs ~50× more; loosening recovers almost nothing at corpus scale and re-opens the duplicate-trigger failure
+      the tight gate was introduced to fix.</div>
+
+    <h3 style="font-size:14px;margin-top:14px">2a · First result — a false exoneration</h3>
+    <div class="callout red"><div class="t">When a probe returns a clean zero, check whether the selection mechanism removed the population being looked for</div>
+      An early probe concluded "no human kicks exist below the gate, so nothing is lost." That probe only measured songs that had
+      passed an <b>audio-sync filter</b>, and the extreme double-bass songs that could test the gate had been filtered <b>out</b>.
+      A chart-only census (no audio needed, so no filter) over <b>1,261 charts / 467,845 human kicks</b> found <b>3,181 kick pairs
+      below the gate</b>, 2,558 of them on 67 charts at physically plausible spacing. The clean zero was a selection artifact.</div>
+
+    <h3 style="font-size:14px;margin-top:14px">2b · Second result — the gate does delete real hits (minor channel)</h3>
+    <p class="sub">On 51 verified songs (45,834 paired human kicks):</p>
+    <div class="card">
+      <table>
+        <thead><tr><th>Loss type</th><th class="c">Count</th><th class="c">Share of human kicks</th></tr></thead>
+        <tbody>
+          <tr><td>Deleted by the spacing gate</td><td class="mono">212</td><td class="mono"><b>0.46%</b></td></tr>
+          <tr><td>Never proposed by the detector at all</td><td class="mono">10,459</td><td class="mono"><b>22.8%</b></td></tr>
+        </tbody>
+      </table>
+      <div class="chart" style="margin-top:14px">
+        <svg viewBox="0 0 560 168" width="100%" height="auto" role="img" aria-label="Two horizontal bars on the same axis: spacing gate deletes 0.46 percent of kicks; detector never proposes 22.8 percent — about fifty times more.">
+          <title>Gate loss vs detector loss — share of human kicks</title>
+          <!-- axis 0–25%; plot x=180..520 → 340 px for 25% → 13.6 px per % -->
+          <line x1="180" y1="28" x2="180" y2="130" stroke="var(--line)" stroke-width="1"/>
+          <line x1="180" y1="130" x2="520" y2="130" stroke="var(--line)" stroke-width="1"/>
+          <g stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7">
+            <line x1="248" y1="28" x2="248" y2="130"/><!-- 5% -->
+            <line x1="316" y1="28" x2="316" y2="130"/><!-- 10% -->
+            <line x1="384" y1="28" x2="384" y2="130"/><!-- 15% -->
+            <line x1="452" y1="28" x2="452" y2="130"/><!-- 20% -->
+            <line x1="520" y1="28" x2="520" y2="130"/><!-- 25% -->
+          </g>
+          <g fill="var(--muted)" font-size="10" text-anchor="middle">
+            <text x="180" y="146">0%</text>
+            <text x="248" y="146">5%</text>
+            <text x="316" y="146">10%</text>
+            <text x="384" y="146">15%</text>
+            <text x="452" y="146">20%</text>
+            <text x="520" y="146">25%</text>
+          </g>
+          <!-- gate: 0.46% → 6.3 px (min visual width bumped slightly? No - show true scale; label after) -->
+          <text x="172" y="58" text-anchor="end" fill="var(--ink)" font-size="12" font-weight="600">deleted by</text>
+          <text x="172" y="72" text-anchor="end" fill="var(--ink)" font-size="12" font-weight="600">spacing gate</text>
+          <rect x="180" y="48" width="6.3" height="28" fill="var(--amber)" rx="2"/>
+          <text x="192" y="67" fill="var(--ink)" font-size="12" font-weight="700">0.46%  ·  212 kicks</text>
+          <!-- detector: 22.8% → 310.1 px -->
+          <text x="172" y="108" text-anchor="end" fill="var(--ink)" font-size="12" font-weight="600">never proposed</text>
+          <text x="172" y="122" text-anchor="end" fill="var(--ink)" font-size="12" font-weight="600">by detector</text>
+          <rect x="180" y="98" width="310.1" height="28" fill="var(--red)" rx="2"/>
+          <text x="495" y="90" text-anchor="end" fill="var(--ink)" font-size="12" font-weight="700">22.8%  ·  10,459 kicks</text>
+        </svg>
+        <p class="chart-cap">The gate is a minor loss channel; the detector failing to propose a hit costs ~50× more.</p>
+      </div>
+      <div style="font-size:11.8px;color:var(--muted);margin-top:6px">The detector failing to propose a hit costs <b>~50× more</b> than the gate rejecting one.</div>
+    </div>
+
+    <h3 style="font-size:14px;margin-top:14px">2c · Third result — loosening the gate does not generalize</h3>
+    <ul class="tight">
+      <li><b>Double-bass subset:</b> loosening recovered +194 real kicks for +27 false ones (≈7:1) — a local win.</li>
+      <li><b>Full 232-song corpus:</b> +38 real / +16 false, net F1 <b>+0.0002 — noise</b>.</li>
+      <li><b>Worst single song:</b> +1 real / +10 false — exactly the duplicate-trigger failure the tighter gate was introduced to fix.</li>
+    </ul>
+    <div class="callout"><div class="t">Conclusion</div><b>Keep the tighter gate.</b> A local win that vanishes at corpus scale is the thing to watch for —
+      and the worst-song failure mode was already known.</div>
+
+    <h3 style="font-size:14px;margin-top:14px">2d · Fourth result — the 22.8% is not a "close-hit resolution" problem</h3>
+    <p class="sub">The 22.8% never-proposed rate was initially framed as a close-hit resolution problem. Band breakdown does not support that:</p>
+    <div class="card">
+      <table>
+        <thead><tr><th>Spacing between paired human kicks</th><th class="c">Miss rate</th><th class="c">Share of <em>all</em> misses</th></tr></thead>
+        <tbody>
+          <tr><td>50–60 ms</td><td class="mono">15.6%</td><td class="mono">3.7%</td></tr>
+          <tr><td>60–70 ms</td><td class="mono">27.9%</td><td class="mono">1.7%</td></tr>
+          <tr><td>70–80 ms</td><td class="mono">11.8%</td><td class="mono">3.8%</td></tr>
+          <tr class="hl"><td>&gt;80 ms</td><td class="mono">24.1%</td><td class="mono"><b>90.8%</b></td></tr>
+        </tbody>
+      </table>
+      <div class="chart" style="margin-top:14px">
+        <svg viewBox="0 0 560 220" width="100%" height="auto" role="img" aria-label="Bar chart of share of all kick misses by inter-onset interval band. Over 80 milliseconds accounts for 90.8 percent of misses. Each bar annotated with its band miss rate.">
+          <title>Where the misses actually are — share of all misses by IOI band</title>
+          <!-- vertical bars; baseline y=170; max height 130 for 100% share; plot x bands -->
+          <line x1="70" y1="40" x2="70" y2="170" stroke="var(--line)" stroke-width="1"/>
+          <line x1="70" y1="170" x2="520" y2="170" stroke="var(--line)" stroke-width="1"/>
+          <g stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7">
+            <line x1="70" y1="137.5" x2="520" y2="137.5"/><!-- 25% -->
+            <line x1="70" y1="105" x2="520" y2="105"/><!-- 50% -->
+            <line x1="70" y1="72.5" x2="520" y2="72.5"/><!-- 75% -->
+            <line x1="70" y1="40" x2="520" y2="40"/><!-- 100% -->
+          </g>
+          <g fill="var(--muted)" font-size="10" text-anchor="end">
+            <text x="64" y="174">0%</text>
+            <text x="64" y="141">25%</text>
+            <text x="64" y="108">50%</text>
+            <text x="64" y="76">75%</text>
+            <text x="64" y="43">100%</text>
+          </g>
+          <!-- 50–60: 3.7% share → h=4.8; miss rate 15.6% -->
+          <rect x="95" y="165.2" width="70" height="4.8" fill="var(--teal)" opacity="0.85" rx="2"/>
+          <text x="130" y="160" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="700">3.7%</text>
+          <text x="130" y="186" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">50–60 ms</text>
+          <text x="130" y="200" text-anchor="middle" fill="var(--muted)" font-size="10">miss rate 15.6%</text>
+          <!-- 60–70: 1.7% → h=2.2; 27.9% -->
+          <rect x="195" y="167.8" width="70" height="2.2" fill="var(--teal)" opacity="0.85" rx="2"/>
+          <text x="230" y="160" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="700">1.7%</text>
+          <text x="230" y="186" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">60–70 ms</text>
+          <text x="230" y="200" text-anchor="middle" fill="var(--muted)" font-size="10">miss rate 27.9%</text>
+          <!-- 70–80: 3.8% → h=4.9; 11.8% -->
+          <rect x="295" y="165.1" width="70" height="4.9" fill="var(--teal)" opacity="0.85" rx="2"/>
+          <text x="330" y="160" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="700">3.8%</text>
+          <text x="330" y="186" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">70–80 ms</text>
+          <text x="330" y="200" text-anchor="middle" fill="var(--muted)" font-size="10">miss rate 11.8%</text>
+          <!-- >80: 90.8% → h=118.0; 24.1% -->
+          <rect x="395" y="52" width="70" height="118" fill="var(--red)" rx="2"/>
+          <text x="430" y="46" text-anchor="middle" fill="var(--ink)" font-size="12" font-weight="700">90.8%</text>
+          <text x="430" y="186" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="600">&gt;80 ms</text>
+          <text x="430" y="200" text-anchor="middle" fill="var(--muted)" font-size="10">miss rate 24.1%</text>
+          <text x="70" y="28" fill="var(--muted)" font-size="10.5">share of all misses</text>
+        </svg>
+        <p class="chart-cap">Miss rate is non-monotonic, and 91% of misses are at normal spacing (&gt;80 ms) — so this is NOT a close-spacing problem.</p>
+      </div>
+      <div style="font-size:11.8px;color:var(--muted);margin-top:6px">Miss rate is <b>non-monotonic</b> and <b>~91% of misses are at normal spacing</b>. There is no close-spacing gradient.
+      It is a general recall shortfall, not a close-hit problem — a worked example of a plausible framing the data did not support.</div>
+    </div>
+
+    <!-- ===== C. Reference-free scoring ===== -->
+    <h3>3 · Reference-free chart scoring (no ground truth required)</h3>
+    <div class="callout amber"><div class="t">Verdict — bleed alone is the better tool; still only a prioritiser, not a filter <span class="prov m-test">TESTED</span></div>
+      Two signals: <b>cross-stem bleed</b> (does a charted kick carry energy from non-drum stems — i.e. is it really bass bleed?)
+      and <b>repetition-consensus</b>. Earlier work reported the AND-combination at <b>0.87 precision</b>, measured on 13 songs on the
+      precision axis only. Re-measured across <b>232 songs (150,202 kicks)</b> with the recall axis included:</div>
+
+    <div class="card">
+      <table>
+        <thead><tr><th>Rule</th><th class="c">Precision</th><th class="c">Recall</th></tr></thead>
+        <tbody>
+          <tr class="hl"><td><b>Bleed alone</b></td><td class="mono">0.853</td><td class="mono"><b>0.346</b></td></tr>
+          <tr><td>Bleed AND repetition</td><td class="mono">0.857</td><td class="mono neg"><b>0.136</b></td></tr>
+        </tbody>
+      </table>
+      <div class="chart" style="margin-top:14px">
+        <svg viewBox="0 0 560 210" width="100%" height="auto" role="img" aria-label="Grouped bars of precision and recall for bleed alone versus bleed AND repetition. Precision nearly identical; recall drops from 0.346 to 0.136.">
+          <title>Precision vs recall — reference-free scoring rules</title>
+          <line x1="60" y1="30" x2="60" y2="150" stroke="var(--line)" stroke-width="1"/>
+          <line x1="60" y1="150" x2="520" y2="150" stroke="var(--line)" stroke-width="1"/>
+          <g stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7">
+            <line x1="60" y1="120" x2="520" y2="120"/><!-- 0.25 -->
+            <line x1="60" y1="90" x2="520" y2="90"/><!-- 0.5 -->
+            <line x1="60" y1="60" x2="520" y2="60"/><!-- 0.75 -->
+            <line x1="60" y1="30" x2="520" y2="30"/><!-- 1.0 -->
+          </g>
+          <g fill="var(--muted)" font-size="10" text-anchor="end">
+            <text x="54" y="153">0</text>
+            <text x="54" y="123">0.25</text>
+            <text x="54" y="93">0.5</text>
+            <text x="54" y="63">0.75</text>
+            <text x="54" y="33">1.0</text>
+          </g>
+          <!-- scale: 120 px = 1.0; groups centered ~180 and 380 -->
+          <!-- bleed alone: prec 0.853 → h=102.4; rec 0.346 → h=41.5 -->
+          <rect x="120" y="47.6" width="48" height="102.4" fill="var(--blue)" rx="2"/>
+          <text x="144" y="42" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="700">0.853</text>
+          <rect x="178" y="108.5" width="48" height="41.5" fill="var(--teal)" rx="2"/>
+          <text x="202" y="103" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="700">0.346</text>
+          <text x="173" y="168" text-anchor="middle" fill="var(--ink)" font-size="12" font-weight="600">bleed alone</text>
+          <!-- AND: prec 0.857 → h=102.8; rec 0.136 → h=16.3 -->
+          <rect x="320" y="47.2" width="48" height="102.8" fill="var(--blue)" rx="2"/>
+          <text x="344" y="42" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="700">0.857</text>
+          <rect x="378" y="133.7" width="48" height="16.3" fill="var(--teal)" rx="2"/>
+          <text x="402" y="128" text-anchor="middle" fill="var(--ink)" font-size="11" font-weight="700">0.136</text>
+          <text x="373" y="168" text-anchor="middle" fill="var(--ink)" font-size="12" font-weight="600">bleed AND repetition</text>
+          <!-- legend -->
+          <rect x="60" y="186" width="12" height="12" fill="var(--blue)" rx="2"/>
+          <text x="78" y="196" fill="var(--ink)" font-size="11">precision</text>
+          <rect x="160" y="186" width="12" height="12" fill="var(--teal)" rx="2"/>
+          <text x="178" y="196" fill="var(--ink)" font-size="11">recall</text>
+        </svg>
+        <p class="chart-cap">The AND-rule buys ~no precision for 2.5× less recall; and even the better rule catches only about one phantom in three — a review-queue prioritiser, not a filter.</p>
+      </div>
+      <div style="font-size:11.8px;color:var(--muted);margin-top:6px">The AND-rule buys essentially no precision for <b>2.5× less recall</b>. Bleed alone is the better tool.</div>
+    </div>
+    <div class="callout red"><div class="t">Ceiling, stated honestly</div>Even the better rule catches only about <b>one phantom in three</b> (recall ≈ 0.35).
+      This is a <b>review-queue prioritiser, not a phantom filter</b>. Anyone reading "0.87 precision" and expecting a cleaned lane would be misled —
+      that earlier figure omitted recall and used a 13-song precision-only probe.</div>
+
+    <!-- ===== D. Cymbal stem-energy ===== -->
+    <h3>4 · Negative result: cymbal stem-energy as a phantom filter</h3>
+    <div class="callout red"><div class="t">Verdict — DEAD for both crash and ride <span class="prov m-test">TESTED</span></div>
+      Idea: for each detected crash/ride, check the isolated cymbal stem for corroborating energy, and drop hits with none.
+      Pre-registered kill criterion: fused AUROC &lt; 0.70, or no better than the best single feature. Sample was large enough for a real verdict (crash <b>n = 2,746</b>).</div>
+
+    <div class="card">
+      <table>
+        <thead><tr><th>Lane</th><th class="c">Best single feature</th><th class="c">Fused</th><th>Verdict</th></tr></thead>
+        <tbody>
+          <tr><td>crash</td><td class="mono">0.735</td><td class="mono neg">0.725</td><td><b>DEAD</b></td></tr>
+          <tr><td>ride</td><td class="mono">0.662</td><td class="mono neg">0.623</td><td><b>DEAD</b></td></tr>
+        </tbody>
+      </table>
+      <div style="font-size:11.8px;color:var(--muted);margin-top:6px">Faint signal exists for crash, but below a usable threshold — and <b>fusing features made it worse</b>
+      (same dilution pattern as §0). Ride fused AUROC is below the 0.70 kill line even before the "no better than best single" clause.</div>
+    </div>
+
+    <!-- ===== F. Measurement hazards ===== -->
+    <h3>5 · Measurement hazards found the hard way</h3>
+    <p class="sub">Useful to anyone reusing these methods or reading absolute numbers from older harness dumps.</p>
+    <div class="pitfall"><span class="nm">Harness vs app constant</span><div>The offline scoring harness applied a more permissive kick spacing gate (<b>0.045&nbsp;s</b>) than the shipped app (<b>0.060&nbsp;s</b>) for several releases. Relative comparisons between arms survived (both arms used the same harness); absolute numbers did not correspond to shipped behaviour. <b>Pin and report the constants a harness actually uses.</b></div></div>
+    <div class="pitfall"><span class="nm">Band-ratio artifact</span><div>A band-ratio confusion metric that normalised each frequency band by its own median made rarely-used lanes hypersensitive — every sparse lane scored exactly <b>0.0%</b>. Replaced with self-supervised spectral templates. An implausibly clean number is a bug signal.</div></div>
+    <div class="pitfall"><span class="nm">Simultaneity confound</span><div>A hi-hat struck at the same instant as a snare is spectrally dominated by the snare, and looks "misclassified" while being charted correctly. Per-note classification checks must be restricted to <b>isolated</b> hits.</div></div>
+
+    <!-- ===== G. Real vs AI cover ===== -->
+    <h3>6 · Input quality: real recordings vs "AI cover" tracks</h3>
+    <div class="callout amber"><div class="t">Verdict — energy support looks fine; kick timing collapses on AI covers <span class="prov m-test">TESTED</span></div>
+      Reference-free scoring of generated charts (energy support = share of charted notes landing on real band-appropriate energy):</div>
+
+    <div class="card">
+      <table>
+        <thead><tr><th>Input</th><th class="c">Notes</th><th class="c">Energy support</th><th>Timing notes</th></tr></thead>
+        <tbody>
+          <tr class="hl"><td><b>Real band, clean stem split</b></td><td class="mono">1,709</td><td class="mono"><b>95.7%</b></td><td>Snare 99.7% support, 3.6&nbsp;ms median offset, 97.6% within 25&nbsp;ms</td></tr>
+          <tr><td><b>AI cover</b> (same style of material)</td><td class="mono">1,268</td><td class="mono">93.5%</td><td>Support barely moved, but <b>kick timing collapsed</b>: median offset 13.7&nbsp;ms → <b>31.2&nbsp;ms</b>; hits within 10&nbsp;ms fell 31% → <b>1.3%</b>. Cymbal and snare timing improved — consistent with programmed/quantised generated drums.</td></tr>
+        </tbody>
+      </table>
+      <div class="chart" style="margin-top:14px">
+        <svg viewBox="0 0 560 250" width="100%" height="auto" role="img" aria-label="Grouped bars comparing clean recordings versus AI covers on four metrics. Energy support and snare timing stay high; kick within 25 milliseconds falls from 78.7 to 16.6 percent; kick within 10 milliseconds falls from 31.0 to 1.3 percent.">
+          <title>Input quality — clean vs AI-cover metrics</title>
+          <line x1="60" y1="28" x2="60" y2="175" stroke="var(--line)" stroke-width="1"/>
+          <line x1="60" y1="175" x2="530" y2="175" stroke="var(--line)" stroke-width="1"/>
+          <g stroke="var(--line)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7">
+            <line x1="60" y1="138.25" x2="530" y2="138.25"/><!-- 25% -->
+            <line x1="60" y1="101.5" x2="530" y2="101.5"/><!-- 50% -->
+            <line x1="60" y1="64.75" x2="530" y2="64.75"/><!-- 75% -->
+            <line x1="60" y1="28" x2="530" y2="28"/><!-- 100% -->
+          </g>
+          <g fill="var(--muted)" font-size="10" text-anchor="end">
+            <text x="54" y="178">0%</text>
+            <text x="54" y="141">25%</text>
+            <text x="54" y="104">50%</text>
+            <text x="54" y="68">75%</text>
+            <text x="54" y="31">100%</text>
+          </g>
+          <!-- scale: 147 px = 100%; group centers ~115, 235, 355, 475; bars 28 wide, gap 4 -->
+          <!-- energy support: 95.7 / 93.5 -->
+          <rect x="86" y="34.3" width="28" height="140.7" fill="var(--green)" rx="2"/>
+          <text x="100" y="28" text-anchor="middle" fill="var(--ink)" font-size="10" font-weight="700">95.7</text>
+          <rect x="118" y="37.6" width="28" height="137.4" fill="var(--amber)" rx="2"/>
+          <text x="132" y="32" text-anchor="middle" fill="var(--ink)" font-size="10" font-weight="700">93.5</text>
+          <text x="116" y="192" text-anchor="middle" fill="var(--ink)" font-size="10.5" font-weight="600">energy</text>
+          <text x="116" y="205" text-anchor="middle" fill="var(--ink)" font-size="10.5" font-weight="600">support %</text>
+          <!-- snare within 25ms: 97.6 / 99.5 -->
+          <rect x="206" y="31.5" width="28" height="143.5" fill="var(--green)" rx="2"/>
+          <text x="220" y="26" text-anchor="middle" fill="var(--ink)" font-size="10" font-weight="700">97.6</text>
+          <rect x="238" y="28.7" width="28" height="146.3" fill="var(--amber)" rx="2"/>
+          <text x="252" y="24" text-anchor="middle" fill="var(--ink)" font-size="10" font-weight="700">99.5</text>
+          <text x="236" y="192" text-anchor="middle" fill="var(--ink)" font-size="10.5" font-weight="600">snare</text>
+          <text x="236" y="205" text-anchor="middle" fill="var(--ink)" font-size="10.5" font-weight="600">≤25 ms %</text>
+          <!-- kick within 25ms: 78.7 / 16.6 — collapse -->
+          <rect x="326" y="59.3" width="28" height="115.7" fill="var(--green)" rx="2"/>
+          <text x="340" y="54" text-anchor="middle" fill="var(--ink)" font-size="10" font-weight="700">78.7</text>
+          <rect x="358" y="150.6" width="28" height="24.4" fill="var(--red)" rx="2"/>
+          <text x="372" y="145" text-anchor="middle" fill="var(--red)" font-size="10" font-weight="700">16.6</text>
+          <text x="356" y="192" text-anchor="middle" fill="var(--ink)" font-size="10.5" font-weight="600">kick</text>
+          <text x="356" y="205" text-anchor="middle" fill="var(--ink)" font-size="10.5" font-weight="600">≤25 ms %</text>
+          <!-- kick within 10ms: 31.0 / 1.3 -->
+          <rect x="446" y="129.4" width="28" height="45.6" fill="var(--green)" rx="2"/>
+          <text x="460" y="124" text-anchor="middle" fill="var(--ink)" font-size="10" font-weight="700">31.0</text>
+          <rect x="478" y="173.1" width="28" height="1.9" fill="var(--red)" rx="1"/>
+          <text x="492" y="168" text-anchor="middle" fill="var(--red)" font-size="10" font-weight="700">1.3</text>
+          <text x="476" y="192" text-anchor="middle" fill="var(--ink)" font-size="10.5" font-weight="600">kick</text>
+          <text x="476" y="205" text-anchor="middle" fill="var(--ink)" font-size="10.5" font-weight="600">≤10 ms %</text>
+          <!-- legend -->
+          <rect x="60" y="222" width="12" height="12" fill="var(--green)" rx="2"/>
+          <text x="78" y="232" fill="var(--ink)" font-size="11">clean</text>
+          <rect x="140" y="222" width="12" height="12" fill="var(--amber)" rx="2"/>
+          <text x="158" y="232" fill="var(--ink)" font-size="11">AI cover (ok)</text>
+          <rect x="260" y="222" width="12" height="12" fill="var(--red)" rx="2"/>
+          <text x="278" y="232" fill="var(--ink)" font-size="11">AI cover (collapsed)</text>
+        </svg>
+        <p class="chart-cap">Support barely moved and most lanes got tighter — only <b>kick onset localisation</b> collapsed.</p>
+      </div>
+    </div>
+
+    <div class="callout"><div class="t">Background — why a "drum stem" from an AI cover is always an estimate</div>
+      Such tracks are typically produced either by separating a real recording and replacing only the vocal, or by generating the whole
+      track and separating it afterwards. Either way <b>the drums were never an isolated recording</b>, so a "drum stem" is always an estimate.
+      The 2026 Music Source Restoration challenge found <b>percussion the hardest stem to restore, averaging 0.29&nbsp;dB</b> across teams —
+      so repairing such stems is not currently a viable route. Practical implication: <b>transcribe the original recording where one exists</b>,
+      rather than the derived track.</div>
+
+    <div class="callout green"><div class="t">Bottom line (July 2026 arc)</div>
+      <ul class="tight" style="margin-bottom:0">
+        <li><b>Shipped / GO:</b> kick lane-routing on isolated stem; snare routing is GO on metrics (precision-driven).</li>
+        <li><b>Keep as-is:</b> tighter kick spacing gate (loosening is noise at corpus scale).</li>
+        <li><b>Use carefully:</b> cross-stem bleed as a review-queue prioritiser only (~1 in 3 phantoms caught).</li>
+        <li><b>Dead / NO-GO:</b> hi-hat isolation; cymbal stem-energy phantom filter; AND-rule over bleed alone; "fuse weak + strong" without a single-feature baseline.</li>
+        <li><b>Unjudgeable:</b> toms / ride / crash isolation — detector recall ceiling, not a disproof of the method.</li>
+      </ul>
+    </div>
+  </section>
+
   <div class="foot">
-    Research notes from ParaKit's detection development, June 2026 — a point-in-time snapshot, not maintained as the app changes.
+    Research notes from ParaKit's detection development, through July 2026 (app v4.9.3) — a point-in-time snapshot, not maintained as the app changes.
     Findings labelled <span class="prov m-cite">CITED</span> are drawn from published drum-transcription / music-information-retrieval literature and
-    attributed to their original authors; findings labelled <span class="prov m-test">TESTED</span> are my own measurements on real songs.
-    Numbers reflect my specific evaluation setup and are not universal guarantees.
+    attributed to their original authors; findings labelled <span class="prov m-test">TESTED</span> are measurements on real songs from the evaluation setups described.
+    Numbers reflect those specific evaluation setups and are not universal guarantees. Negative and "change nothing" results are kept on purpose.
   </div>
 
 </div>
