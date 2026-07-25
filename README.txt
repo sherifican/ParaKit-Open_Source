@@ -11,8 +11,16 @@
   without the Markdown formatting, so it reads cleanly in Notepad.
   The fix/change log lives in its own file:  CHANGELOG.txt
 
-  ParaKit is actively developed and supported. A v5 major update / rebuild is
-  in the works; until that ships, v4 keeps getting regular updates often.
+  ParaKit is actively developed and supported. v4.x is the current, actively-
+  developed line -- it is not in maintenance mode and is not waiting on
+  anything. New features land here (this release adds three new tabs), and it
+  will keep getting regular updates.
+
+  The v5 rebuild (PySide6/Qt) is still in development and no longer has a
+  target date -- the earlier mid-2026 estimate is out of date. v5 is a UI-
+  framework rebuild rather than a feature release, so instead of holding work
+  back for it, features ship in v4 as they are ready. v4 support continues
+  regardless of when v5 arrives -- this is not an end-of-life countdown.
 
   Paradiddle:  https://www.paradiddleapp.com/
 

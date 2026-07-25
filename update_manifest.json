@@ -52,11 +52,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "4dcd4daf95b715494f17c2c5a72563754202456ab84241e762f94f9c0b27087c"
+      "sha256": "674d9ee382f92ece1a9b92214df9b121270e4da8b59cf7094fdb490543d40e65"
     },
     {
       "path": "README.txt",
-      "sha256": "ffdd45f2459e50f6f569312a153c655998ce4635f0e8f043aabe67d029505715"
+      "sha256": "53afa03291865aa59d4f686514fa58442299a4e888b80a866a6d138405c40c66"
     },
     {
       "path": "Run ParaKit v4.0.bat",
