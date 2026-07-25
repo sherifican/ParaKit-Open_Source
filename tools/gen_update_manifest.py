@@ -50,6 +50,19 @@ ROOT_FILES = [
     "README.md", "README.txt",
     "parakit.ico", "parakit_header_logo.png", "parakit_logo_FINAL.png",
     "dot_lit_v2.png", "dot_lit_v3_tight.png", "dot_unlit.png",
+    # v4.9.3 -- runtime modules for the three new tabs (Spectral Comparison,
+    # Preview, Practice) plus the built-in drum synth. These are IMPORTED BY THE
+    # MAIN .py, so an updater that skips them leaves the app unable to START:
+    # the main .py is written LAST, and would then import modules that never
+    # arrived. Added in the same release that shipped them, per the standing
+    # "a release adding a root asset adds it to this list" rule above.
+    "parakit_spectral_tab.py", "parakit_spectral_engine.py",
+    "parakit_preview_tab.py", "parakit_preview_engine.py",
+    "parakit_preview_sprites.py",
+    "parakit_practice_tab.py", "parakit_practice_engine.py",
+    "parakit_practice_home.py", "parakit_practice_widgets.py",
+    "parakit_practice_sprites.py",
+    "parakit_synth_voices.py",
 ]
 
 # App-content dirs walked recursively -- ALL files inside (minus the excludes

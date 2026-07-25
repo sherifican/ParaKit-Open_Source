@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.7.26  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.3  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,189 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.3   --   2026-07-23
+------------------------------------------------------------------------------
+  The first public release since v4.7.26, and it brings three new tabs -- led by
+  the new Spectral Comparison tab -- along with a built-in drum synth, a
+  performance pass across the whole app, and a long run of MIDI Editor work.
+
+  NEW TAB: Spectral Comparison -- a visual second opinion on the detector.
+  - It answers one question: did the detector chart it right? Load the audio and
+    the detected chart, press Compare, and the tab overlays the chart on the
+    audio's energy and flags the disagreements -- a green + where the audio has a
+    hit but nothing is charted (MISS), an orange x where a note is charted over
+    silence (PHANTOM). Energy alone is never treated as a miss: drums share
+    frequency bands, so bleed is expected and only the flags mark disagreements
+    worth reviewing by ear.
+  - Two views -- Per-Lane (an energy ribbon plus the chart's notes for each drum)
+    and Spectrogram (full heatmap with note rows and render controls). Click the
+    canvas to seek, play along with the shared audio preview, fix wrong notes
+    right there in Edit mode (undo/redo included), then Overwrite or Export the
+    corrected MIDI. It sits between MIDI Editor and Sheet Music -> MIDI.
+  - Detection itself is untouched -- the tab reads audio and chart files only.
+
+  NEW TABS: Preview and Practice.
+  - Preview renders a chart so it can be checked before export; Practice plays it
+    back to drum along with, backed by a built-in drum synth so a chart is
+    audible without any external sampler. Both are covered in the Help tab.
+
+  Performance:
+  - Lighter and cooler when idle. The app no longer wakes the CPU a few hundred
+    times a second in the background waiting for MIDI input, so it runs quieter
+    -- most noticeable on laptops and lower-end machines -- and everyday use
+    (opening the app, resizing and dragging the window) feels smoother.
+  - The MIDI Editor is leaner on big charts: a size-aware undo history and a
+    memory-capped audio cache keep it from ballooning, and the piano roll
+    redraws more efficiently during playback.
+
+  Preview & Practice:
+  - Audio source controls. Preview's audio switch gains a "Full Mix" option, so
+    you can flip between the drums-only stem and the full mix. Practice's pre-play
+    panel now lets you choose "Backing + Drums" vs "Full Mix", reveals the exact
+    linked stem files (and flags any missing on disk), and automatically avoids
+    doubling the drums when a song's "backing" is really a full mix that already
+    contains them (with a one-click override). Preview also gained loaded-file
+    readouts next to Import MIDI and the audio buttons, and a heads-up if you
+    load a drumless backing there.
+  - More polish on the new tabs: a tidier Preview toolbar and settings layout,
+    clearer help wording, and the pop-out Settings / Help panels now close when
+    you switch to another tab instead of floating on top.
+
+  Everything since the last release:
+  - This update bundles several versions' worth of work since the last public
+    release (v4.7.26). The headline features are described above; for the full
+    blow-by-blow of everything new and fixed since then -- including the drum
+    synth, the MIDI Editor improvements, and every bug fix along the way -- see
+    the v4.8.0 through v4.9.2 entries below.
+
+------------------------------------------------------------------------------
+  v4.9.2   --   2026-07-22
+------------------------------------------------------------------------------
+  New Preview-tab options, a built-in drum synth on the Preview and Practice
+  tabs, more of the new Spectral Comparison tab, and a couple of MIDI Editor
+  improvements.
+
+  Preview tab:
+  - Sharp, high-resolution falling-note sprites (the same technique the MIDI
+    Editor and Practice highway use), crisp at every size.
+  - NEW: render cymbals as ovals. A toggle draws Hi-Hat, Crash and Ride as wide
+    ovals -- easier to read apart in fast cymbal sections -- while toms and kick
+    keep their normal shape.
+  - "Show notes as in-game icons" applies to the cymbals (Hi-Hat / Crash / Ride
+    become circular); toms and kick keep their normal shape.
+  - A note-size slider with a reset button, and default note shapes matched
+    across the Preview and Practice tabs.
+
+  NEW -- built-in drum synth (Preview + Practice):
+  - Toggle the drum synth on for per-lane hit sounds on either tab -- the
+    drum-synth voices from the v5 rebuild -- so you get audible hits with no
+    audio loaded, and even fast snare / cymbal rolls play every hit.
+
+  Spectral Comparison tab:
+  - NEW: show / hide individual drums. An "Instruments" button opens a row of
+    per-drum toggles (plus All / None) that apply to both the Per-Lane and
+    Spectrogram views, so a busy chart can be decluttered one lane at a time --
+    a hidden drum keeps its row but drops its notes, flags and energy.
+
+  Preview / Practice:
+  - NEW: a "Classic Style" note look on both tabs -- clean filled bars and
+    circles with crisp white outlines, alongside the default glow sprites. Pick
+    whichever you prefer.
+  - CHANGED: the Preview tab opens on a blank chart, like the Spectral tab; a
+    new "Load demo example" button loads the built-in demo whenever you want it.
+  - NEW: a now-playing readout tells you which chart is loaded -- on the Preview
+    tab and under "Play Loaded Song" on Practice -- so the wrong song never
+    starts by mistake.
+  - Clearer edges on the Practice cards (Song / Setup / Input) so each section
+    stands out.
+
+  MIDI Editor:
+  - CHANGED: the piano roll (lanes + beat grid + ruler) is now visible the moment
+    you open the tab -- no more clicking the empty canvas to make the chart
+    appear.
+  - FIXED: editing the tempo in the tempo popup now actually re-times the beat
+    grid. The value was being read from the wrong place and silently ignored, so
+    the grid always fell back to 120 BPM; it now follows your tempo edit.
+  - FIXED: MIDI Editor audio no longer keeps playing after you leave the tab --
+    including sped-up playback, which previously did not claim the shared audio,
+    so nothing could stop it.
+
+  Under the hood:
+  - NEW: a startup integrity check that makes sure ParaKit's supporting files are
+    all present AND undamaged. If any are missing OR have been altered / truncated
+    / left at the wrong version (for example after an antivirus quarantine, a
+    half-synced cloud folder, or a very old in-app update that only refreshed the
+    main program file), ParaKit shows exactly which files are affected -- each
+    marked missing or damaged -- and offers to "Download & fix now" (a progress
+    window with a live per-file list, downloading only the ones that need it) or
+    to open GitHub to re-download by hand. So the newer tabs never sit broken with
+    no way to recover. It runs quietly in the background and only speaks up when
+    something is actually wrong.
+
+------------------------------------------------------------------------------
+  v4.9.1   --   2026-07-21
+------------------------------------------------------------------------------
+  A visual refresh for the MIDI Editor, and the Practice tab's home screen
+  rebuilt toward the v5 look.
+
+  MIDI Editor (look only -- the tool layout above the chart is unchanged):
+  - Crisper note sprites (single clean ring, high-resolution) and thinner, tidier
+    outlines on flagged notes.
+  - The toolbar buttons wear the v5 outline style.
+  - NEW: second markers on the ruler. As you zoom in, the ruler labels time in
+    seconds ("12s") alongside the bar numbers, drawn in a slightly different
+    colour so the two kinds of label never blur together.
+  - The dot at the top of the green playhead is now an enlarged grab-handle, so
+    it is obvious where to click to drag the playhead.
+
+  Practice tab:
+  - The home screen was rebuilt toward the v5 look (gradient buttons, album-art
+    cover, cleaner pills and panels) instead of the old bare layout.
+  - High-resolution highway sprites, note-size reset buttons, thinner note bars,
+    and default note shapes matched to the Preview tab.
+
+------------------------------------------------------------------------------
+  v4.9.0   --   2026-07-21
+------------------------------------------------------------------------------
+  Phantom-kick cleanup and a couple of detection-side polish items.
+
+  - NEW: cross-stem bleed phantom-kick review (Audio -> MIDI, off by default).
+    When enabled, a post-detection pass looks for charted kicks that line up
+    with loud moments in the OTHER drum stems but not the kick stem -- a common
+    sign the "kick" is really bleed from a nearby drum -- and FLAGS them for
+    review. It never deletes a note on its own; the flagged kicks are marked so
+    they can be checked and removed by ear in the MIDI Editor. Detection itself
+    is untouched.
+  - FIXED: stem separation looked frozen on long songs. It now shows a steady
+    progress heartbeat so it is clear the work is still running.
+  - The phantom-kick review flag is now orange, matching the flag the Detection
+    Troubleshooter already uses -- the same kind of issue now always wears the
+    same colour.
+
+------------------------------------------------------------------------------
+  v4.8.0   --   2026-07-20
+------------------------------------------------------------------------------
+  NEW TAB: Spectral Comparison -- a visual second opinion on the detector.
+  It answers one question: did the detector chart it right? Load the audio
+  and the detected chart, press Compare, and the tab overlays the chart on
+  the audio's energy and flags the disagreements: a green + where the audio
+  has a hit but no note is charted (MISS), and an orange x where a note is
+  charted over silence (PHANTOM). Energy alone is never treated as a miss --
+  drums share frequency bands, so bleed is expected and only the flags mark
+  disagreements worth reviewing by ear.
+
+  Two views: Per-Lane (an energy ribbon + the chart's notes for each drum)
+  and Spectrogram (full heatmap with note rows + render controls). Click the
+  canvas to seek, play along with the app's shared audio preview, fix wrong
+  notes right there in Edit mode (undo/redo included), then Overwrite or
+  Export the corrected MIDI.
+
+  The tab sits between MIDI Editor and Sheet Music -> MIDI. Detection itself is
+  untouched -- the tab reads audio and chart files only. Sheet Music's tab
+  colour is now navy; the Spectral tab wears Tom-3 purple, and the Help tab
+  gained a full section for it.
 
 ------------------------------------------------------------------------------
   v4.7.26   --   2026-07-16

@@ -17,6 +17,7 @@ import re
 import shutil
 import sys
 import threading
+import time
 import tkinter as tk
 from dataclasses import dataclass, field
 from tkinter import ttk, filedialog, messagebox, scrolledtext
@@ -5762,7 +5763,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.7.26"
+    VERSION = "4.9.3"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -5803,6 +5804,27 @@ class MidiToRlrrApp:
         self._midi_first_cc4_seen_at = None
         self._midi_device_name = None
         self._midi_active_profile = None
+        # v4.9.0 — Preview/Practice v3 tabs: raw note-on sinks (one per consumer
+        # tab). _handle_midi_message forwards RAW (note, vel, stamp) to each
+        # registered sink; the tabs do their OWN note->lane map (eng.MIDI_TO_LANE).
+        # Ref-counted so a tab-leave never yanks the shared port out from under an
+        # in-progress MIDI-Editor recording (see _pp_midi_stop).
+        self._pp_midi_note_cbs = {}
+        # v4.9.0 — Preview/Practice-owned stem mixer state (dedicated pygame
+        # channels, singleton-mixer ownership token = "preview"/"practice"). All
+        # lazily (re)set by the mixer closures; declared here for clarity.
+        self._pp_stem_paths = {}       # {bus: [paths]}  (a bus may carry >1 track)
+        self._pp_stem_sounds = {}      # {bus: [Sound]}  (hold refs so GC keeps audio)
+        self._pp_stem_channels = {}    # {bus: [Channel]}
+        self._pp_bus_gain = {"song": 1.0, "drums": 1.0, "master": 1.0}
+        self._pp_mix_speed = 1.0
+        self._pp_mix_anchor_song = 0.0
+        self._pp_mix_anchor_wall = None
+        self._pp_mix_playing = False
+        self._pp_mix_paused = False
+        self._pp_stem_nudge_ms = 0
+        self._pp_source_mode = "auto"   # auto | fullmix | stems (Practice picker)
+        self._pp_source_note = ""
         self._midi_last_messages = []
         self._midi_test_text = None
         # v4.4.53.6 — Learn-mode infrastructure for the new MIDI Controls
@@ -6114,6 +6136,8 @@ class MidiToRlrrApp:
         tab10 = ttk.Frame(notebook)
         tab11 = ttk.Frame(notebook)
         tab12 = ttk.Frame(notebook)
+        tab13 = ttk.Frame(notebook)   # Spectral Comparison (v4.8.0)
+        tab14 = ttk.Frame(notebook)   # Practice v3 (v4.9.0)
 
         notebook.add(tab1,  text="  🎵  Single Song Creator  ")
         notebook.add(tab3,  text="  🎶  Create Multiple Songs  ")
@@ -6125,8 +6149,16 @@ class MidiToRlrrApp:
         notebook.add(tab10, text="  ▶  YouTube → FLAC  ")
         notebook.add(tab12, text="  🎨  Asset Manager  ")
         notebook.add(tab8,  text="  🔬  Song Tester  ")
-        notebook.add(tab9,  text="  🥁  Preview/Practice Track  ")
+        notebook.add(tab9,  text="  ▶  Preview  ")
         notebook.add(tab11, text="  📖  Quick Start & FAQ  ")
+        # v4.8.0 — Spectral Comparison sits BETWEEN MIDI Editor (5) and Sheet
+        # Music (6). insert() not add(): every literal ==5 MIDI-editor binding
+        # guard (20349+) stays valid because nothing at or before index 5 moves.
+        notebook.insert(6, tab13, text="  📊  Spectral Comparison  ")
+        # v4.9.0 — Practice v3 sits immediately AFTER Preview (which is live
+        # index 11 after the insert(6) above). insert(12,...) pushes Quick Start
+        # 12->13; no index <=11 moves, so every audited guard stays valid.
+        notebook.insert(12, tab14, text="  🥁  Practice  ")
 
         self._build_single_tab(tab1)
         self._build_ogg_tab(tab2)
@@ -6134,9 +6166,11 @@ class MidiToRlrrApp:
         self._build_stem_tab(tab4)
         self._build_audio_to_midi_tab(tab5)
         self._build_midi_editor_tab(tab6)
+        self._build_spectral_tab(tab13)
         self._build_sheet_music_tab(tab7)
         self._build_tester_tab(tab8)
-        self._build_visualizer_tab(tab9)
+        self._build_preview_tab(tab9)      # v4.9.0 — replaces _build_visualizer_tab
+        self._build_practice_tab(tab14)    # v4.9.0 — new Practice v3 tab
         self._build_youtube_tab(tab10)
         self._build_help_tab(tab11)
         self._build_asset_manager_tab(tab12)
@@ -6171,11 +6205,26 @@ class MidiToRlrrApp:
         # GitHub or click the button still hear about updates. Quiet on failure
         # and when up-to-date; only prompts when a newer version is available.
         self.root.after(3000, self._check_for_update)
-        # v4.5.5.1 — one-time notice: the pre-4.5.5.1 in-app updater pulled only
-        # the main .py, so anyone who updated in-app may have stale supporting
-        # files. Explain it once + offer a one-click in-place resync. Shown once
-        # (config-flagged); source installs only.
-        self.root.after(1500, self._maybe_show_dep_sync_notice)
+        # v4.9.2 — the old v4.5.5.1 one-time "check your supporting files" modal
+        # (which explained the pre-4.5.5.1 updater bug that pulled only the main
+        # .py) was REMOVED here 2026-07-23, along with the update-popup inline
+        # reminder of the same bug: the bug was fixed ~15 releases ago, and both
+        # notices were meant to retire by 4.5.7 — the inline one did (version-
+        # gated), but the modal was never gated, so it kept firing for fresh
+        # source installs. The recurring integrity check below fully supersedes
+        # them (it actively finds AND offers to fix any missing supporting file,
+        # every launch).
+        # v4.9.2 — recurring launch-time INTEGRITY check. The one-time notice
+        # above fires only ONCE, and the version updater only fires when your
+        # VERSION is behind — so a 'current' install that is nonetheless MISSING
+        # runtime files (an ancient single-file update that pulled the new .py
+        # but none of the new tab sidecars; an antivirus quarantine; a partial
+        # cloud-sync; an interrupted update) never self-heals and the affected
+        # tabs stay broken. This checks that every file update_manifest.json
+        # lists is actually present, every launch, and offers to fetch only the
+        # missing ones. Silent when nothing is missing; last so it never stacks
+        # over the version-update prompt.
+        self.root.after(5000, self._check_missing_deps)
         # v4.5.7.x audit fix — sweep stale A2M temp artifacts from PREVIOUS
         # sessions (alt-detector request dirs, Neural-Isolation stem WAV dirs,
         # orphaned larsnet runtime YAMLs). Age-guarded 24h so a concurrently
@@ -6233,12 +6282,14 @@ class MidiToRlrrApp:
             ("🥁", "Stem Splitter",         "#46d18a", DRK),   # 3  green
             ("🎹", "Audio → MIDI",          "#e6c84a", DRK),   # 4  yellow (MIDI-creation flow)
             ("🎼", "MIDI Editor",           "#ff9f43", DRK),   # 5  orange
-            ("🎼", "Sheet Music → MIDI",    PUR,       WHT),   # 6
-            ("▶",  "YouTube → FLAC",        "#e63946", WHT),   # 7  red (snare / YouTube's own brand red)
-            ("🎨", "Asset Manager",         "#00d4d4", DRK),   # 8  cyan
-            ("🔬", "Song Tester",           PUR,       WHT),   # 9
-            ("🥁", "Preview/Practice Track", PUR,      WHT),   # 10
-            ("📖", "Quick Start & FAQ",     "#bd02c1", WHT),   # 11 magenta
+            ("📊", "Spectral Comparison",   "#7b2d8b", WHT),   # 6  Tom-3 purple (v4.8.0)
+            ("🎼", "Sheet Music → MIDI",    "#1a3a8f", WHT),   # 7  Tom-1 navy (owner recolour, v4.8.0)
+            ("▶",  "YouTube → FLAC",        "#e63946", WHT),   # 8  red (snare / YouTube's own brand red)
+            ("🎨", "Asset Manager",         "#00d4d4", DRK),   # 9  cyan
+            ("🔬", "Song Tester",           PUR,       WHT),   # 10
+            ("▶",  "Preview",               "#ff6ec7", DRK),   # 11  pink (v4.9.0 — distinct tint)
+            ("🥁", "Practice",              PUR,       WHT),   # 12  (v4.9.0)
+            ("📖", "Quick Start & FAQ",     "#bd02c1", WHT),   # 13 magenta
         ]
         self._tab_sel_bg, self._tab_sel_fg = "#2a1235", "#ffffff"   # dark-purple pressed
         # hide native tabs immediately (also re-asserted in _apply_theme)
@@ -6336,8 +6387,8 @@ class MidiToRlrrApp:
         self._menu_guards = []
         self._tab_indexes = {
             "single": 0, "batch": 1, "ogg": 2, "stem": 3,
-            "a2m": 4, "midi": 5, "sheet": 6, "youtube": 7,
-            "asset": 8, "tester": 9, "preview": 10, "help": 11,
+            "a2m": 4, "midi": 5, "spectral": 6, "sheet": 7, "youtube": 8,
+            "asset": 9, "tester": 10, "preview": 11, "practice": 12, "help": 13,
         }
 
         menubar = tk.Menu(self.root, tearoff=False)
@@ -6414,9 +6465,11 @@ class MidiToRlrrApp:
             ("single", "Single Song Creator"), ("batch", "Create Multiple Songs"),
             ("ogg", "Audio to .ogg Converter"), ("stem", "Stem Splitter"),
             ("a2m", "Audio to MIDI"), ("midi", "MIDI Editor"),
+            ("spectral", "Spectral Comparison"),
             ("sheet", "Sheet Music to MIDI"), ("youtube", "YouTube to FLAC"),
             ("asset", "Asset Manager"), ("tester", "Song Tester"),
-            ("preview", "Preview/Practice Track"), ("help", "Quick Start && FAQ"),
+            ("preview", "Preview"), ("practice", "Practice"),
+            ("help", "Quick Start && FAQ"),
         ]:
             add(view_menu, label, lambda k=key: self._menu_go(k))
         view_menu.add_separator()
@@ -6424,9 +6477,9 @@ class MidiToRlrrApp:
             lambda: self._menu_safe_call("midi", self._menu_me_has_notes, self._me_open_tempo_map,
                                          "Load a MIDI in the MIDI Editor before opening Tempo Map."),
             guard=lambda: self._menu_is_tab("midi") and self._menu_me_has_notes())
-        add(view_menu, "Send MIDI Editor to Preview/Practice Track",
+        add(view_menu, "Send MIDI Editor to Preview",
             lambda: self._menu_safe_call("midi", self._menu_me_has_notes, self._me_send_to_visualizer,
-                                         "Load a MIDI in the MIDI Editor before sending to Preview/Practice Track."),
+                                         "Load a MIDI in the MIDI Editor before sending to Preview."),
             guard=lambda: self._menu_is_tab("midi") and self._menu_me_has_notes())
 
         a2m_menu = tk.Menu(menubar, tearoff=False, postcommand=self._update_menu_state)
@@ -6451,7 +6504,8 @@ class MidiToRlrrApp:
         add(tools_menu, "Stem Splitter", lambda: self._menu_go("stem"))
         add(tools_menu, "Asset Manager", lambda: self._menu_go("asset"))
         add(tools_menu, "Song Tester", lambda: self._menu_go("tester"))
-        add(tools_menu, "Preview/Practice Track", lambda: self._menu_go("preview"))
+        add(tools_menu, "Preview", lambda: self._menu_go("preview"))
+        add(tools_menu, "Practice", lambda: self._menu_go("practice"))
         tools_menu.add_separator()
         add(tools_menu, "Run Song Tester",
             lambda: self._menu_safe_call("tester", self._menu_tester_ready, self._tester_start,
@@ -6510,6 +6564,40 @@ class MidiToRlrrApp:
         self._update_menu_state()
         if then:
             then()
+
+    def _send_to_spectral(self, drums="", chart="", mix=""):
+        """Prefill the Spectral Comparison tab's fields (Drums stem / Chart /
+        Full mix) and switch to it (owner 2026-07-20). Prefill only -- the user
+        presses Compare (matches the tab's manual-Compare design). Degrades
+        quietly if the sidecar failed to import."""
+        st = getattr(self, "_spectral_tab", None)
+        if st is None:
+            messagebox.showinfo(
+                "Spectral Comparison",
+                "The Spectral Comparison tab is not available "
+                "(its module failed to load).")
+            return
+        sent = False
+        try:
+            if drums and os.path.isfile(drums):
+                st.reference_field.set(drums); sent = True
+            if chart and os.path.isfile(chart):
+                st.candidate_field.set(chart); sent = True
+            if mix and os.path.isfile(mix):
+                st.stem_field.set(mix)
+        except Exception:
+            pass
+        try:
+            self.notebook.select(self._tab_indexes["spectral"])
+        except Exception:
+            pass
+        self._update_menu_state()
+        try:
+            self._set_global_status(
+                "Sent to Spectral Comparison — press Compare." if sent else
+                "Opened Spectral Comparison — load a drums stem + chart.", 4000)
+        except Exception:
+            pass
 
     def _menu_is_tab(self, tab_key):
         try:
@@ -6635,7 +6723,7 @@ class MidiToRlrrApp:
             if first_metadata is None:
                 try:
                     text = None
-                    for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
+                    for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1"):
                         try:
                             with open(rp, "r", encoding=enc) as f:
                                 text = f.read()
@@ -7183,6 +7271,41 @@ class MidiToRlrrApp:
             self._midi_close()
         except Exception:
             pass
+        # Exit-freeze completion (2026-07-22): every playback path gc.disable()s
+        # for underrun protection. The in-app "Quit to library" path
+        # (_pp_mix_stop) defers a re-enable+collect, but closing the WHOLE
+        # window never routed through it — GC stayed disabled straight through
+        # root.destroy(), so the thousands of cyclic garbage objects that widget
+        # teardown creates piled up uncollected and got swept in ONE gen-2 stall
+        # during interpreter finalization (reads as a "Not Responding" hang as
+        # the window vanishes). This path looked clean under the breaker rounds
+        # only because those never play audio (SDL dummy), so GC was never off.
+        # Fix: (1) cancel any stranded deferred re-enable job (destroy() would
+        # just drop it), (2) best-effort stop bleeding practice/preview audio,
+        # (3) re-enable GC BEFORE destroy so the teardown churn collects
+        # incrementally. No inline gc.collect() — that forced sweep is the very
+        # stall we're avoiding (see _pp_mix_stop's comment).
+        try:
+            _job = getattr(self, "_pp_gc_job", None)
+            if _job is not None:
+                self.root.after_cancel(_job)
+                self._pp_gc_job = None
+        except Exception:
+            pass
+        try:
+            self._pp_mix_stop_channels()
+        except Exception:
+            pass
+        try:
+            import pygame
+            if pygame.mixer.get_init():
+                pygame.mixer.music.stop()
+        except Exception:
+            pass
+        try:
+            gc.enable()
+        except Exception:
+            pass
         self.root.destroy()
 
     # ── Elapsed timer helpers ─────────────────────────────────────────────────
@@ -7309,11 +7432,6 @@ class MidiToRlrrApp:
         "https://raw.githubusercontent.com/sherifican/ParaKit-Open_Source/main/")
     PARAKIT_MANIFEST_RAW_URL = (
         "https://raw.githubusercontent.com/sherifican/ParaKit-Open_Source/main/update_manifest.json")
-    # v4.5.5.1: the update-available popup keeps a short "your supporting files
-    # may be stale" reminder up for a few versions (belt-and-suspenders for users
-    # who skim the one-time notice), then auto-retires it at this version.
-    DEP_SYNC_NOTICE_UNTIL = "4.5.7"
-
     def _update_worker(self, silent=True):
         """Background: read the open-source repo's README "Version in this
         release" line on GitHub and compare it to self.VERSION."""
@@ -7443,10 +7561,6 @@ class MidiToRlrrApp:
         update changes without opening GitHub or downloading first."""
         import webbrowser
         is_frozen = bool(getattr(sys, "frozen", False))
-        # v4.5.5.1: keep the "supporting files may be stale" reminder up for a few
-        # versions (source installs only), then auto-retire at DEP_SYNC_NOTICE_UNTIL.
-        show_dep_note = (not is_frozen) and self._dep_note_active()
-
         has_changelog = bool(changelog_entries)
         dlg = tk.Toplevel(self.root)
         dlg.title("Update Available")
@@ -7458,7 +7572,7 @@ class MidiToRlrrApp:
         dlg.grab_set()
         try:
             pw = 520 if has_changelog else 480
-            ph = (320 if show_dep_note else 230) + (240 if has_changelog else 0)
+            ph = 230 + (240 if has_changelog else 0)
             px = self.root.winfo_x() + (self.root.winfo_width() - pw) // 2
             py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
             dlg.geometry(f"{pw}x{ph}+{px}+{py}")
@@ -7483,15 +7597,6 @@ class MidiToRlrrApp:
                     "version needs), then restart.")
         ttk.Label(frame, text=body, style="TLabel",
                   wraplength=440, justify=tk.LEFT).pack(anchor="w")
-
-        if show_dep_note:
-            note = ("Heads-up: ParaKit versions before 4.5.5.1 only downloaded the "
-                    "main app file when updating in-app, so some supporting files "
-                    "could be left out of date. The “Download update now” "
-                    "button below now refreshes all of them — or re-clone from "
-                    "GitHub — to be sure your install is complete.")
-            ttk.Label(frame, text=note, foreground="#e09a3a",
-                      wraplength=440, justify=tk.LEFT).pack(anchor="w", pady=(10, 0))
 
         # "What's new in this update" preview — the repo's CHANGELOG.txt entries
         # for every version newer than the one running, so the user can see what
@@ -7570,25 +7675,6 @@ class MidiToRlrrApp:
             except Exception:
                 pass
         return None
-
-    def _dep_note_active(self):
-        """True while the running version is older than DEP_SYNC_NOTICE_UNTIL —
-        keeps the 'supporting files may be stale' reminder on the update popup for
-        a few versions after the v4.5.5.1 updater fix, then auto-retires it."""
-        import re
-
-        def _k(s):
-            m = re.match(r"^v?(\d+(?:\.\d+){1,3})(?:-(\d+))?$", str(s).strip())
-            if not m:
-                return None
-            return (tuple(int(x) for x in m.group(1).split("."))
-                    + (int(m.group(2) or 0),))
-
-        try:
-            a, b = _k(self.VERSION), _k(self.DEP_SYNC_NOTICE_UNTIL)
-            return a is not None and b is not None and a < b
-        except Exception:
-            return False
 
     def _sync_manifest_deps(self, app_dir, progress=None):
         """Fetch update_manifest.json and sync every dependency file it lists into
@@ -7733,10 +7819,11 @@ class MidiToRlrrApp:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.read()
 
-        # 1) STRICT manifest fetch + version binding.
+        # 1) STRICT manifest fetch + version binding. Keep the RAW bytes too so
+        # step 4 can install the manifest itself byte-for-byte.
         try:
-            man = _json.loads(
-                _fetch(self.PARAKIT_MANIFEST_RAW_URL, timeout=30).decode("utf-8"))
+            _man_raw = _fetch(self.PARAKIT_MANIFEST_RAW_URL, timeout=30)
+            man = _json.loads(_man_raw.decode("utf-8"))
         except Exception as e:
             return [], 0, f"could not fetch/parse update_manifest.json ({e})"
         if not isinstance(man, dict) or not isinstance(man.get("files"), list):
@@ -7860,6 +7947,32 @@ class MidiToRlrrApp:
             return [], skipped, (f"commit failed ({e}) — all "
                                  f"{rolled_back} replaced file(s) were rolled "
                                  f"back; your current install is intact")
+
+        # 4) INSTALL THE MANIFEST ITSELF (breaker 2026-07-23, grok+codex). The
+        # updater synced the files the manifest LISTS but never wrote the manifest
+        # into the install, so after an in-app update the local update_manifest.json
+        # stayed at the OLD version — and the launch-time integrity check (which
+        # reads the LOCAL manifest) then knew nothing about the newly-added files
+        # (e.g. the v4.9.x tab sidecars) and could not detect their loss/corruption
+        # until a re-clone. Write the release manifest now, atomically, so integrity
+        # covers the CURRENT file set. Best-effort: the deps are already committed,
+        # so a manifest-write hiccup must not fail the update (worst case leaves
+        # integrity exactly as stale as the old behaviour).
+        try:
+            _man_path = os.path.join(app_dir, "update_manifest.json")
+            if os.path.isfile(_man_path):
+                shutil.copyfile(_man_path, _man_path + ".prev")
+            _man_tmp = _man_path + ".dl.tmp"
+            with open(_man_tmp, "wb") as _mf:
+                _mf.write(_man_raw)
+                _mf.flush()
+                try:
+                    os.fsync(_mf.fileno())
+                except Exception:
+                    pass
+            os.replace(_man_tmp, _man_path)
+        except Exception:
+            pass
 
         return updated, skipped, None
 
@@ -8074,166 +8187,369 @@ class MidiToRlrrApp:
 
         threading.Thread(target=_work, daemon=True).start()
 
-    def _maybe_show_dep_sync_notice(self):
-        """One-time first-run notice (v4.5.5.1). The pre-4.5.5.1 in-app updater
-        pulled ONLY the main .py, so a user who updated in-app may be running with
-        stale supporting files (detection models, cleanup code, changelog, ...).
-        This explains it once and offers a one-click 'Update supporting files now'
-        (runs the shared manifest sync in place) plus a re-clone pointer. Source
-        installs only; shown once, then flagged in the config."""
+    @staticmethod
+    def _manifest_file_hash(path):
+        """sha256 of a file, computed EXACTLY as tools/gen_update_manifest.py does
+        (so a match means the local file is byte-identical to what the updater
+        would download): text files (no NUL in the first 8 KB) are CRLF->LF
+        normalized before hashing — the committed blob is LF even when the Windows
+        working tree is CRLF — and binaries are hashed raw/streamed. Getting this
+        wrong would flag every CRLF text file as 'corrupt'. Returns None on error."""
+        try:
+            import hashlib
+            h = hashlib.sha256()
+            with open(path, "rb") as f:
+                head = f.read(8192)
+                if b"\x00" in head:                       # binary -> raw, streamed
+                    h.update(head)
+                    for chunk in iter(lambda: f.read(1 << 20), b""):
+                        h.update(chunk)
+                    return h.hexdigest()
+                data = head + f.read()                     # text -> normalize to LF
+            return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+        except Exception:
+            return None
+
+    def _check_missing_deps(self):
+        """Recurring launch-time INTEGRITY check (v4.9.2; corruption-aware
+        2026-07-23). Reads the LOCAL update_manifest.json and confirms every
+        runtime file it lists is present AND unmodified (sha256 matches the
+        manifest). If any are missing or damaged, offers to restore just those
+        (the same safe, hash-verified manifest sync — which re-downloads on a
+        hash mismatch, so it repairs corruption too). Complements the version
+        updater (fires only when the VERSION is behind): this catches a 'current'
+        install that is missing files (an ancient single-file update that never
+        pulled the tab sidecars, an antivirus quarantine, a partial cloud-sync)
+        OR has a truncated/edited/wrong-version file, which otherwise never
+        self-heals. Silent when everything checks out; source installs only;
+        never raises. The hashing runs off the UI thread so launch stays snappy."""
         try:
             if bool(getattr(sys, "frozen", False)):
-                return  # the .exe ships self-contained — no loose deps to sync
-            if load_config().get("seen_dep_sync_notice_v4551"):
+                return   # frozen .exe bundles everything — no loose deps
+            target = self._locate_app_py()
+            if not target:
                 return
+            app_dir = os.path.dirname(target)
+            man_path = os.path.join(app_dir, "update_manifest.json")
+            if not os.path.isfile(man_path):
+                return   # no local manifest -> nothing to check against
+            threading.Thread(target=self._scan_deps_worker,
+                             args=(app_dir, man_path), daemon=True).start()
+        except Exception:
+            pass
+
+    def _refresh_local_manifest(self, app_dir, man_path):
+        """Fetch the current release manifest and install it (atomic, .prev) IF
+        it matches THIS app's VERSION. Closes the C2 gap (breaker 2026-07-23,
+        grok+codex): an install updated by a PRE-fix updater (e.g. a 4.7.26
+        updater doing the 4.7.26->4.9.2 hop) keeps its OLD manifest, so the
+        launch integrity check can't protect the files THIS version added. The
+        D2 transactional-install covers future hops; this covers the ones it
+        can't reach. Version-bound so a mid-publish remote can't install a
+        mismatched list; best-effort (offline -> keep the stale one)."""
+        import urllib.request
+        try:
+            req = urllib.request.Request(self.PARAKIT_MANIFEST_RAW_URL,
+                                         headers={"User-Agent": "ParaKit-update"})
+            raw = urllib.request.urlopen(req, timeout=20).read()
+            m = json.loads(raw.decode("utf-8"))
+            if not isinstance(m, dict) or str(m.get("version", "")) != str(self.VERSION):
+                return   # mid-publish / version mismatch -> don't install a wrong list
+            tmp = man_path + ".dl.tmp"
+            with open(tmp, "wb") as f:
+                f.write(raw)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+            if os.path.isfile(man_path):
+                try:
+                    shutil.copyfile(man_path, man_path + ".prev")
+                except Exception:
+                    pass
+            os.replace(tmp, man_path)
+        except Exception:
+            pass
+
+    def _scan_deps_worker(self, app_dir, man_path):
+        """Background integrity scan for _check_missing_deps: classify every
+        manifest file as OK / missing / corrupt (present but sha256 != manifest),
+        then hand any problems back to the UI thread. Touches no Tk objects."""
+        try:
+            # If the LOCAL manifest is older than THIS app version it was left
+            # behind by an update path that didn't install it (C2) — a stale list
+            # can't protect the files this version added, so refresh it first.
+            try:
+                with open(man_path, "r", encoding="utf-8") as _lf:
+                    _lm = json.load(_lf)
+                _lv = str(_lm.get("version", "")) if isinstance(_lm, dict) else ""
+                if _lv and _lv != str(self.VERSION):
+                    self._refresh_local_manifest(app_dir, man_path)
+            except Exception:
+                pass
+            with open(man_path, "r", encoding="utf-8") as f:
+                man = json.load(f)
+            files = man.get("files") if isinstance(man, dict) else None
+            if not isinstance(files, list):
+                return   # a non-list "files" (string/None/dict) = corrupt manifest;
+                         # iterating a STRING would treat each char as a "file"
+            missing, corrupt = [], []
+            for ent in files:
+                # Per-entry guard (breaker codex #3, 2026-07-22): one bad entry
+                # (embedded-NUL path raises inside os.path.isfile) must NOT abandon
+                # the whole scan and silently suppress the other problems.
+                try:
+                    rel = ent.get("path") if isinstance(ent, dict) else ent
+                    want = ent.get("sha256") if isinstance(ent, dict) else None
+                    if not isinstance(rel, str):
+                        continue
+                    p = rel.replace("\\", "/").strip()
+                    if (not p or "\x00" in p or p.startswith("/")
+                            or ".." in p.split("/") or (len(p) > 1 and p[1] == ":")):
+                        continue   # same path-safety as _sync_manifest_deps + NUL
+                    full = os.path.join(app_dir, p)
+                    if not os.path.isfile(full):
+                        missing.append(rel)
+                    elif want and self._manifest_file_hash(full) not in (want, None):
+                        # present but the bytes don't match the manifest -> damaged
+                        # (truncated / edited / wrong version). None = unreadable
+                        # hash -> don't cry corrupt on a transient read error.
+                        corrupt.append(rel)
+                except (OSError, ValueError, TypeError):
+                    continue
+            if missing or corrupt:
+                self.root.after(
+                    0, lambda: self._offer_missing_dep_fetch(app_dir, missing, corrupt))
+        except Exception:
+            pass
+
+    def _offer_missing_dep_fetch(self, app_dir, missing, corrupt=None):
+        """Rich restore prompt for the files _check_missing_deps found MISSING or
+        DAMAGED (present but sha256 != manifest). Lists each file with its problem,
+        then offers: 'Download & fix now' (the standard hash-verified manifest
+        sync, shown with a live progress bar + per-file log like the updater —
+        re-downloads only the bad/missing ones, repairs corruption), or 'Open
+        GitHub' to re-clone by hand. Never touches the main .py."""
+        corrupt = corrupt or []
+        problems = ([("missing", m) for m in missing]
+                    + [("damaged", c) for c in corrupt])
+        if not problems:
+            return
+        try:
+            dlg = tk.Toplevel(self.root)
+            dlg.title("ParaKit — some files need restoring")
+            dlg.configure(bg=APP_BG)
+            dlg.transient(self.root)
+            dlg.resizable(False, True)
+            try:
+                dlg.grab_set()
+            except Exception:
+                pass
+            try:
+                pw, ph = 540, 420
+                px = self.root.winfo_x() + (self.root.winfo_width() - pw) // 2
+                py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
+                dlg.geometry(f"{pw}x{ph}+{px}+{py}")
+            except Exception:
+                pass
+
+            frame = ttk.Frame(dlg, padding=18)
+            frame.pack(fill=tk.BOTH, expand=True)
+            n_miss, n_corr = len(missing), len(corrupt)
+            headline = []
+            if n_miss:
+                headline.append("%d missing" % n_miss)
+            if n_corr:
+                headline.append("%d damaged" % n_corr)
+            ttk.Label(frame, text="Some ParaKit files need restoring",
+                      font=("Segoe UI", 12, "bold"),
+                      foreground="#b388ff").pack(anchor="w")
+            ttk.Label(
+                frame, style="TLabel", wraplength=500, justify=tk.LEFT,
+                text=("ParaKit found %s file(s) it needs. Some tabs or features "
+                      "may not work correctly until they are restored. You can "
+                      "download just these files now (from the same place as a "
+                      "normal update — nothing else is changed), or open GitHub "
+                      "to re-download / re-clone ParaKit yourself."
+                      % " and ".join(headline))
+            ).pack(anchor="w", pady=(6, 8))
+
+            # Scrollable file list, each tagged with its problem.
+            list_row = ttk.Frame(frame)
+            list_row.pack(fill=tk.BOTH, expand=True)
+            lst = tk.Text(list_row, height=8, wrap="none", bg=LOG_BG,
+                          fg="#c9d1d9", relief="flat", bd=0, padx=8, pady=6,
+                          font=("Consolas", 9), highlightthickness=1,
+                          highlightbackground="#2a2440")
+            lsb = ttk.Scrollbar(list_row, orient="vertical", command=lst.yview)
+            lst.configure(yscrollcommand=lsb.set)
+            lsb.pack(side=tk.RIGHT, fill=tk.Y)
+            lst.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            lst.tag_configure("missing", foreground="#e63946")
+            lst.tag_configure("damaged", foreground="#e09a3a")
+            for kind, rel in problems:
+                label = "MISSING" if kind == "missing" else "DAMAGED"
+                lst.insert("end", "  %-8s " % label, (kind,))
+                lst.insert("end", str(rel) + "\n")
+            lst.configure(state="disabled")
+
+            btn_row = ttk.Frame(frame)
+            btn_row.pack(anchor="e", pady=(12, 0), fill=tk.X)
+
+            def _open_github():
+                import webbrowser
+                try:
+                    webbrowser.open(self.PARAKIT_RELEASE_URL)
+                except Exception:
+                    pass
+
+            def _fix():
+                try:
+                    dlg.destroy()
+                except Exception:
+                    pass
+                self._run_restore_with_progress(app_dir)
+
+            ttk.Button(btn_row, text="Not now",
+                       command=dlg.destroy).pack(side=tk.LEFT)
+            ttk.Button(btn_row, text="Open GitHub",
+                       command=_open_github).pack(side=tk.LEFT, padx=(8, 0))
+            ttk.Button(btn_row, text="Download & fix now",
+                       style="Convert.TButton",
+                       command=_fix).pack(side=tk.RIGHT)
+            dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
         except Exception:
             return
 
-        def _mark_seen():
-            try:
-                save_config({"seen_dep_sync_notice_v4551": True})
-            except Exception:
-                pass
-
-        target = self._locate_app_py()
-        app_dir = os.path.dirname(target) if target else None
-
-        dlg = tk.Toplevel(self.root)
-        dlg.title("One-time notice — check your supporting files")
-        dlg.configure(bg=APP_BG)
-        dlg.resizable(False, True)   # allow vertical grow so nothing clips at
-        dlg.transient(self.root)     # high-DPI / large Windows text scaling
+    def _run_restore_with_progress(self, app_dir):
+        """Run the manifest sync to restore missing/damaged files, shown with the
+        standard updater UI: a progress bar + a colour-coded per-file log
+        (downloaded / up-to-date / failed) + a running count. Reuses the shared
+        _sync_manifest_deps (only the bad/missing files actually transfer). The
+        main .py is never touched here."""
+        prog = tk.Toplevel(self.root)
+        prog.title("Restoring ParaKit files")
+        prog.configure(bg=APP_BG)
+        prog.transient(self.root)
         try:
-            dlg.grab_set()
+            prog.grab_set()
         except Exception:
             pass
         try:
-            pw, ph = 520, 384
+            pw, ph = 600, 440
             px = self.root.winfo_x() + (self.root.winfo_width() - pw) // 2
             py = self.root.winfo_y() + (self.root.winfo_height() - ph) // 2
-            dlg.geometry(f"{pw}x{ph}+{px}+{py}")
+            prog.geometry(f"{pw}x{ph}+{px}+{py}")
         except Exception:
             pass
 
-        frame = ttk.Frame(dlg, padding=18)
-        frame.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(frame, text="Please check your supporting files",
+        pframe = ttk.Frame(prog, padding=16)
+        pframe.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(pframe, text="Restoring supporting files…",
                   font=("Segoe UI", 12, "bold"),
                   foreground="#b388ff").pack(anchor="w")
-        explain = (
-            "A bug in ParaKit's in-app updater (fixed in this version, 4.5.5.1) "
-            "meant that when you updated from inside the app, only the main "
-            "program file was downloaded — any supporting files a newer version "
-            "needed (detection models, cleanup code, separators, ...) could be "
-            "left out of date.\n\n"
-            "First time running ParaKit, or just cloned / downloaded it from "
-            "GitHub? This doesn't apply to you — a fresh copy already has every "
-            "current file — so you can simply dismiss this.\n\n"
-            "Otherwise, to make sure your install is complete, either update your "
-            "supporting files now (recommended), or re-download / re-clone ParaKit "
-            "from GitHub. Updates from here on keep every file in sync automatically.")
-        ttk.Label(frame, text=explain, style="TLabel",
-                  wraplength=484, justify=tk.LEFT).pack(anchor="w", pady=(6, 0))
+        status_var = tk.StringVar(value="Starting…")
+        ttk.Label(pframe, textvariable=status_var,
+                  style="Sub.TLabel").pack(anchor="w", pady=(2, 8))
+        pbar = ttk.Progressbar(pframe, mode="determinate", maximum=100, value=0)
+        pbar.pack(fill=tk.X, pady=(0, 8))
 
-        status = ttk.Label(frame, text="", foreground="#e09a3a", wraplength=484,
-                           justify=tk.LEFT)
-        status.pack(anchor="w", pady=(8, 0))
+        log_row = ttk.Frame(pframe)
+        log_row.pack(fill=tk.BOTH, expand=True)
+        log_txt = tk.Text(log_row, height=13, wrap="none", bg=LOG_BG,
+                          fg="#c9d1d9", insertbackground="#c9d1d9", relief="flat",
+                          bd=0, padx=8, pady=6, font=("Consolas", 9),
+                          highlightthickness=1, highlightbackground="#2a2440")
+        log_sb = ttk.Scrollbar(log_row, orient="vertical", command=log_txt.yview)
+        log_txt.configure(yscrollcommand=log_sb.set)
+        log_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        log_txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        log_txt.tag_configure("hdr", foreground="#b388ff")
+        log_txt.tag_configure("ok", foreground="#00c853")
+        log_txt.tag_configure("dl", foreground="#58a6ff")
+        log_txt.tag_configure("err", foreground="#e63946")
+        log_txt.tag_configure("dim", foreground="#8a8a8a")
+        log_txt.configure(state="disabled")
 
-        btn_row = ttk.Frame(frame)
-        btn_row.pack(anchor="e", pady=(14, 0), fill=tk.X)
-        buttons = {}
+        btn_row = ttk.Frame(pframe)
+        btn_row.pack(anchor="e", pady=(12, 0))
+        close_btn = ttk.Button(btn_row, text="Close", state=tk.DISABLED,
+                               command=prog.destroy)
+        close_btn.pack(side=tk.RIGHT)
+        prog.protocol("WM_DELETE_WINDOW", lambda: None)   # blocked mid-restore
 
-        def _open_github():
-            import webbrowser
+        def _ui(fn):
             try:
-                # Open the repo main page (not the raw .py blob view).
-                webbrowser.open(self.PARAKIT_RELEASE_URL)
+                self.root.after(0, fn)
             except Exception:
                 pass
 
-        def _close():
-            _mark_seen()
-            try:
-                dlg.destroy()
-            except Exception:
-                pass
+        def log(line, tag="dim"):
+            def _do():
+                try:
+                    log_txt.configure(state="normal")
+                    log_txt.insert("end", line + "\n", (tag,))
+                    log_txt.see("end")
+                    log_txt.configure(state="disabled")
+                except Exception:
+                    pass
+            _ui(_do)
 
-        def _do_sync():
-            if not app_dir:
-                status.configure(
-                    text="Couldn't locate your ParaKit folder — use Open GitHub instead.")
+        def set_status(s):
+            _ui(lambda: status_var.set(s))
+
+        def set_prog(done, total):
+            _ui(lambda: pbar.configure(maximum=max(1, total), value=done))
+
+        def dep_progress(status, rel, done, total):
+            if status == "start":
+                log(f"Checking {total} file(s)…", "hdr")
+                set_prog(0, total)
                 return
-            for b in buttons.values():
+            set_prog(done, total)
+            if status == "updated":
+                log(f"  ⬇  restored      {rel}", "dl")
+            elif status == "skipped":
+                log(f"  ✓  already ok    {rel}", "ok")
+            elif status == "failed":
+                log(f"  ✗  failed        {rel}", "err")
+            set_status(f"Files: {done}/{total}…")
+
+        def _finish(summary, tag):
+            def _do():
                 try:
-                    b.configure(state=tk.DISABLED)
+                    status_var.set(summary)
+                    pbar.configure(value=pbar.cget("maximum"))
+                    close_btn.configure(state=tk.NORMAL)
+                    prog.protocol("WM_DELETE_WINDOW", prog.destroy)
                 except Exception:
                     pass
-            status.configure(
-                text="Updating supporting files… (this can take a minute)")
+            log(summary, tag)
+            _ui(_do)
 
-            def _work():
-                try:
-                    updated, skipped, failed = self._sync_manifest_deps(app_dir)
-                except Exception as e:
-                    updated, skipped, failed = [], 0, [f"error ({e})"]
+        def _work():
+            set_status("Downloading the files ParaKit needs…")
+            try:
+                updated, skipped, failed = self._sync_manifest_deps(
+                    app_dir, progress=dep_progress)
+            except Exception as e:
+                _finish("Restore failed — check your internet connection and "
+                        "try again. (%s)" % e, "err")
+                return
+            parts = []
+            if updated:
+                parts.append(f"{len(updated)} file(s) restored")
+            if skipped:
+                parts.append(f"{skipped} already ok")
+            if failed:
+                parts.append(f"{len(failed)} could not be downloaded")
+            summary = ("; ".join(parts) or "Nothing to do") + "."
+            if not failed and updated:
+                summary += "  Close and reopen ParaKit so the new files load."
+            _finish(summary, "err" if failed else "ok")
 
-                def _finish():
-                    _mark_seen()
-                    try:
-                        dlg.destroy()
-                    except Exception:
-                        pass
-                    if not updated and not failed:
-                        messagebox.showinfo(
-                            "Supporting files",
-                            "Your supporting files are already up to date"
-                            + (f" ({skipped} checked)." if skipped else "."))
-                        return
-                    msg = ""
-                    if updated:
-                        shown = ", ".join(str(u) for u in updated[:8])
-                        msg += (f"{len(updated)} supporting file(s) updated: {shown}"
-                                + (f" (+{len(updated) - 8} more)"
-                                   if len(updated) > 8 else "") + "\n")
-                    if skipped:
-                        msg += f"{skipped} already up to date.\n"
-                    if failed:
-                        msg += ("\n⚠ Could not update: " + ", ".join(failed[:6])
-                                + ("  ..." if len(failed) > 6 else "")
-                                + "\nGrab these from GitHub if the app misbehaves.\n")
-                    msg += "\n(Backups saved as *.prev.)"
-                    (messagebox.showwarning if failed else messagebox.showinfo)(
-                        "Supporting files", msg.strip())
-
-                try:
-                    self.root.after(0, _finish)
-                except Exception:
-                    pass
-
-            threading.Thread(target=_work, daemon=True).start()
-
-        buttons["close"] = ttk.Button(btn_row, text="Close", command=_close)
-        buttons["close"].pack(side=tk.LEFT, padx=(0, 8))
-        buttons["github"] = ttk.Button(btn_row, text="Open GitHub",
-                                       command=_open_github)
-        buttons["github"].pack(side=tk.LEFT, padx=(0, 8))
-        if app_dir:
-            buttons["sync"] = ttk.Button(
-                btn_row, text="Update supporting files now",
-                style="Convert.TButton", command=_do_sync)
-            buttons["sync"].pack(side=tk.LEFT)
-
-        # Grow the window to the content's real height if the fixed 384 isn't
-        # enough (large text scaling / high-DPI), so the button row never clips.
-        try:
-            dlg.update_idletasks()
-            need = frame.winfo_reqheight()
-            if need > 384:
-                dlg.geometry(f"520x{need}")
-        except Exception:
-            pass
-
-        dlg.protocol("WM_DELETE_WINDOW", _close)
+        threading.Thread(target=_work, daemon=True).start()
 
     def _current_monitor_work_area(self):
         """Return the nearest monitor work-area size in pixels."""
@@ -8927,6 +9243,41 @@ class MidiToRlrrApp:
             except Exception:
                 pass
 
+        # Re-assert the Spectral tab's Spec.* ttk styles on every theme pass
+        # (owner 2026-07-20). ttkbootstrap's own re-apply passes (on widget
+        # creation / tab activation) can clobber the styles the embedded
+        # SpectralTab configured at build, which otherwise leaves its note-box /
+        # gutter area light on startup until the Dark/Light toggle re-runs
+        # _apply_theme — the SAME class as the header 'stuck on light until you
+        # click the toggle' bug. This rides every re-apply moment (the staggered
+        # startup passes + tab change + toggle), so it fixes itself within ~1 s
+        # of launch with no toggle needed. Idempotent.
+        try:
+            _spec_tab = getattr(self, "_spectral_tab", None)
+            if _spec_tab is not None:
+                import parakit_spectral_tab as _spec_mod
+                _spec_mod.apply_theme_embedded(_spec_tab)
+        except Exception:
+            pass
+
+        # v4.9.0 — same re-assertion for the Preview + Practice tabs (their
+        # embedded dark styles get clobbered by ttkbootstrap's re-apply passes
+        # exactly like Spectral's). Guarded: a missing tab attr must not throw.
+        try:
+            _pv_tab = getattr(self, "_preview_tab", None)
+            if _pv_tab is not None:
+                import parakit_preview_tab as _pv_mod
+                _pv_mod.apply_theme_embedded(_pv_tab)
+        except Exception:
+            pass
+        try:
+            _pr_tab = getattr(self, "_practice_tab", None)
+            if _pr_tab is not None:
+                import parakit_practice_tab as _pr_mod
+                _pr_mod.apply_theme_embedded(_pr_tab)
+        except Exception:
+            pass
+
         # Header label colors enforced via deferred _fix_header_labels call
 
 
@@ -9377,7 +9728,7 @@ class MidiToRlrrApp:
             ("🔍  Check for Issues",            self._pfv_run_single_button),
             ("🗑  Clear All Fields",            self._clear_all_fields),
             ("📋  Copy to Batch",               self._copy_to_batch),
-            ("📺  Preview/Practice Track",      self._creator_send_to_visualizer),
+            ("📺  Send to Preview",             self._creator_send_to_visualizer),
             ("💾  Save Project",                self._project_save),
             ("📂  Load Project",                self._project_load),
         ]
@@ -11104,9 +11455,17 @@ class MidiToRlrrApp:
                   style="Sub.TLabel", foreground="#00e0e0", wraplength=860,
                   justify=tk.LEFT).pack(anchor="w", pady=(0, 6))
 
-        _, hardware_content = self._make_collapsible_tips(
+        hw_toggle_btn, hardware_content = self._make_collapsible_tips(
             main, title="Hardware speed notes", start_open=False,
             pack_kw={"pady": (0, 10)})
+        # GPU "Check" button on the same row as the toggle: verifies that CUDA
+        # GPU acceleration for Stem Splitting is actually usable (right build
+        # installed, GPU visible, ParaKit can access/run on it).
+        hw_toggle_btn.pack_configure(side=tk.LEFT)
+        self._stem_gpu_check_btn = ttk.Button(
+            hw_toggle_btn.master, text="🔍  Check",
+            command=self._stem_check_gpu_accel)
+        self._stem_gpu_check_btn.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(hardware_content,
                   text="NVIDIA GTX 10-series through RTX 40-series: full GPU acceleration "
                        "via CUDA. Splitting typically takes ~30 seconds.\n\n"
@@ -11692,6 +12051,22 @@ class MidiToRlrrApp:
         vsb.bind("<MouseWheel>", _vsb_wheel)
 
         self._stem_library_refresh()
+
+    def _libraries_refresh_all(self, *_):
+        """Re-scan every initialized song-library view from disk so badges that
+        went stale (e.g. a FLAC deleted outside the app) get re-verified. Each
+        call is the view's own debounced 200 ms refresh, so this coalesces and
+        is cheap to call from any action handler. Uninitialized views are
+        skipped (each inner refresh guards on its own _*_lib_inner)."""
+        for fn_name in ("_yt_library_refresh",
+                        "_stem_library_refresh",
+                        "_a2m_library_refresh"):
+            fn = getattr(self, fn_name, None)
+            if fn:
+                try:
+                    fn()
+                except Exception:
+                    pass
 
     def _stem_library_refresh(self, *_):
         """Debounced entry point (search keystrokes / sort / folder change).
@@ -12528,6 +12903,9 @@ class MidiToRlrrApp:
             self._stem_log(f"Loaded from Your Songs: {os.path.basename(path)}")
         except Exception:
             pass
+        # Re-verify library badges from disk (owner 2026-07-20): pressing an
+        # action re-checks FLAC/OGG/STEMS/MIDI badges against the actual files.
+        self._libraries_refresh_all()
 
     def _stem_lib_on_open_stems(self, path):
         """Open Stems chip — open the folder that actually holds this song's
@@ -12544,6 +12922,8 @@ class MidiToRlrrApp:
                     self._open_folder_crossplatform(d)
             except Exception:
                 pass
+        # Re-verify library badges from disk (owner 2026-07-20).
+        self._libraries_refresh_all()
 
     def _stem_lib_on_play(self, path):
         """Play/Pause chip — toggle the SHARED single-stream pygame preview
@@ -12705,6 +13085,8 @@ class MidiToRlrrApp:
                 4000)
         except Exception:
             pass
+        # Re-verify library badges from disk (owner 2026-07-20).
+        self._libraries_refresh_all()
 
     def _a2m_library_build(self, parent):
         """Build the Song Library panel. Mirrors _stem_library_build (search +
@@ -13171,6 +13553,8 @@ class MidiToRlrrApp:
                     self._open_folder_crossplatform(d)
             except Exception:
                 pass
+        # Re-verify library badges from disk (owner 2026-07-20).
+        self._libraries_refresh_all()
 
     def _a2m_lib_on_play(self, path):
         """Play/Pause chip — toggles the SHARED single-stream preview, then
@@ -13593,6 +13977,157 @@ demucs.separate.main()
             self.stem_log_text.see(tk.END)
             self.stem_log_text.configure(state="disabled")
         self.root.after(0, _do)
+
+    def _stem_check_gpu_accel(self):
+        """Verify GPU acceleration for Stem Splitting is actually usable. Reuses
+        the same arch-probe as _stem_start_inner. Runs the torch import + probe
+        on a worker thread (torch import is slow) and marshals the result popup
+        back to the main thread."""
+        try:
+            self._stem_gpu_check_btn.configure(state="disabled",
+                                               text="Checking…")
+        except Exception:
+            pass
+
+        def _worker():
+            title, body, kind = self._stem_probe_gpu_accel()
+
+            def _show():
+                try:
+                    self._stem_gpu_check_btn.configure(state="normal",
+                                                       text="\U0001f50d  Check")
+                except Exception:
+                    pass
+                {"info": messagebox.showinfo,
+                 "warn": messagebox.showwarning,
+                 "error": messagebox.showerror}.get(
+                    kind, messagebox.showinfo)(title, body)
+            self.root.after(0, _show)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _stem_probe_gpu_accel(self):
+        """Returns (title, body, kind). SAME detection algorithm as
+        _stem_start_inner (torch.cuda arch probe), plus a CPU-only-wheel check
+        and a tiny real GPU op to prove access. Read-only: never changes the
+        torch env or global state."""
+        # Accurate generational facts + EXACT, verified install guidance (every
+        # page/URL/selector checked 2026-07-20). sm_120 = Blackwell/RTX 50-series
+        # (needs cu128); sm_50..sm_90 = GTX10..Hopper incl. RTX 40 = sm_89, work
+        # with a standard CUDA build; Demucs needs CUDA (NVIDIA-only).
+        _FIX = ("To enable GPU acceleration:\n"
+                "  1. Update your NVIDIA driver — the latest Game Ready or Studio "
+                "driver\n"
+                "     at https://www.nvidia.com/download/index.aspx (or via the "
+                "NVIDIA App).\n"
+                "  2. Install the CUDA 12.8 PyTorch build. At\n"
+                "     https://pytorch.org/get-started/locally/ pick these "
+                "selectors:\n"
+                "       PyTorch Build = Stable,  Your OS = Windows,  Package = "
+                "Pip,\n"
+                "       Language = Python,  Compute Platform = CUDA 12.8\n"
+                "     then run the command it shows:\n"
+                "       pip install torch torchvision torchaudio "
+                "--index-url https://download.pytorch.org/whl/cu128\n"
+                "     (This bundles the CUDA 12.8 runtime — you do NOT need the "
+                "separate\n"
+                "     NVIDIA CUDA Toolkit for ParaKit.)")
+        _TOOLKIT = ("Optional (NOT required for ParaKit) — the standalone NVIDIA "
+                    "CUDA Toolkit\n"
+                    "is at https://developer.nvidia.com/cuda-12-8-0-download-archive"
+                    " — on that page\n"
+                    "select Operating System = Windows, Architecture = x86_64, "
+                    "Version = 11,\n"
+                    "Installer Type = exe (local); the download is named "
+                    "cuda_12.8.0_<driver>_windows.exe\n"
+                    "(the big green 'Download' button).")
+        _GENS = ("Which GPUs accelerate splitting:\n"
+                 "  • GTX 10-series through RTX 40-series: work with a standard "
+                 "CUDA PyTorch\n"
+                 "    build (the cu128 build above also covers them).\n"
+                 "  • RTX 50-series (Blackwell): need the CUDA 12.8 (cu128) build "
+                 "above.\n"
+                 "  • AMD / Intel / other GPUs: CPU-only — Demucs requires CUDA, "
+                 "which is\n"
+                 "    NVIDIA-only. (Expected, not a fault.)")
+        try:
+            import torch as _torch
+        except Exception as e:
+            return ("GPU acceleration unavailable",
+                    "PyTorch is not installed, so the Stem Splitter runs on CPU "
+                    "only.\n\n%s\n\n%s\n\n%s\n\n(%s)"
+                    % (_FIX, _GENS, _TOOLKIT, e), "warn")
+
+        cuda_ver = getattr(_torch.version, "cuda", None)
+        if cuda_ver is None:
+            return ("CPU-only PyTorch build",
+                    "The installed PyTorch is a CPU-only build (no CUDA), so the "
+                    "Stem Splitter runs on CPU.\n\n%s\n\n%s\n\n%s"
+                    % (_FIX, _GENS, _TOOLKIT), "warn")
+
+        cu_tag = "cu" + cuda_ver.replace(".", "")
+        if not _torch.cuda.is_available():
+            return ("No CUDA GPU visible",
+                    "PyTorch has CUDA %s (%s) but no CUDA GPU is visible, so the "
+                    "Stem Splitter will run on CPU.\n\nThis usually means no "
+                    "NVIDIA GPU is present, an outdated or missing NVIDIA driver, "
+                    "or the GPU is hidden.\n\n%s\n\nIf you have an NVIDIA GPU, "
+                    "update its driver — the latest Game Ready or Studio driver "
+                    "at\nhttps://www.nvidia.com/download/index.aspx (or via the "
+                    "NVIDIA App)." % (cuda_ver, cu_tag, _GENS), "warn")
+
+        # --- identical arch probe to _stem_start_inner ---
+        _sm = _torch.cuda.get_device_capability()
+        _sm_val = _sm[0] * 10 + _sm[1]
+        _sm_str = "sm_%d" % _sm_val
+        try:
+            _arch = _torch.cuda.get_arch_list()
+        except Exception:
+            _arch = []
+        if _arch:
+            ok = (_sm_str in _arch) or ((_sm_str + "a") in _arch)
+        else:
+            ok = _sm_val in [50, 60, 61, 70, 75, 80, 86, 89, 90]
+        try:
+            _name = _torch.cuda.get_device_name(0)
+        except Exception:
+            _name = "CUDA GPU"
+
+        if not ok:
+            if _sm_val == 120:
+                _why = ("Your RTX 50-series GPU (Blackwell, %s) needs a CUDA "
+                        "12.8+ (cu128) PyTorch build." % _sm_str)
+            elif _sm_val > 120:
+                _why = ("Your GPU (%s, %s) is newer than this PyTorch build "
+                        "supports — install a newer CUDA PyTorch build."
+                        % (_name, _sm_str))
+            else:
+                _why = ("Your GPU (%s, %s) is not supported by this PyTorch "
+                        "build." % (_name, _sm_str))
+            return ("GPU architecture not supported by this build",
+                    "%s\n\nThis PyTorch build was compiled for: %s.\nStem "
+                    "Splitter will run on CPU until a matching build is "
+                    "installed.\n\n%s\n\n%s"
+                    % (_why, ", ".join(_arch) if _arch else "n/a",
+                       _FIX, _GENS), "warn")
+
+        # --- prove real GPU access (tiny, safe, no env change) ---
+        try:
+            _x = _torch.zeros(8, device="cuda")
+            _ = (_x + 1).sum().item()
+            del _x
+            _torch.cuda.empty_cache()
+        except Exception as e:
+            return ("GPU test operation failed",
+                    "CUDA %s (%s) is reported available on %s (%s), but a test "
+                    "GPU operation failed:\n\n%s\n\nThis usually means a driver / "
+                    "CUDA-runtime mismatch.\n\n%s\n\nStem Splitter will fall back "
+                    "to CPU." % (cuda_ver, cu_tag, _name, _sm_str, e, _FIX),
+                    "error")
+
+        return ("GPU acceleration available",
+                "CUDA %s / %s GPU acceleration for Stem Splitter available.\n\n"
+                "Device: %s (%s)." % (cuda_ver, cu_tag, _name, _sm_str), "info")
 
     def _stem_start(self):
         input_path = self.stem_input_var.get().strip()
@@ -14900,6 +15435,30 @@ demucs.separate.main()
             "Removes kick hits the detector added that aren't really there, using\n"
             "a recall-safe threshold. Part of the cleanup pass above.")
 
+        # v4.9.0 — F12 cross-stem bleed kick pass. A SECOND, independent phantom-kick
+        # remover: it separates the song into 4 stems (drums/bass/vocals/other) and
+        # removes kicks where a non-drum instrument (usually bass) bled into the drums
+        # stem. Validated orthogonal to the decay remover above (catches phantoms it
+        # misses). Default OFF because it runs an extra stem separation (adds time).
+        # Kicks in a lower-confidence band are FLAGGED for review in the MIDI Editor
+        # instead of removed. Off => byte-identical to the pre-bleed cleanup output.
+        self.a2m_cleanup_bleed_var = tk.BooleanVar(
+            value=load_config().get("a2m_cleanup_bleed", False))
+        cleanup_bleed_cb = ttk.Checkbutton(
+            adv_frame,
+            text="      •  Remove cross-stem bleed kicks  (slower — separates stems)",
+            variable=self.a2m_cleanup_bleed_var)
+        cleanup_bleed_cb.pack(anchor="w")
+        self._add_tooltip(
+            cleanup_bleed_cb,
+            "A second phantom-kick check that catches false kicks the remover above\n"
+            "misses: it splits the song into drums / bass / vocals / other and removes\n"
+            "kicks where another instrument (usually bass) bled into the drums track.\n\n"
+            "This runs an extra stem separation, so it adds time to each conversion —\n"
+            "leave OFF unless you want the extra pass. Kicks that are only borderline\n"
+            "are highlighted for review in the MIDI Editor rather than removed.\n"
+            "Kick lane only; never adds or moves notes. Needs the source audio present.")
+
         self.a2m_remove_flams_var = tk.BooleanVar(
             value=load_config().get("a2m_remove_flams", True))
         remove_flams_cb = ttk.Checkbutton(
@@ -15035,7 +15594,7 @@ demucs.separate.main()
                        "Option 2 — Adjust dedup gap:\n"
                        "Lower the Snare or Tom gap and regenerate so the rapid hits "
                        "are no longer discarded as duplicates.\n\n"
-                       "If you hear a rapid roll in the MIDI Editor or Preview/Practice Track "
+                       "If you hear a rapid roll in the MIDI Editor or Preview "
                        "but see a total note gap (no notes at all in that section):\n"
                        "The roll was not detected at all. Lower the Snare/Tom dedup gap "
                        "and regenerate, or add the missing notes manually in the MIDI "
@@ -15191,6 +15750,8 @@ demucs.separate.main()
             self.a2m_cleanup_cymbal_var.set(_a2m_cfg["a2m_cleanup_cymbal"])
         if "a2m_cleanup_kick" in _a2m_cfg:
             self.a2m_cleanup_kick_var.set(_a2m_cfg["a2m_cleanup_kick"])
+        if "a2m_cleanup_bleed" in _a2m_cfg:
+            self.a2m_cleanup_bleed_var.set(_a2m_cfg["a2m_cleanup_bleed"])
         # v4.7.11 — Enhanced Detection retired; ignore any saved mode, keep it OFF.
         self.a2m_enhanced_detection_mode_var.set("off")
         # Apply restored engine (shows/hides ML frame, syncs dedup toggle)
@@ -15211,6 +15772,8 @@ demucs.separate.main()
             {"a2m_cleanup_cymbal": self.a2m_cleanup_cymbal_var.get()}))
         self.a2m_cleanup_kick_var.trace_add("write", lambda *_: save_config(
             {"a2m_cleanup_kick": self.a2m_cleanup_kick_var.get()}))
+        self.a2m_cleanup_bleed_var.trace_add("write", lambda *_: save_config(
+            {"a2m_cleanup_bleed": self.a2m_cleanup_bleed_var.get()}))
         self.a2m_cymbal_resolver_var = tk.BooleanVar(
             value=load_config().get("a2m_cymbal_resolver", False))
         cymbal_resolver_cb = ttk.Checkbutton(
@@ -15469,6 +16032,20 @@ demucs.separate.main()
                                           command=self._a2m_preview_last,
                                           state="disabled")
         self.a2m_preview_btn.pack(side=tk.LEFT, ipady=8)
+        # Check the just-made detection in Spectral Comparison (owner 2026-07-20).
+        # Gated the same as the preview button (enabled once a MIDI exists).
+        self.a2m_spectral_btn = ttk.Button(
+            a2m_action_row, text="📊  Spectral",
+            command=lambda: self._send_to_spectral(
+                drums=getattr(self, "_a2m_source_file", "") or "",
+                chart=getattr(self, "_a2m_last_midi", "") or ""),
+            state="disabled")
+        self.a2m_spectral_btn.pack(side=tk.LEFT, ipady=8, padx=(4, 0))
+        self._add_tooltip(
+            self.a2m_spectral_btn,
+            "Check the detection you just made in the Spectral Comparison tab.\n"
+            "Sends the source audio + the generated chart. Note: the source may\n"
+            "be a full mix, so the graph can look busier than an isolated stem.")
         self._a2m_last_midi = None  # track last generated MIDI path
 
         # Progress bar + elapsed timer — mirrors the Stem Splitter
@@ -16519,9 +17096,19 @@ demucs.separate.main()
                                    is not None and self.a2m_cleanup_cymbal_var.get()),
             "cleanup_kick": bool(getattr(self, "a2m_cleanup_kick_var", None)
                                  is not None and self.a2m_cleanup_kick_var.get()),
+            # v4.9.0 — F12 cross-stem bleed kick pass (default OFF). Snapshotted here
+            # like the other cleanup toggles so the worker never reads a Tk var.
+            "cleanup_bleed": bool(getattr(self, "a2m_cleanup_bleed_var", None)
+                                  is not None and self.a2m_cleanup_bleed_var.get()),
             "allow_ride": bool(getattr(self, "a2m_ride_var", None)
                                is not None and self.a2m_ride_var.get()),
         }
+        # v4.9.0 — the F12 review-flag stash is per-conversion. Clear it at the START of
+        # every run so a PRIOR conversion's flags can never leak onto this run's chart —
+        # the cleanup pass's own early returns (cleanup off, no audio, multi-tempo, …)
+        # never reach the stash-write, so clearing here + the path-tag match in
+        # _me_open_chart together close the cross-chart leak (breaker: F12 stash leak).
+        self._a2m_bleed_review_flags = None
 
         thread = threading.Thread(
             target=self._a2m_do_convert,
@@ -18012,8 +18599,9 @@ demucs.separate.main()
             # Save settings for this specific file (the USER's file — input_path
             # may point at the separator's temp composite; see F1 note above)
             self.root.after(0, lambda p=_orig_input_path: self._a2m_save_file_settings(p))
-            # Enable preview button
+            # Enable preview + Send-to-Spectral buttons
             self.root.after(0, lambda: self.a2m_preview_btn.configure(state="normal"))
+            self.root.after(0, lambda: self.a2m_spectral_btn.configure(state="normal"))
             # Auto-load into MIDI Editor — LOAD ONLY; the post-passes already ran above.
             self.root.after(100, lambda p=midi_path: self._me_open_chart(p))
 
@@ -18302,9 +18890,12 @@ demucs.separate.main()
         {"name": "Hi-Hat",    "midi": [42, 44, 46, 26, 21, 22, 23], "color": "#00e5ff", "shape": "circle"},
         {"name": "Crash",     "midi": [49, 55, 57], "color": "#ff8c00", "shape": "circle"},
         {"name": "Snare",     "midi": [37, 38, 40], "color": "#e63946", "shape": "bar"},
-        {"name": "Tom 1",     "midi": [48, 50],     "color": "#1a3a8f", "shape": "bar"},
+        # v4.9.1 visual pass — Tom 1/3 brightened to the v5 mockup values
+        # (parakit-midi-editor.html CONFIG.LANES: #1a3a8f→#3a5fc8, #7b2d8b→#9b4fc0):
+        # the old deep navy/plum read nearly black on the dark lane bg.
+        {"name": "Tom 1",     "midi": [48, 50],     "color": "#3a5fc8", "shape": "bar"},
         {"name": "Tom 2",     "midi": [45, 47],     "color": "#2e8b57", "shape": "bar"},
-        {"name": "Tom 3",     "midi": [41, 43],     "color": "#7b2d8b", "shape": "bar"},
+        {"name": "Tom 3",     "midi": [41, 43],     "color": "#9b4fc0", "shape": "bar"},
         {"name": "Ride",      "midi": [51, 53, 59], "color": "#ffd700", "shape": "circle"},
         {"name": "Kick",      "midi": [35, 36],     "color": "#ff69b4", "shape": "kick"},
     ]
@@ -18562,11 +19153,18 @@ demucs.separate.main()
                 if key:
                     store = self._manual_note_store()
                     store[key] = dict(cur)
+                    # save_config returns False on a failed write (disk full /
+                    # read-only) — don't claim "saved to this chart" if it didn't
+                    # persist (breaker 2026-07-23, grok+codex): the in-memory
+                    # choice still applies THIS session, but it silently vanished
+                    # on reload while the status promised otherwise.
+                    _ok = False
                     try:
-                        save_config({self._MANUAL_NOTE_STORE_KEY: store})
+                        _ok = bool(save_config({self._MANUAL_NOTE_STORE_KEY: store}))
                     except Exception:
-                        pass
-                    where = "saved to this chart"
+                        _ok = False
+                    where = ("saved to this chart" if _ok
+                             else "couldn't save to disk — this session only")
                 else:
                     where = "this session only — no MIDI loaded"
                 try:
@@ -18925,8 +19523,25 @@ demucs.separate.main()
         edit_frame = ttk.Frame(edit_col)
         edit_frame.pack(anchor="w")
 
+        # v4.9.1 visual pass — ME toolbar buttons take the v5 mockup's outline
+        # look (dark #1b1b35 face, lavender text, faint lavender border,
+        # hover #232347 / pressed #2c1f55) instead of the app-wide purple fill.
+        # One ttk style applied through the single helper below — the toolbar
+        # LAYOUT (order, packing, padding) is byte-identical to before.
+        _st = ttk.Style()
+        _st.configure("ME.Toolbar.TButton",
+                      background="#1b1b35", foreground="#C4B5FD",
+                      bordercolor="#3a3357", lightcolor="#1b1b35",
+                      darkcolor="#1b1b35", focuscolor="#1b1b35",
+                      relief="flat", padding=(8, 3))
+        _st.map("ME.Toolbar.TButton",
+                background=[("pressed", "#2c1f55"), ("active", "#232347")],
+                foreground=[("active", "#EFECFF"), ("disabled", "#6f6a94")],
+                bordercolor=[("active", "#5a4f8a")])
+
         def _tool_button(parent, text, command, tip, padx=(0, 2)):
-            btn = ttk.Button(parent, text=text, command=command)
+            btn = ttk.Button(parent, text=text, command=command,
+                             style="ME.Toolbar.TButton")
             btn.pack(side=tk.LEFT, padx=padx)
             self._add_tooltip(btn, tip)
             return btn
@@ -19066,8 +19681,26 @@ demucs.separate.main()
         # Play/Stop buttons) but wrap it in a CYAN BORDER so it still stands out.
         # The border is a 2px cyan tk.Frame around a default-purple ttk.Button;
         # this renders reliably, whereas a cyan ttk style / tk.Button bg did not.
-        af_border = tk.Frame(af_row, bg="#00d4d4")
-        af_border.pack(side=tk.LEFT)
+        # Send-to-Spectral now sits directly ABOVE Auto Fetch Audio (owner
+        # 2026-07-20; moved here from beside the Stop button).
+        af_col = ttk.Frame(af_row)
+        af_col.pack(side=tk.LEFT)
+        self.me_spectral_btn = ttk.Button(
+            af_col, text="📊  Spectral",
+            command=lambda: self._send_to_spectral(
+                drums=self.me_audio_var.get().strip(),
+                chart=(getattr(self, "_me_last_midi", None)
+                       or self.me_midi_var.get() or "").strip(),
+                mix=self.me_audio_mix_var.get().strip()),
+            width=21)
+        self.me_spectral_btn.pack(side=tk.TOP, fill=tk.X, pady=(0, 3))
+        self._add_tooltip(
+            self.me_spectral_btn,
+            "Open the loaded chart in the Spectral Comparison tab to check the\n"
+            "detection against the audio -- sends the chart plus its Drums stem /\n"
+            "Full Mix so MISS / PHANTOM disagreements show on the graph.")
+        af_border = tk.Frame(af_col, bg="#00d4d4")
+        af_border.pack(side=tk.TOP)
         self.me_auto_fetch_btn = ttk.Button(
             af_border, text="🎵  Auto Fetch Audio",
             command=self._me_auto_fetch_audio, width=21)
@@ -19112,6 +19745,9 @@ demucs.separate.main()
 
         ttk.Button(pb_frame, text="⏹  Stop",
                    command=self._me_stop).pack(side=tk.LEFT, padx=(0, 6))
+
+        # (Send-to-Spectral moved above the Auto Fetch Audio button -- owner
+        # 2026-07-20; it used to sit here, to the right of Stop.)
 
         # v4.4.57.4-6 — Toolbar order swapped per owner request 2026-05-17:
         # Playback-position info (time + seek hint + Review Speed) now sits
@@ -19454,14 +20090,19 @@ demucs.separate.main()
         ttk.Checkbutton(snap_outer, text="Grid lines over notes",
                         variable=self.me_grid_over_notes_var,
                         command=self._me_redraw).pack(anchor="w")
-        self.me_all_squares_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(snap_outer, text="All notes as squares",
-                        variable=self.me_all_squares_var,
-                        command=self._me_redraw).pack(anchor="w")
+        # v4.9.1 — "All notes as squares" checkbox REMOVED (owner: dead — the
+        # default draw already renders every non-kick lane as a rect, so the
+        # toggle had no visible effect; not persisted, nothing to migrate).
         self.me_full_height_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(snap_outer, text="Show notes as in-game icons",
-                        variable=self.me_full_height_var,
-                        command=self._me_redraw).pack(anchor="w", pady=(0, 3))
+        _icons_cb = ttk.Checkbutton(snap_outer, text="Show notes as in-game icons",
+                                    variable=self.me_full_height_var,
+                                    command=self._me_redraw)
+        _icons_cb.pack(anchor="w", pady=(0, 3))
+        self._add_tooltip(
+            _icons_cb,
+            "When on, cymbal lanes (Hi-Hat / Crash / Ride) draw as circles —\n"
+            "like the in-game icons. Toms, snare, and kick look the same\n"
+            "either way.")
 
         # Low-confidence shade toggle (hot pink — for ML/Hybrid results)
         self.me_conf_shade_var = tk.BooleanVar(value=False)
@@ -20594,8 +21235,11 @@ demucs.separate.main()
         self._me_configure_pending = False
         if not hasattr(self, 'me_notes'):
             return
-        if self.me_notes or self.me_duration > 0:
-            self._me_redraw()
+        # v4.9.2: always redraw, even with NO chart loaded, so the empty piano
+        # roll (lanes + beat grid + ruler) is visible the moment the tab is shown
+        # — the user no longer has to click the blank canvas to make it appear.
+        # _me_redraw handles the empty case (min-800px grid, zero notes to draw).
+        self._me_redraw()
 
     def _me_browse(self):
         # Include *.parakit_bak so the one-time in-place-save backups are visible
@@ -21219,7 +21863,7 @@ demucs.separate.main()
         try:
             import json as _json
             text = None
-            for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
+            for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1"):
                 try:
                     with open(rlrr_path, "r", encoding=enc) as f:
                         text = f.read()
@@ -21847,22 +22491,18 @@ demucs.separate.main()
             nb = int(b * alpha + bb * (1 - alpha))
             return f"#{nr:02x}{ng:02x}{nb:02x}"
         ghost_color = _blend(lane["color"], op)
-        # Mirror the main editor's full-width-vs-icon rendering setting.
-        # When me_full_height_var is False (default), draw full-width bars
-        # matching regular notes. When True, draw icon shapes.
-        if getattr(self, 'me_full_height_var', None) and not self.me_full_height_var.get():
-            # Full-width bar — same style as main editor default
-            w2 = max(4, int(7 * note_scale))
-            c.create_rectangle(x - w2, y1 + 1, x + w2, y2 - 1,
-                               fill=ghost_color, outline="", tags="ghost_note")
-        elif shape == "circle":
+        # Mirror the main editor's shape rule (v4.9.1): default = full-lane bar
+        # for every non-kick lane; "in-game icons" ON diverts ONLY the circle
+        # (cymbal) lanes to circles. Toms/snare draw the same in both modes.
+        _icons = bool(getattr(self, 'me_full_height_var', None)
+                      and self.me_full_height_var.get())
+        if _icons and shape == "circle":
             r = max(5, int(8 * note_scale))
             c.create_oval(x - r, mid_y - r, x + r, mid_y + r,
                           fill=ghost_color, outline="", tags="ghost_note")
         else:
-            w2 = max(3, int(6 * note_scale))
-            h2 = max(5, int(12 * note_scale))
-            c.create_rectangle(x - w2, mid_y - h2, x + w2, mid_y + h2,
+            w2 = max(4, int(7 * note_scale))
+            c.create_rectangle(x - w2, y1 + 1, x + w2, y2 - 1,
                                fill=ghost_color, outline="", tags="ghost_note")
 
     def _me_apply_marker_prop(self, prop, value):
@@ -22018,7 +22658,7 @@ demucs.separate.main()
         # maps to the same pixel — otherwise any formula mismatch causes drift.
         bpm = getattr(self, 'me_bpm', 120.0) or 120.0
         try:
-            raw = self.me_tempo_entries[0][1].get().strip()
+            raw = self._me_tempo_rows[0][1].get().strip()
             if raw:
                 bpm = max(1.0, float(raw))
         except Exception:
@@ -22153,6 +22793,30 @@ demucs.separate.main()
         # Viewport-culled: only draw lines within the visible time window.
         total_secs = self.me_duration + pad_secs
         n_subs = int(total_secs / sub_beat) + 4
+        # v4.9.1 — RULER SECONDS (v5 parity, owner spec): between the bar
+        # numbers, beat/subdivision tick positions are labeled with ABSOLUTE
+        # chart time ("35.5s"), replacing the old per-bar 2/3/4 beat counters.
+        # Density is zoom-aware: a tick is labeled only when its spacing gives
+        # the text room (>= _SEC_MIN_PX), so labels appear beat-first, then
+        # half-beat, then quarter-beat as you zoom in — like the v5 ruler.
+        # DISTINCT COLOR (owner): the "Xs" time labels use a muted lavender so
+        # they read apart from the blue sequential bar counters at a glance.
+        # Labels are tied to EXISTING gridline ticks (never new geometry), and
+        # a label whose rounded text equals the previous one is skipped.
+        ME_RULER_SECS = "#8f88c2"       # seconds labels (vs #5a8aaa bar numbers)
+        _SEC_MIN_PX = 34                # min px between labels ("135.5s" fits)
+        _beat_px = max(1, self._me_secs_to_x(sub_beat * _subs_per_beat))
+        _last_sec_txt = None
+
+        def _sec_label(x, t):
+            nonlocal _last_sec_txt
+            txt = f"{t:.1f}s"
+            if txt == _last_sec_txt:
+                return
+            _last_sec_txt = txt
+            c.create_text(x + 3, 5, text=txt,
+                          fill=ME_RULER_SECS, font=("Consolas", 7), anchor="nw")
+
         for sub_idx in range(n_subs):
             t = sub_idx * sub_beat
             if t < _vis_t0 or t > _vis_t1:
@@ -22171,8 +22835,8 @@ demucs.separate.main()
             elif is_beat:
                 c.create_line(x, self.ME_HEADER_H, x, total_h,
                               fill="#2a3a5a", width=1)
-                c.create_text(x + 3, 4, text=f"{beat_num % 4 + 1}",
-                              fill="#3a5a7a", font=("Consolas", 7), anchor="nw")
+                if _beat_px >= _SEC_MIN_PX:
+                    _sec_label(x, t)
             else:
                 # Progressive shading: finer subdivisions draw progressively lighter
                 if _subs_per_beat >= 8 and sub_in_beat % (_subs_per_beat // 2) == 0:
@@ -22183,6 +22847,16 @@ demucs.separate.main()
                     _sfill, _sdash = "#1a2a3a", (2, 4)    # finest subdivision line
                 c.create_line(x, self.ME_HEADER_H, x, total_h,
                               fill=_sfill, width=1, dash=_sdash)
+                # Deep-zoom seconds: label the half- then quarter-beat ticks
+                # once their own spacing clears the width gate.
+                if (_subs_per_beat >= 2
+                        and sub_in_beat % max(1, _subs_per_beat // 2) == 0
+                        and _beat_px // 2 >= _SEC_MIN_PX):
+                    _sec_label(x, t)
+                elif (_subs_per_beat >= 4
+                        and sub_in_beat % max(1, _subs_per_beat // 4) == 0
+                        and _beat_px // 4 >= _SEC_MIN_PX):
+                    _sec_label(x, t)
 
         # ── Lane separator lines ──────────────────────────────────────────────
         # Same viewport clip as the lane backgrounds above — see _bg_x0/_bg_x1
@@ -22325,10 +22999,11 @@ demucs.separate.main()
         shape  = lane["shape"]
         vel    = note.get("vel", 100)
 
-        # Override shape if all-squares mode is on
-        if getattr(self, 'me_all_squares_var', None) and self.me_all_squares_var.get():
-            if shape != "kick":
-                shape = "bar"
+        # v4.9.1 — the "All notes as squares" override was REMOVED (owner:
+        # dead function). It only forced cymbal shapes to "bar", but the
+        # default draw branch below already renders every non-kick lane as a
+        # rect unless in-game icons is ON — so the toggle was invisible in the
+        # default mode and redundant with icons-off otherwise.
         t      = note["time"]
         x      = self._me_secs_to_x(t)
         y1     = self._me_lane_y(note["lane_idx"])
@@ -22370,8 +23045,11 @@ demucs.separate.main()
                     'balance':   "#ff00ff",
                     'misclass':  "#00ff88" if note["lane_idx"] == 6 else "#ffff00",  # lime on Ride (gold lane), yellow elsewhere
                     'dt_review': "#ff8c00",   # orange — flagged by Detection Troubleshooter
+                    'bleed_review': "#ff8c00",  # orange — SAME as dt_review: phantom/detection-suspect flags share one color
                 }.get(flag_type, "#333355")
-                outline_w = 4
+                # v4.9.1 visual pass — w4→w3 (v5 mockup flagRing width): cleaner,
+                # less blobby ring; the flag color still reads instantly.
+                outline_w = 3
                 has_special_outline = True
             elif is_open_hat:
                 outline_color = OPEN_HAT_OUTLINE   # yellow — open hi-hat
@@ -22403,22 +23081,14 @@ demucs.separate.main()
 
         ghost_outline = outline_color
 
-        def _draw_note_border_shape(kind, x1, y1b, x2, y2b, *, width=1, dash=None):
-            # Draw the black border behind the visible outline so ghost-note,
-            # accent, selection, and flag outlines stay readable on top.
-            border_w = max(1, int(width) + 2) if has_special_outline else max(1, int(width))
-            if kind == "line":
-                c.create_line(x1, y1b, x2, y2b, fill=NOTE_BORDER_COLOR,
-                              width=border_w, dash=dash,
-                              tags=("note", tag))
-            elif kind == "oval":
-                c.create_oval(x1 - 1, y1b - 1, x2 + 1, y2b + 1,
-                              fill="", outline=NOTE_BORDER_COLOR, width=border_w,
-                              tags=("note", tag))
-            else:
-                c.create_rectangle(x1 - 1, y1b - 1, x2 + 1, y2b + 1,
-                                   fill="", outline=NOTE_BORDER_COLOR, width=border_w,
-                                   tags=("note", tag))
+        # v4.9.1 visual pass — the separate black border-shape UNDERLAY was
+        # removed (it drew a 1px-larger black halo behind every note, doubling
+        # the ring and reading fuzzy). Each note is now ONE canvas item whose
+        # own `outline=` carries the ring — the v5 mockup's single-ring look
+        # (drawNote(): fill + one crisp stroke). Also halves per-note canvas
+        # items (2→1), a real win inside the 16ms redraw budget. Hit-testing is
+        # model-based (_me_find_note_at) and the reactive flash / single-note
+        # update are tag-based, so item count is safe to change.
 
         def _draw_conf_stripes(x1, y1s, x2, y2s):
             if not has_conf_shade:
@@ -22444,8 +23114,6 @@ demucs.separate.main()
             total_h = self.ME_HEADER_H + len(self.MIDI_EDITOR_LANES) * self.ME_LANE_H
             lw = max(1, int(3 * note_scale)) if not is_ghost else 1
             dash = (4, 4) if is_ghost else None
-            _draw_note_border_shape("line", x, self.ME_HEADER_H, x, total_h,
-                                    width=lw, dash=dash)
             item = c.create_line(x, self.ME_HEADER_H, x, total_h,
                                  fill=color, width=lw, dash=dash,
                                  tags=("note", tag))
@@ -22454,34 +23122,28 @@ demucs.separate.main()
                               fill=outline_color, width=2,
                               tags=("note", tag))
             # Full-width kick lines intentionally do not get confidence stripes.
-        elif getattr(self, 'me_full_height_var', None) and not self.me_full_height_var.get():
+        elif not ((getattr(self, 'me_full_height_var', None)
+                   and self.me_full_height_var.get()) and shape == "circle"):
+            # v4.9.1 (owner spec) — the DEFAULT full-lane rect is now the look
+            # for EVERY non-kick lane in both modes; "Show notes as in-game
+            # icons" diverts ONLY the circle-shaped cymbal lanes (Hi-Hat /
+            # Crash / Ride) to circles below. Toms/snare/kick are identical in
+            # both modes — the old icons-ON centered mini-bar branch is gone.
             w2 = max(4, int(7 * note_scale))
             oc = ghost_outline if is_ghost else outline_color
             ow = max(outline_w, 1) if is_ghost else outline_w
-            _draw_note_border_shape("rect", x - w2, y1 + 1, x + w2, y2 - 1)
             item = c.create_rectangle(x - w2, y1 + 1, x + w2, y2 - 1,
                                       fill=fill_color, outline=oc,
                                       width=ow, tags=("note", tag))
             _draw_conf_stripes(x - w2 + 1, y1 + 2, x + w2 - 1, y2 - 2)
-        elif shape == "circle":
+        else:  # in-game icons ON + a cymbal lane -> circle
             r = max(6, int(9 * note_scale))
             oc = ghost_outline if is_ghost else outline_color
             ow = max(outline_w, 1) if is_ghost else outline_w
-            _draw_note_border_shape("oval", x - r, mid_y - r, x + r, mid_y + r)
             item = c.create_oval(x - r, mid_y - r, x + r, mid_y + r,
                                  fill=fill_color, outline=oc,
                                  width=ow, tags=("note", tag))
             _draw_conf_stripes(x - r + 2, mid_y - r + 2, x + r - 2, mid_y + r - 2)
-        else:  # bar
-            w2 = max(4, int(7 * note_scale))
-            h2 = max(6, int(14 * note_scale))
-            oc = ghost_outline if is_ghost else outline_color
-            ow = max(outline_w, 1) if is_ghost else outline_w
-            _draw_note_border_shape("rect", x - w2, mid_y - h2, x + w2, mid_y + h2)
-            item = c.create_rectangle(x - w2, mid_y - h2, x + w2, mid_y + h2,
-                                      fill=fill_color, outline=oc,
-                                      width=ow, tags=("note", tag))
-            _draw_conf_stripes(x - w2 + 1, mid_y - h2 + 1, x + w2 - 1, mid_y + h2 - 1)
 
         self.me_note_items[item] = ni
 
@@ -22952,7 +23614,7 @@ demucs.separate.main()
                     # Real drag — push pre-drag snapshot onto undo stack and commit
                     if pre_snap is not None:
                         self.me_undo_stack.append(pre_snap)
-                        if len(self.me_undo_stack) > 50:
+                        if len(self.me_undo_stack) > self._me_undo_limit():
                             self.me_undo_stack.pop(0)
                         self.me_redo_stack.clear()
                     # Lanes were mutated live during the drag — mark the session
@@ -23023,6 +23685,7 @@ demucs.separate.main()
                 'past_end':  '⬜ Past-end flag',
                 'drift':     '🟢 Drift flag',
                 'balance':   '🟣 Balance flag',
+                'bleed_review': '🟠 Cross-stem bleed — review',
             }
             flag_desc = _FLAG_LABELS.get(flag_type, f'Flag ({flag_type})')
             menu = tk.Menu(self.root, tearoff=0,
@@ -23174,6 +23837,7 @@ demucs.separate.main()
             'past_end':  'Past end',
             'drift':     'Drift/duplicate',
             'balance':   'Balance',
+            'bleed_review': 'Cross-stem bleed',
         }
         n_total = len(flagged_times)
         pos     = flagged_times.index(nxt) + 1
@@ -23234,6 +23898,16 @@ demucs.separate.main()
             self._me_waveform_draw()
         except Exception:
             pass
+
+    def _me_undo_limit(self):
+        """Adaptive undo depth. Each snapshot deep-copies every note, so 50
+        snapshots x a 10k-note chart is ~500k copied dicts held resident. Keep
+        the full 50 for normal charts and tighten on very large ones (never below
+        12 so undo stays useful)."""
+        n = len(getattr(self, "me_notes", ()) or ())
+        if n <= 1500:
+            return 50
+        return max(12, 60000 // n)
 
     def _me_snapshot(self):
         """Build a full snapshot of editor state for undo/redo.
@@ -23342,7 +24016,7 @@ demucs.separate.main()
         _me_push_undo: first-edit lock, 50-entry cap, redo clear."""
         self._me_mark_edit_started()
         self.me_undo_stack.append(snap)
-        if len(self.me_undo_stack) > 50:
+        if len(self.me_undo_stack) > self._me_undo_limit():
             self.me_undo_stack.pop(0)
         self.me_redo_stack.clear()
 
@@ -24780,17 +25454,29 @@ demucs.separate.main()
             if not targets:
                 top.destroy()
                 return
-            self._me_push_undo()
-            moved = 0
+            # Dry pass FIRST (breaker 2026-07-23, grok): a no-op Apply — 0 notes
+            # within the window — must NOT push an undo snapshot, because
+            # _me_push_undo also CLEARS the redo stack, so a 0-move Apply silently
+            # destroyed the user's redo history and still claimed it ran. Mirror
+            # the tempo-map / dedup "push only on change" rule: compute the moves,
+            # bail out cleanly if none, and only THEN snapshot + mutate.
             _moves = []
             for i in targets:
                 t    = self.me_notes[i]["time"]
                 near = round(t / sub) * sub
                 if abs(t - near) <= window_sec:
-                    self.me_notes[i]["time"] = near
-                    _moves.append((t, near))
-                    moved += 1
-            self._me_transfer_flags(_moves)   # flags follow their notes (A2)
+                    _moves.append((i, t, near))
+            moved = len(_moves)
+            if moved == 0:
+                self.me_status_var.set(
+                    f"⊞~  Soft-quantize: no notes within {win_var.get()}ms of the "
+                    f"{subdiv_var.get()}-note grid — nothing changed")
+                top.destroy()
+                return
+            self._me_push_undo()
+            for i, _t, near in _moves:
+                self.me_notes[i]["time"] = near
+            self._me_transfer_flags([(t, near) for _i, t, near in _moves])  # flags follow (A2)
             _sel = self._me_capture_selection()
             self.me_notes.sort(key=lambda n: n["time"])
             self._me_restore_selection(_sel)
@@ -25196,6 +25882,7 @@ demucs.separate.main()
             "cleanup_pass": getattr(self, "a2m_cleanup_pass_var", tk.BooleanVar(value=True)).get(),
             "cleanup_cymbal": getattr(self, "a2m_cleanup_cymbal_var", tk.BooleanVar(value=True)).get(),
             "cleanup_kick": getattr(self, "a2m_cleanup_kick_var", tk.BooleanVar(value=True)).get(),
+            "cleanup_bleed": getattr(self, "a2m_cleanup_bleed_var", tk.BooleanVar(value=False)).get(),
             "enhanced_detection_mode": getattr(
                 self, "a2m_enhanced_detection_mode_var",
                 tk.StringVar(value="off")).get(),
@@ -25220,6 +25907,7 @@ demucs.separate.main()
             ("a2m_cleanup_pass_var", "cleanup_pass"),
             ("a2m_cleanup_cymbal_var", "cleanup_cymbal"),
             ("a2m_cleanup_kick_var", "cleanup_kick"),
+            ("a2m_cleanup_bleed_var", "cleanup_bleed"),
             ("a2m_enhanced_detection_mode_var", "enhanced_detection_mode"),
             ("a2m_tom_sensitivity_var", "tom_sensitivity"),
         ]:
@@ -25793,6 +26481,30 @@ demucs.separate.main()
             found.append("Full Mix:  " + os.path.basename(mix))
         self._auto_fetch_show_result(song, drums, mix, used_recursive, found)
 
+    def _spec_auto_fetch_audio(self, chart_path):
+        """Hook for the Spectral tab's Auto Fetch Audio button: from the loaded
+        chart's file name, resolve the matching Drums stem + Full Mix (the SAME
+        search the MIDI Editor uses). Shows the shared result popup and returns
+        (drums, mix) for the tab to load into its Drums stem / Full mix fields;
+        returns (None, None) when nothing usable is found."""
+        chart_path = (chart_path or "").strip()
+        if not chart_path:
+            return (None, None)
+        drums, mix, used_recursive, song = self._find_song_audio_from_midi(
+            chart_path)
+        if not song:
+            messagebox.showinfo(
+                "Auto Fetch Audio",
+                "Couldn't read a song name from the chart file name.")
+            return (None, None)
+        found = []
+        if drums:
+            found.append("Drums:     " + os.path.basename(drums))
+        if mix:
+            found.append("Full Mix:  " + os.path.basename(mix))
+        self._auto_fetch_show_result(song, drums, mix, used_recursive, found)
+        return (drums, mix)
+
     def _creator_auto_fetch_audio(self):
         """Single Song Creator Auto Fetch Audio (2026-06-25): from the MIDI File
         field's name, fill Song Audio + Drum Audio. UNLIKE the other tabs, the Song
@@ -26091,9 +26803,21 @@ demucs.separate.main()
             if cache_key in order:
                 order.remove(cache_key)
             order.append(cache_key)
-            limit = getattr(self, '_me_sound_cache_limit', 6)
-            while len(order) > limit:
+            # Evict by BYTES, not a fixed 6-entry count: six full 5-minute stereo
+            # tracks is ~300 MB resident (50 MB each) on machines that may only
+            # have 8 GB. Keep total decoded PCM under a budget (~128 MB) but always
+            # retain the just-added entry (it's last in `order`, so len>1 only ever
+            # pops older ones from the front; a single track larger than the budget
+            # is still kept).
+            budget = getattr(self, '_me_sound_cache_bytes', 128 * 1024 * 1024)
+            def _entry_bytes(k):
+                e = cache.get(k) or {}
+                return int(e.get('length_secs', 0) * e.get('rate', 44100)
+                           * e.get('channels', 2) * 2)
+            total = sum(_entry_bytes(k) for k in order)
+            while len(order) > 1 and total > budget:
                 old_key = order.pop(0)
+                total -= _entry_bytes(old_key)
                 cache.pop(old_key, None)
             self._me_sound_cache = cache
             self._me_sound_cache_order = order
@@ -26233,8 +26957,12 @@ demucs.separate.main()
                             from math import gcd
                             from scipy.signal import resample_poly
                             g = gcd(mixer_freq, sr)
-                            data = resample_poly(data, mixer_freq // g, sr // g
-                                                 ).astype(np.int16)
+                            # Clamp before int16 (same guard as _pp_decode_stem):
+                            # resample overshoot would otherwise WRAP to opposite
+                            # polarity = harsh static on hot masters.
+                            data = np.clip(
+                                resample_poly(data, mixer_freq // g, sr // g),
+                                -32768, 32767).astype(np.int16)
                             sr = mixer_freq
 
                         # Mono → stereo (pygame stereo mixer needs shape (N, 2))
@@ -26245,7 +26973,8 @@ demucs.separate.main()
                         if self._me_speed != 1.0:
                             from scipy.signal import resample
                             target_len = int(len(data) / self._me_speed)
-                            data = resample(data, target_len).astype(np.int16)
+                            data = np.clip(resample(data, target_len),
+                                           -32768, 32767).astype(np.int16)
 
                         start_frame = int(start_secs * sr)
                         start_frame = max(0, min(start_frame, len(data) - 1))
@@ -26325,6 +27054,10 @@ demucs.separate.main()
                         return
                     trimmed_sound = pygame.sndarray.make_sound(trimmed)
                     self._me_sound_channel = trimmed_sound.play()
+                    self._mixer_music_owner = "me"   # claim the singleton mixer on
+                    #   the speed/channel path too (breaker fix B-ME-2, 2026-07-21):
+                    #   only the 1.0x music path set it, so a sped-up ME playback
+                    #   owned nothing -> no leave-stop / takeover could reclaim it.
                     self._me_play_start_t = time.time()
                     self._me_audio_start_offset = self._me_play_offset
                 else:
@@ -26365,10 +27098,7 @@ demucs.separate.main()
             # the failure, undo both so GC can't get stuck disabled and the play
             # button can't get stuck showing "Pause".
             self._me_playing = False
-            try:
-                gc.enable()
-            except Exception:
-                pass
+            self._gc_playback_enable("me")
             try:
                 self.me_play_btn.configure(text="▶  Play")
             except Exception:
@@ -26409,11 +27139,9 @@ demucs.separate.main()
         except Exception:
             self._me_play_offset = self._me_actual_play_pos()
         self._me_playing = False
-        # v4.5.6.2 — re-enable the cyclic GC that _me_play paused during playback.
-        try:
-            gc.enable()
-        except Exception:
-            pass
+        # v4.5.6.2 — re-enable the cyclic GC that _me_play paused during playback
+        # (ownership-aware since 2026-07-20: never undoes another owner's pause).
+        self._gc_playback_enable("me")
         self.me_play_btn.configure(text="▶  Play")
         self._me_live_play_pos = self._me_play_offset
         if self._me_tick_id:
@@ -26448,12 +27176,9 @@ demucs.separate.main()
             pass
         self._me_playing = False
         # v4.5.6.2 — re-enable + run the cyclic GC that _me_play paused during
-        # playback, reclaiming anything that accumulated while it was off.
-        try:
-            gc.enable()
-            gc.collect()
-        except Exception:
-            pass
+        # playback, reclaiming anything that accumulated while it was off
+        # (ownership-aware since 2026-07-20: never undoes another owner's pause).
+        self._gc_playback_enable("me", collect=True)
         self._me_play_offset = 0.0
         self._me_live_play_pos = 0.0
         self.me_play_btn.configure(text="▶  Play")
@@ -26475,16 +27200,40 @@ demucs.separate.main()
         if finalize_midi_recording:
             self._midi_record_stop()
 
+    def _gc_playback_enable(self, token, collect=False):
+        """Re-enable the cyclic GC paused for playback (v4.5.6.2) — but ONLY if
+        the mixer isn't currently owned by ANOTHER tab that is still streaming
+        with GC paused (R2-7 + breaker B4-2, 2026-07-20): a dispossessed
+        owner's release path used to gc.enable() one tick after the new owner
+        gc.disable()'d, silently undoing its underrun protection. The surviving
+        owner's own halt path re-enables. `collect` is gated the same way — a
+        manual gc.collect() causes the very stall the disable protects against."""
+        cur = getattr(self, "_mixer_music_owner", None)
+        if cur is not None and cur != token:
+            return
+        # The owner token only tracks mixer.music claimants — the MIDI
+        # Editor's speed/layered CHANNEL playback pauses GC without ever
+        # claiming it (breaker R3-B4-2, 2026-07-20: a yt preview halt during
+        # ME channel playback re-enabled GC mid-stream, reviving the
+        # v4.5.6.2 underrun static). Never enable under a live ME stream
+        # from another tab's halt path; ME's own halts clear _me_playing
+        # before calling in.
+        if token != "me" and getattr(self, "_me_playing", False):
+            return
+        try:
+            gc.enable()
+            if collect:
+                gc.collect()
+        except Exception:
+            pass
+
     def _me_release_music_ui(self):
         """State-only release for when another tab took mixer.music ownership
         (R2-7): reset OUR playing state/UI without touching pygame — a real
         _me_stop() would call music.stop()/unload() and kill the NEW owner's
-        audio. GC re-enable matters: _me_play disabled it for playback."""
+        audio. GC handling is ownership-aware: see _gc_playback_enable."""
         self._me_playing = False
-        try:
-            gc.enable()
-        except Exception:
-            pass
+        self._gc_playback_enable("me")
         self._me_play_offset = getattr(self, '_me_live_play_pos',
                                        self._me_play_offset)
         self.me_play_btn.configure(text="▶  Play")
@@ -26567,7 +27316,7 @@ demucs.separate.main()
         scroll_x = self.me_canvas.xview()
         bpm = getattr(self, 'me_bpm', 120.0) or 120.0
         try:
-            raw = self.me_tempo_entries[0][1].get().strip()
+            raw = self._me_tempo_rows[0][1].get().strip()
             if raw:
                 bpm = max(1.0, float(raw))
         except Exception:
@@ -26637,6 +27386,20 @@ demucs.separate.main()
             x, 0, x, total_h,
             fill="#00ff88", width=2,
             dash=(4, 3), tags="playhead")
+        # v4.9.1 (owner ask) — a GRAB HANDLE at the top of the playhead: a
+        # filled dot in the header band, sized to read as "click me to drag".
+        # Scrub-dragging already listens in the ruler/header strip, so the
+        # handle marks exactly where dragging works. Same "playhead" tag =>
+        # it inherits the existing delete/redraw lifecycle; purely visual,
+        # zero new state or bindings.
+        _hr = 6
+        _hy = self.ME_HEADER_H // 2 - 4          # centered-ish in the header band
+        self.me_canvas.create_oval(
+            x - _hr, _hy - _hr, x + _hr, _hy + _hr,
+            fill="#00ff88", outline="#0a3d24", width=2, tags="playhead")
+        self.me_canvas.create_oval(
+            x - 2, _hy - 2, x + 2, _hy + 2,
+            fill="#0d0d1a", outline="", tags="playhead")
 
         # Draw loop region if set
         if self._me_loop_out > self._me_loop_in > 0 or self._me_loop_out > 0:
@@ -26897,6 +27660,139 @@ demucs.separate.main()
             pass
         return _bounded
 
+    def _a2m_ensure_4stem(self, audio_path, out_root):
+        """v4.9.0 — separate ``audio_path`` into the 4 htdemucs stems (drums / bass /
+        vocals / other) under ``out_root`` and return
+        ``{"drums":p, "bass":p, "vocals":p, "other":p}`` of .wav paths, or ``None`` on
+        any failure. ``out_root`` is a caller-owned dir (a temp dir) — this method
+        neither creates nor cleans it.
+
+        Used ONLY by the F12 cross-stem bleed cleanup pass (default OFF), so a failure
+        here degrades to "no bleed pass", never a crash — the method never raises.
+        Mirrors the Stem Splitter's Demucs invocation exactly (device probe, TORCH_HOME
+        cache, frozen-vs-subprocess dual path). Runs on the conversion WORKER thread and
+        logs via ``self._a2m_log``.
+        """
+        try:
+            import subprocess
+            song_name = os.path.splitext(os.path.basename(audio_path))[0]
+            # Device probe — identical to _stem_do_split's sm-arch check.
+            try:
+                import torch as _t
+                if _t.cuda.is_available():
+                    sm = _t.cuda.get_device_capability()
+                    sm_val = sm[0] * 10 + sm[1]
+                    sm_str = f"sm_{sm_val}"
+                    try:
+                        arch = _t.cuda.get_arch_list()
+                    except Exception:
+                        arch = []
+                    if arch:
+                        device = "cuda" if (sm_str in arch or (sm_str + "a") in arch) else "cpu"
+                    else:
+                        device = "cuda" if sm_val in [50, 60, 61, 70, 75, 80, 86, 89, 90] else "cpu"
+                else:
+                    device = "cpu"
+            except Exception:
+                device = "cpu"
+            _demucs_cache_dir = self._stem_exe_relative_cache()
+            os.makedirs(_demucs_cache_dir, exist_ok=True)
+            os.environ["TORCH_HOME"] = _demucs_cache_dir
+            # 4-stem htdemucs => drums/bass/vocals/other (NO --two-stems, name htdemucs).
+            args_list = ["--name", "htdemucs", "--device", device,
+                         "--out", out_root, audio_path]
+            self._a2m_log("Cross-stem bleed:  separating 4 stems (htdemucs)"
+                          + (" — GPU" if device == "cuda" else " — CPU, may take a moment")
+                          + "...")
+            # v4.9.1 — progress heartbeat so a long CPU separation is not a silent wait.
+            # Mirrors _stem_do_split's frozen heartbeat, but here it covers BOTH the frozen
+            # and subprocess branch, and is stopped in the finally no matter how we exit.
+            import threading as _thr
+            _hb_stop = [False]
+            def _bleed_heartbeat():
+                import time as _t
+                secs = 0
+                while not _hb_stop[0]:
+                    _t.sleep(10)
+                    secs += 10
+                    if not _hb_stop[0]:
+                        self._a2m_log(f"  ⏳  Still separating stems... ({secs}s)")
+            _thr.Thread(target=_bleed_heartbeat, daemon=True).start()
+            is_frozen = getattr(sys, "frozen", False)
+            try:
+                if is_frozen:
+                    import torchaudio, soundfile as sf, io
+                    def _patched_save(filepath, src, sample_rate, **kwargs):
+                        sf.write(filepath, src.numpy().T, sample_rate)
+                    original_save = torchaudio.save
+                    torchaudio.save = _patched_save
+                    old_out, old_err = sys.stdout, sys.stderr
+                    sys.stdout = io.StringIO()
+                    sys.stderr = io.StringIO()
+                    try:
+                        import demucs.separate
+                        demucs.separate.main(args_list)
+                    finally:
+                        torchaudio.save = original_save
+                        cap = sys.stdout.getvalue() + sys.stderr.getvalue()
+                        sys.stdout, sys.stderr = old_out, old_err
+                        if cap.strip():
+                            self._a2m_log(cap.strip())
+                else:
+                    cmd = [sys.executable, "-m", "demucs"] + args_list
+                    cflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, encoding="utf-8", errors="replace",
+                        env={**os.environ, "TORCH_HOME": _demucs_cache_dir,
+                             "PYTHONIOENCODING": "utf-8"},
+                        creationflags=cflags)
+                    for line in proc.stdout:
+                        line = line.rstrip()
+                        if line:
+                            self._a2m_log(f"  {line}")
+                    proc.wait()
+                    if proc.returncode != 0:
+                        self._a2m_log(f"Cross-stem bleed:  separation failed "
+                                      f"(demucs exit {proc.returncode}) — skipping the pass.")
+                        return None
+            finally:
+                _hb_stop[0] = True
+            # htdemucs writes to out_root/htdemucs/<song_name>/{drums,bass,vocals,other}.wav
+            demucs_out = os.path.join(out_root, "htdemucs", song_name)
+            if not os.path.isdir(demucs_out):
+                demucs_out = None
+                for rd, _dirs, files in os.walk(out_root):
+                    if "drums.wav" in files:
+                        demucs_out = rd
+                        break
+            if not demucs_out or not os.path.isdir(demucs_out):
+                self._a2m_log("Cross-stem bleed:  separation produced no output "
+                              "— skipping the pass.")
+                return None
+            stems = {}
+            missing = []
+            for name in ("drums", "bass", "vocals", "other"):
+                p = os.path.join(demucs_out, f"{name}.wav")
+                if os.path.isfile(p):
+                    stems[name] = p
+                else:
+                    missing.append(name)
+            if missing:
+                self._a2m_log(f"Cross-stem bleed:  missing stem(s) "
+                              f"{', '.join(missing)} — skipping the pass.")
+                return None
+            self._a2m_log(f"Cross-stem bleed:  4 stems ready ({device.upper()}).")
+            return stems
+        except Exception as _e:
+            try:
+                self._a2m_log(f"Cross-stem bleed:  separation error "
+                              f"({type(_e).__name__}) — skipping the pass.")
+            except Exception:
+                pass
+            return None
+
     def _a2m_apply_cleanup_pass(self, midi_path):
         """v4.5.0-1 — apply the trained detection CLEANUP PASS (cymbal re-classifier
         + kick phantom-remover) to the freshly-written Audio->MIDI .mid IN PLACE,
@@ -26957,7 +27853,11 @@ demucs.separate.main()
                 return
             do_cymbal = _flag("cleanup_cymbal")
             do_kick = _flag("cleanup_kick")
-            if not (do_cymbal or do_kick):
+            # v4.9.0 — F12 cross-stem bleed kick pass (default OFF). Independent of the
+            # decay kick remover (do_kick): either alone, or both, may be on. Needs the
+            # 4 stems, which this pass self-separates below.
+            do_bleed = _flag("cleanup_bleed")
+            if not (do_cymbal or do_kick or do_bleed):
                 return
             # Ride-detection toggle is authoritative over the cleanup: when ride
             # detection is OFF the user wants no rides, so the cymbal re-classifier
@@ -27004,9 +27904,34 @@ demucs.separate.main()
             # v4.7.21 — and the CONTENT, so the except can tell a count-preserving relabel
             # apart from a genuine skip (breaker INV16).
             _sig_pre = self._a2m_chart_sig(midi_path)
-            summary = clean_a2m_midi(midi_path, audio_path,
-                                     do_cymbal=do_cymbal, do_kick=do_kick,
-                                     allow_ride=allow_ride)
+            # v4.9.0 — F12 cross-stem bleed: when ON, self-separate the source audio
+            # into 4 htdemucs stems (drums/bass/vocals/other) and hand the demucs
+            # OUTPUT DIR to the sidecar, which loads the 4 wavs and removes kicks where
+            # a non-drum instrument bled into the drums stem. A separation FAILURE
+            # degrades to "no bleed pass" (do_bleed forced off) — never a crash. The
+            # temp dir is torn down in the finally regardless of how the clean call
+            # exits, so a mid-clean raise can't leak stems. stems=None + do_bleed=False
+            # => the sidecar's bleed block is skipped and the output is byte-identical.
+            _bleed_tmp = None
+            _bleed_stems_dir = None
+            try:
+                if do_bleed:
+                    import tempfile as _tf
+                    _bleed_tmp = _tf.mkdtemp(prefix="pk_bleed_")
+                    _stems = self._a2m_ensure_4stem(audio_path, _bleed_tmp)
+                    if _stems and _stems.get("drums") and os.path.isfile(_stems["drums"]):
+                        _bleed_stems_dir = os.path.dirname(_stems["drums"])
+                    else:
+                        # separation didn't yield usable stems — skip the pass, keep going
+                        do_bleed = False
+                summary = clean_a2m_midi(midi_path, audio_path,
+                                         do_cymbal=do_cymbal, do_kick=do_kick,
+                                         allow_ride=allow_ride,
+                                         stems=_bleed_stems_dir, do_bleed=do_bleed)
+            finally:
+                if _bleed_tmp:
+                    import shutil as _sh
+                    _sh.rmtree(_bleed_tmp, ignore_errors=True)
             # ── PAST THIS LINE THE CHART IS ALREADY REWRITTEN. ────────────────────────
             # Everything below is bookkeeping/logging, and none of it may report "skipped".
             # v4.7.18 put fallible work (summary.get + int()) inside the same try as the
@@ -27039,10 +27964,38 @@ demucs.separate.main()
                     + ", "
                     # v4.7.19 — the MEASURED count, not summary['n_kicks_removed']: the log
                     # should agree with the chart on disk, not with the sidecar's opinion.
+                    # v4.9.0 — the measured delta already includes any BLEED removals, so
+                    # show the count whenever either kick pass ran.
                     + (f"{_n_removed} phantom kick(s) removed"
-                       if do_kick else "kick remover off"))
+                       if (do_kick or do_bleed) else "kick remover off"))
             except Exception:
                 pass
+            # v4.9.0 — F12 review tier: kicks in the lower-confidence bleed band were
+            # NOT removed but flagged for a human look. Stash them so the chart, once it
+            # loads into the MIDI Editor, highlights those kick times for review (applied
+            # in _me_open_chart). Guarded so a drifted/absent summary key is a no-op.
+            try:
+                _review = list((summary or {}).get("bleed_review_flags", []) or [])
+            except Exception:
+                _review = []
+            if _review:
+                # Path-TAG the stash with the exact chart it belongs to, so a later
+                # open of a DIFFERENT chart can never inherit these flags (the open
+                # applies them only on a path match). Cross-checked with the
+                # clear-at-conversion-start above — belt and suspenders.
+                self._a2m_bleed_review_flags = {
+                    "midi": os.path.abspath(midi_path),
+                    "times": [float(t) for t in _review],
+                }
+                try:
+                    self._a2m_log(
+                        f"  ℹ  {len(_review)} kick(s) flagged for review "
+                        f"(possible cross-stem bleed) — highlighted in the MIDI Editor.")
+                except Exception:
+                    pass
+            else:
+                # No flags this run — clear any stale set from a previous conversion.
+                self._a2m_bleed_review_flags = None
         except Exception as _e:
             try:
                 # v4.7.19 — "skipped" is a factual claim about the chart on disk, so it may
@@ -27145,6 +28098,50 @@ demucs.separate.main()
                 if c is not None:
                     note["conf"] = c
             self._me_redraw()
+        # v4.9.0 — F12 cross-stem bleed REVIEW tier: the cleanup pass stashed the kick
+        # onset times it flagged (not removed) for a human look. Highlight those kicks
+        # now that the chart is loaded. ONLY for charts that actually came from this
+        # A→MIDI conversion (inherit_a2m_source) — an unrelated chart the user merely
+        # opens must not inherit the last conversion's flags. Match each flagged onset
+        # to the NEAREST kick note (lane 7) within a tight window, because the onset
+        # seconds are quantized to MIDI ticks on write and won't equal the raw value.
+        # One-shot: the stash is consumed so a later open of a different chart is clean.
+        _bleed_stash = (getattr(self, "_a2m_bleed_review_flags", None)
+                        if inherit_a2m_source else None)
+        _bleed_times = None
+        if isinstance(_bleed_stash, dict):
+            # Apply ONLY when the stash was tagged for THIS exact chart — never inherit
+            # a different conversion's flags (guards the declined-open / cleanup-off
+            # early-return leak the audit found).
+            try:
+                if os.path.abspath(midi_path) == _bleed_stash.get("midi"):
+                    _bleed_times = list(_bleed_stash.get("times") or [])
+            except Exception:
+                _bleed_times = None
+        if _bleed_times:
+            try:
+                if not hasattr(self, "me_flagged") or self.me_flagged is None:
+                    self.me_flagged = {}
+                kick_notes = [n for n in self.me_notes if n.get("lane_idx") == 7]
+                _TOL = 0.030
+                _hit = 0
+                for ft in _bleed_times:
+                    best = None
+                    best_dt = _TOL
+                    for n in kick_notes:
+                        dt = abs(n["time"] - ft)
+                        if dt <= best_dt:
+                            best_dt = dt
+                            best = n
+                    if best is not None:
+                        self.me_flagged[best["time"]] = "bleed_review"
+                        _hit += 1
+                if _hit:
+                    self._me_redraw()
+            except Exception:
+                pass
+            # Consume on a path match — these flags belonged to THIS chart only.
+            self._a2m_bleed_review_flags = None
         # Store source file for per-song settings and re-run ML.
         # v4.7.13 — ONLY charts that actually came from Audio→MIDI may inherit
         # _a2m_source_file. Sheet Music output has nothing to do with whatever audio was
@@ -27562,7 +28559,7 @@ demucs.separate.main()
                        "plan to use. If the sheet music was written at a slightly different tempo, or\n"
                        "your audio recording has a different offset or drift, the notes will be out\n"
                        "of sync in-game even though they are notated correctly.\n\n"
-                       "After converting, always use the Song Tester tab (Tab 10) to check and correct\n"
+                       "After converting, always use the Song Tester tab (Tab 11) to check and correct\n"
                        "BPM and offset before converting to .rlrr. This step is the same as it would\n"
                        "be with any other MIDI source — sheet music does not skip it.",
                   style="Sub.TLabel", foreground="#e09a3a",
@@ -29855,6 +30852,14 @@ demucs.separate.main()
             pass
         self._yt_preview_channel = None
         self._yt_preview_sound = None
+        # breaker R2-B4-1 (CRITICAL, 2026-07-20): yt can hold mixer ownership
+        # (the streaming fallback) but had ZERO gc management — after stealing
+        # from a gc-paused ME/viz playback, the victim's ownership-aware
+        # release correctly skips gc.enable(), and nothing on the yt side ever
+        # re-enabled it: gc stayed disabled for the rest of the session. The
+        # helper's gate keeps this safe when OTHERS are still streaming (their
+        # ownership token skips the enable).
+        self._gc_playback_enable("yt")
 
     def _yt_preview_stop(self):
         """Stop the preview — but only if OUR preview is what's playing, so we
@@ -30352,7 +31357,7 @@ demucs.separate.main()
             art = self._yt_fetch_art_cache(p, vid)
             self.root.after(0, lambda: (
                 self._yt_library_add(p, f, dur, art, title, artist),
-                self._yt_library_refresh()))
+                self._libraries_refresh_all()))   # all views, not just YT
 
         import threading
         threading.Thread(target=_meta_worker, daemon=True).start()
@@ -30432,7 +31437,7 @@ demucs.separate.main()
             # Mark done regardless so we don't rescan every launch.
             save_config({"yt_library_backfilled": True})
             if added:
-                self.root.after(0, self._yt_library_refresh)
+                self.root.after(0, self._libraries_refresh_all)   # all views
 
         import threading
         threading.Thread(target=_worker, daemon=True).start()
@@ -30825,7 +31830,14 @@ demucs.separate.main()
         badges = tk.Frame(row, bg=rest_bg)
         badges.grid(row=0, column=5, padx=(6, 6))
         row._yt_color_targets.append(badges)
-        self._yt_make_badge(badges, (entry.get("fmt") or "flac").upper(),
+        # Format badge from the ACTUAL file on disk (owner 2026-07-20): the
+        # registry 'fmt' can go stale if the file is replaced/converted, so the
+        # real extension is the truth (rows only render when the path exists).
+        # Falls back to the registry fmt if the extension can't be read.
+        _yt_path = entry.get("path", "")
+        _yt_fmt = (os.path.splitext(_yt_path)[1].lstrip(".")
+                   or entry.get("fmt") or "flac").upper()
+        self._yt_make_badge(badges, _yt_fmt,
                             present=True, neutral=True, row=row)
         # v4.4.68-1 — ".ogg files exist" checker badge, right after the format badge.
         # v4.5.2-1 (owner): ALWAYS rendered now — purple when the .ogg is on disk, dim
@@ -33120,6 +34132,1136 @@ demucs.separate.main()
             "Preview Clip Sent",
             f"Preview Clip set in Song Creator:\n{os.path.basename(path)}")
 
+    def _build_spectral_tab(self, parent):
+        """Spectral Comparison tab (v4.8.0) — thin host for the sidecar module.
+
+        The whole tab lives in parakit_spectral_tab.py (+ parakit_spectral_engine.py)
+        so this file's diff stays small and auditable. A broken/missing sidecar
+        degrades to an explanatory label instead of killing the app. The hooks
+        dict is the ONLY contract between v4 and the sidecar: audio decode
+        (librosa), config persistence, and the shared pygame preview mixer.
+        Protected functions are not involved anywhere in this path."""
+        try:
+            from parakit_spectral_tab import SpectralTab
+        except Exception as e:
+            ttk.Label(parent, text=(
+                "Spectral Comparison could not load:\n%r\n\n"
+                "parakit_spectral_tab.py / parakit_spectral_engine.py must sit "
+                "next to ParaKit v4.0.py." % (e,))).pack(pady=40)
+            return
+
+        def _spec_decode(path):
+            import librosa
+            y, sr = librosa.load(path, sr=None, mono=True)
+            return y, sr
+
+        def _spec_get_cfg(key, default=None):
+            try:
+                return load_config().get(key, default)
+            except Exception:
+                return default
+
+        def _spec_set_cfg(key, value):
+            # save_config MERGES a partial dict (see its call sites: every v4
+            # writer passes only its own keys). A load-all/save-all here would
+            # resurrect the whole-file lost-update the merge design exists to
+            # avoid (audit finding MAJOR-1, 2026-07-20).
+            try:
+                save_config({key: value})
+            except Exception:
+                pass
+
+        def _spec_speed_sound(path, speed):
+            # Speed-adjusted, pitch-preserved pygame Sound for a given audio
+            # path -- a small isolated parallel of _me_speed_get_audio (NOT a
+            # refactor of it: keeping the MIDI-editor path byte-stable). Decode
+            # -> time-stretch (scipy resample, linear-interp fallback) -> int16
+            # PCM -> make_sound. 4-entry LRU keyed on (path, speed, mtime). The
+            # stretched Sound spans the WHOLE song and plays it in dur/speed
+            # wall-seconds -- so song_time = base + wall_elapsed*speed, which is
+            # why the tab (not the mixer) is authoritative for position, exactly
+            # like _me_actual_play_pos. Returns (sound, rate) or (None, None).
+            import numpy as np
+            import soundfile as sf
+            import pygame
+            speed = round(float(speed), 2)
+            try:
+                stamp = os.path.getmtime(path)
+            except OSError:
+                stamp = 0.0
+            key = (path, speed, stamp)
+            cache = getattr(self, "_spec_sound_cache", None)
+            if not isinstance(cache, dict):
+                cache = {}
+                self._spec_sound_cache = cache
+                self._spec_sound_order = []
+            init = None
+            try:
+                init = pygame.mixer.get_init()
+            except Exception:
+                pass
+            hit = cache.get(key)
+            if hit and init and (hit["rate"] != init[0] or hit["channels"] != init[2]):
+                cache.pop(key, None)            # stale mixer format -> re-decode
+                hit = None
+            if hit:
+                order = self._spec_sound_order
+                if key in order:
+                    order.remove(key)
+                order.append(key)
+                return hit["sound"], hit["rate"]
+            try:
+                data, rate = sf.read(path, dtype="float32", always_2d=True)
+                if speed != 1.0:
+                    n = len(data)
+                    target = max(1, int(n / speed))
+                    try:
+                        from scipy.signal import resample
+                        data = resample(data, target, axis=0)
+                    except Exception:
+                        idx = np.linspace(0, n - 1, target)
+                        lo = np.floor(idx).astype(int)
+                        hi = np.minimum(lo + 1, n - 1)
+                        frac = (idx - lo)[:, None]
+                        data = data[lo] * (1 - frac) + data[hi] * frac
+                pcm = np.ascontiguousarray((np.clip(data, -1.0, 1.0) * 32767).astype(np.int16))
+                channels = pcm.shape[1] if pcm.ndim > 1 else 1
+                if channels == 1 and pcm.ndim > 1:
+                    # (n,1) mono -> 1-D (breaker R4-B4-1 MAJOR, 2026-07-20):
+                    # pygame's make_sound REQUIRES a 1-D array for a mono
+                    # mixer. The 2-D column raised ValueError AFTER the mixer
+                    # had already been re-inited to mono and every other tab
+                    # silenced -- so mono files could never play through the
+                    # Spectral tab and left the shared mixer stuck mono.
+                    pcm = np.ascontiguousarray(pcm[:, 0])
+                cur = pygame.mixer.get_init()
+                if not cur or cur[0] != rate or cur[2] != channels:
+                    # Re-init the singleton to this audio's format -- first halt
+                    # other tabs' playback (R2-7), same as _me_speed_get_audio.
+                    try:
+                        if getattr(self, "_viz_playing", False):
+                            self._viz_stop()
+                        self._yt_preview_stop()
+                    except Exception:
+                        pass
+                    # Halt the MIDI Editor's CHANNEL-mode playback too and
+                    # CLEAR its handle refs before the quit (breaker R3-B4-1
+                    # fix-coupling probe, 2026-07-20): after quit+reinit a
+                    # stale Channel handle ALIASES the new mixer's same-index
+                    # channel — a lingering _me_sound_channel would read
+                    # spec's new stream as ME's own (silent-wrong playhead)
+                    # and ME Pause/Stop would kill spec's audio through it.
+                    try:
+                        _mch = getattr(self, "_me_sound_channel", None)
+                        if _mch is not None:
+                            _mch.stop()
+                        for _mc in (getattr(self, "_me_stem_channels", None)
+                                    or {}).values():
+                            try:
+                                _mc.stop()
+                            except Exception:
+                                pass
+                        self._me_sound_channel = None
+                        self._me_stem_channels = {}
+                    except Exception:
+                        pass
+                    if cur:
+                        pygame.mixer.quit()
+                    pygame.mixer.init(frequency=rate, size=-16, channels=channels,
+                                      buffer=PARAKIT_MIXER_BUFFER)
+                sound = pygame.sndarray.make_sound(pcm)
+                cache[key] = {"sound": sound, "rate": rate, "channels": channels}
+                order = self._spec_sound_order
+                if key in order:
+                    order.remove(key)
+                order.append(key)
+                while len(order) > 4:
+                    cache.pop(order.pop(0), None)
+                return sound, rate
+            except Exception:
+                return None, None
+
+        def _spec_mix_play(path, start_s=0.0, speed=1.0):
+            # Play `path` from song-second start_s at `speed`, pitch preserved,
+            # on a DEDICATED channel (not mixer.music) -- so it can't layer with
+            # itself and pause/unpause behave. Slice the stretched Sound from the
+            # start frame (start_s / speed * rate), mirroring _me_play's seek.
+            try:
+                self._yt_preview_ensure_mixer()
+                import pygame
+                import numpy as np
+                # Stop OUR OWN previous stream FIRST (breaker R3E-3, 2026-07-20):
+                # every early `return False` below used to leave it sounding
+                # while the tab fell back to the "silent" clock — a rebuild to
+                # an undecodable stem kept the old audio playing at the old
+                # speed under a transport that claimed otherwise.
+                _spec_stop_channel()
+                sound, rate = _spec_speed_sound(path, speed)
+                if sound is None:
+                    return False
+                arr = pygame.sndarray.array(sound)
+                start_frame = int(max(0.0, start_s) / max(0.01, speed) * rate)
+                start_frame = max(0, min(start_frame, len(arr) - 1))
+                trimmed = np.ascontiguousarray(arr[start_frame:])
+                if len(trimmed) == 0:
+                    return False
+                # R2-7 takeover (breaker B4-1, 2026-07-20): silence every other
+                # tab's audio BEFORE claiming. music-path owners (me/yt/viz)
+                # share the mixer.music singleton but never stop on a Channel
+                # claim, and the MIDI Editor's speed/layered modes play on
+                # Channels that no ownership check ever halts — either kept
+                # sounding UNDER spectral playback. The dispossessed owners'
+                # own ticks then do their state-only UI release.
+                try:
+                    pygame.mixer.music.stop()
+                    pygame.mixer.music.unload()    # release the file handle (Windows lock)
+                except Exception:
+                    pass
+                try:
+                    _me_ch = getattr(self, "_me_sound_channel", None)
+                    if _me_ch is not None:
+                        _me_ch.stop()
+                    for _c in (getattr(self, "_me_stem_channels", None) or {}).values():
+                        try:
+                            _c.stop()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                snd = pygame.sndarray.make_sound(trimmed)
+                self._spec_sound_ref = snd         # keep a ref (Sound GC would cut audio)
+                self._spec_channel = snd.play()
+                self._mixer_music_owner = "spec"   # singleton-mixer ownership (R2-7)
+                try:
+                    gc.disable()                   # avoid gen-2 stalls -> underruns
+                except Exception:
+                    pass
+                return True
+            except Exception:
+                return False
+
+        def _spec_stop_channel():
+            ch = getattr(self, "_spec_channel", None)
+            if ch is not None:
+                try:
+                    ch.stop()
+                except Exception:
+                    pass
+            self._spec_channel = None
+            self._spec_sound_ref = None
+
+        def _spec_mix_pause():
+            try:
+                if getattr(self, "_mixer_music_owner", None) == "spec":
+                    ch = getattr(self, "_spec_channel", None)
+                    if ch is not None:
+                        ch.pause()
+                    gc.enable()
+            except Exception:
+                pass
+
+        def _spec_mix_unpause():
+            try:
+                if getattr(self, "_mixer_music_owner", None) == "spec":
+                    ch = getattr(self, "_spec_channel", None)
+                    if ch is not None:
+                        ch.unpause()
+                    try:
+                        gc.disable()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        def _spec_mix_stop():
+            # ALWAYS silence + drop OUR channel/Sound ref — the channel is
+            # exclusively spec's, so stopping it can never kill another tab's
+            # audio (breaker R2-B4-2 hardening, 2026-07-20: when ownership was
+            # stolen while spec sat paused, the old fully-owner-gated stop
+            # left the paused channel + the whole time-stretched Sound held
+            # until the next spec Play). Only the OWNERSHIP release and the
+            # gc re-enable stay gated — those do belong to the current owner.
+            try:
+                # DIRECT closure call (breaker R3-B4-1 CRITICAL, 2026-07-20):
+                # this used to go through a self-attribute that was NEVER
+                # bound (only the `_fn`-suffixed name was assigned) — every
+                # call raised AttributeError into the except below, which made
+                # spec playback dead-on-arrival in the integrated app: Play
+                # silenced the other tabs, then failed to the silent clock.
+                _spec_stop_channel()
+                if getattr(self, "_mixer_music_owner", None) == "spec":
+                    self._mixer_music_owner = None
+                self._gc_playback_enable("spec")
+            except Exception:
+                pass
+
+        # (The old `self._spec_stop_channel_fn` binding was removed 2026-07-20
+        # — it was dead: the tab-changed handler goes through external_stop /
+        # _spec_mix_stop, and the closures call _spec_stop_channel directly.)
+
+        hooks = {
+            "decode_audio": _spec_decode,
+            "get_cfg": _spec_get_cfg, "set_cfg": _spec_set_cfg,
+            # Sound-on-channel transport: sidecar drives position by wall*speed
+            # (v4's own model), so there is deliberately NO mixer_pos hook.
+            "mixer_play": _spec_mix_play, "mixer_stop": _spec_mix_stop,
+            "mixer_pause": _spec_mix_pause, "mixer_unpause": _spec_mix_unpause,
+            # Auto Fetch Audio button: resolve the drums stem + full mix that
+            # match the loaded chart's file name (same search as the MIDI Editor).
+            "auto_fetch_audio": self._spec_auto_fetch_audio,
+        }
+        try:
+            self._spectral_tab = SpectralTab(parent, hooks=hooks)
+            self._spectral_tab.pack(fill=tk.BOTH, expand=True)
+        except Exception as _spec_e:
+            # Constructor failures must degrade EXACTLY like import failures --
+            # this runs in the main __init__ build sequence, so an unguarded
+            # exception here means no app window at all (audit CRITICAL,
+            # confirmed independently by 2 of 3 panel auditors, 2026-07-20).
+            for _c in parent.winfo_children():
+                try:
+                    _c.destroy()
+                except Exception:
+                    pass
+            ttk.Label(parent, text=(
+                "Spectral Comparison could not start:\n%r\n\n"
+                "The rest of ParaKit is unaffected." % (_spec_e,))).pack(pady=40)
+            return
+
+        # Leaving the tab stops OUR audio only (mirrors _yt/_stem_lib
+        # _on_tab_changed_stop_preview; ownership flag set in _spec_mix_play).
+        def _spectral_on_tab_changed_stop(_e=None):
+            try:
+                # Own the mixer? (bugfix 2026-07-20: this used to check a
+                # never-set _spec_mix_owns flag, so leaving the tab never
+                # stopped spectral audio. Use the real ownership token.)
+                if (getattr(self, "_mixer_music_owner", None) == "spec"
+                        and self.notebook.index("current")
+                        != self._tab_indexes.get("spectral")):
+                    stop_fn = getattr(self._spectral_tab, "external_stop", None)
+                    if callable(stop_fn):
+                        stop_fn()          # lets the tab reset its transport UI
+                    else:
+                        _spec_mix_stop()   # fallback: at least silence the stream
+            except Exception:
+                pass
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           _spectral_on_tab_changed_stop, add="+")
+
+        def _me_on_tab_changed_stop(_e=None):
+            # The MIDI Editor had NO leave-tab audio stop (breaker fix B-ME-1,
+            # 2026-07-21): playing in ME and switching tabs left its audio going
+            # under the new UI. Mirror the spectral/practice handlers — stop ME
+            # audio (via the canonical _me_stop) when leaving while ME owns the
+            # singleton mixer. Composes with B-ME-2 (the speed path now owns too).
+            try:
+                if (getattr(self, "_mixer_music_owner", None) == "me"
+                        and self.notebook.index("current")
+                        != self._tab_indexes.get("midi")):
+                    stop_fn = getattr(self, "_me_stop", None)
+                    if callable(stop_fn):
+                        stop_fn()
+            except Exception:
+                pass
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           _me_on_tab_changed_stop, add="+")
+
+    # ==================================================================
+    # v4.9.0 — Preview + Practice v3 tabs (thin hosts for the sidecar
+    # modules parakit_preview_tab.py / parakit_practice_tab.py). Same seam
+    # discipline as _build_spectral_tab: guarded import -> degrade to label;
+    # a hooks dict is the ONLY contract; constructor failure degrades to a
+    # label instead of killing app __init__. Protected functions untouched.
+    # ==================================================================
+
+    def _pp_auto_fetch_audio(self, chart_path):
+        """Preview 'Auto Fetch Audio' hook. Reuses the Spectral/MIDI-Editor
+        song-name search (_spec_auto_fetch_audio returns a (drums, mix) tuple)
+        and RESHAPES it to the dict {'mix':…, 'drums':…} the Preview tab
+        expects (parakit_preview_tab.py:2596). Returns {} on nothing found."""
+        try:
+            drums, mix = self._spec_auto_fetch_audio(chart_path)
+        except Exception:
+            return {}
+        out = {}
+        if mix:
+            out["mix"] = mix
+        if drums:
+            out["drums"] = drums
+        return out
+
+    # ---- Preview/Practice stem mixer (dedicated channels) -------------
+    def _pp_decode_stem(self, path, speed):
+        """Decode `path` to (stereo int16 ndarray at the CURRENT mixer rate,
+        rate). Resamples to the live mixer rate (no re-init -> never disrupts
+        another tab's format) + mono->stereo + speed-stretch, exactly like the
+        MIDI-Editor layered path (:26529-26555). Returns (None, None) on any
+        failure so the caller degrades to the silent clock."""
+        try:
+            import numpy as np
+            import soundfile as sf
+            import pygame
+            init = pygame.mixer.get_init()
+            mixer_freq = init[0] if init else 44100
+            data, sr = sf.read(path, dtype="int16", always_2d=True)
+            if sr != mixer_freq:
+                from math import gcd
+                from scipy.signal import resample_poly
+                g = gcd(int(mixer_freq), int(sr))
+                # CLIP before the int16 cast: resample_poly is an FIR filter and
+                # rings/overshoots (Gibbs) at transients. A hot, near-0-dBFS full
+                # mix then produces samples just past +/-32767, and a bare
+                # .astype(np.int16) WRAPS them (32768 -> -32768 = a full-scale
+                # polarity flip) -> the harsh "bass static/clipping" owner heard
+                # on Preview/Practice playback (2026-07-23). Clamping turns the
+                # rare overshoot into ordinary saturation instead of a sign flip.
+                data = np.clip(resample_poly(data, mixer_freq // g, sr // g),
+                               -32768, 32767).astype(np.int16)
+                sr = mixer_freq
+            if data.shape[1] == 1:
+                data = np.column_stack([data, data])
+            if abs(float(speed) - 1.0) > 1e-6:
+                from scipy.signal import resample
+                target_len = max(1, int(len(data) / float(speed)))
+                # Same clamp guard as the rate-resample above: Fourier resample
+                # overshoots at transients, and an unclamped int16 cast wraps to
+                # opposite polarity (harsh static). Saturate instead of wrap.
+                data = np.clip(resample(data, target_len),
+                               -32768, 32767).astype(np.int16)
+            return np.ascontiguousarray(data), sr
+        except Exception:
+            return None, None
+
+    def _pp_detect_doubled_source(self, song_path, drums_path):
+        """True if `song_path` already CONTAINS the drums of `drums_path` -- i.e.
+        it's a full mix mislabeled as a backing, so layering the separate drums
+        stem on top DOUBLES the drums and clips into a crackle (owner-reported).
+
+        Physics: if the song contains the drums then (song - drums) has LESS
+        energy than the song, and the two are strongly correlated; a true
+        drums-removed backing GAINS energy when you subtract the drums and
+        correlates near zero. Validated on real songs: doubled corr 0.74 /
+        ratio 0.46 vs proper corr 0.03 / ratio 1.76. Cheap: one ~30 s mono
+        excerpt each (cached per path pair). Returns False on any failure so the
+        default stays the current backing+drums behaviour."""
+        key = (song_path, drums_path)
+        cache = getattr(self, "_pp_double_cache", None)
+        if cache is None:
+            cache = self._pp_double_cache = {}
+        if key in cache:
+            return cache[key]
+        result = False
+        try:
+            import numpy as np
+            import soundfile as sf
+
+            def _exc(p):
+                info = sf.info(p)
+                sr = int(info.samplerate)
+                start = int(max(0.0, min(30.0, info.frames / sr - 30.0)) * sr)
+                d, _sr = sf.read(p, dtype="float32", always_2d=True,
+                                 start=start, frames=int(30 * sr))
+                return d.mean(axis=1), sr
+
+            s, ssr = _exc(song_path)
+            d, dsr = _exc(drums_path)
+            if ssr == dsr and len(s) > ssr and len(d) > ssr:
+                n = min(len(s), len(d))
+                s = s[:n]; d = d[:n]
+                e_song = float(np.mean(s * s))
+                if e_song > 1e-9:
+                    ratio = float(np.mean((s - d) ** 2)) / e_song
+                    sd = float(np.std(s) * np.std(d))
+                    corr = (float(np.mean((s - s.mean()) * (d - d.mean())) / sd)
+                            if sd > 1e-9 else 0.0)
+                    # Doubled if the drums are clearly present in the song track.
+                    result = (corr > 0.35) or (ratio < 0.85)
+        except Exception:
+            result = False
+        cache[key] = result
+        return result
+
+    def _pp_mix_apply_gains(self):
+        """Apply per-bus gain * master to every live channel of that bus."""
+        try:
+            master = float(self._pp_bus_gain.get("master", 1.0))
+            for bus, chans in list(self._pp_stem_channels.items()):
+                g = float(self._pp_bus_gain.get(bus, 1.0)) * master
+                for ch in (chans or []):
+                    if ch is None:
+                        continue
+                    try:
+                        ch.set_volume(max(0.0, min(1.0, g)))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def _pp_mix_stop_channels(self):
+        for chans in list(self._pp_stem_channels.values()):
+            for ch in (chans or []):
+                try:
+                    if ch is not None:
+                        ch.stop()
+                except Exception:
+                    pass
+        self._pp_stem_channels = {}
+        self._pp_stem_sounds = {}
+
+    def _pp_mix_set_source_mode(self, mode):
+        """Set the source policy used by the next Practice stem load
+        (auto = detect+avoid doubling · fullmix = full mix alone · stems = keep
+        all buses as loaded). Preview uses 'stems' since its own mode gains
+        already isolate which bus plays."""
+        mode = str(mode or "auto").lower()
+        if mode not in {"auto", "fullmix", "stems"}:
+            mode = "auto"
+        self._pp_source_mode = mode
+        return mode
+
+    def _pp_mix_load_stems(self, specs):
+        """Record the stem paths per bus (bus in {'song','drums'}); decode
+        happens at play (so a speed change re-stretches). Accepts BOTH consumer
+        shapes (v4.9.0 — audited hook mismatch):
+          * Preview  -> a LIST of specs:  [{'path': p, 'bus': b}, ...]
+          * Practice -> a DICT of lists:  {'song': [p, ...], 'drums': [p, ...]}
+        Stored as {bus: [paths]} so a bus may carry multiple tracks. Truthy on
+        success (even zero usable files -> the tab still runs on its clock)."""
+        try:
+            paths = {}
+
+            def _add(bus, p):
+                if bus and p and isinstance(p, str) and os.path.isfile(p):
+                    paths.setdefault(bus, []).append(p)
+
+            if isinstance(specs, dict):
+                for bus, val in specs.items():
+                    if isinstance(val, (list, tuple)):
+                        for p in val:
+                            _add(bus, p)
+                    else:
+                        _add(bus, val)
+            else:
+                for spec in (specs or []):
+                    try:
+                        _add(spec.get("bus"), spec.get("path"))
+                    except AttributeError:
+                        pass
+            # Anti-doubling (owner-reported crackle): if a 'song' track and a
+            # 'drums' stem are BOTH present but the song already contains the
+            # drums (a full mix mislabeled as a backing), playing both would
+            # double the drums and clip. Auto-pick the safe source -- the full
+            # mix ALONE -- and record why, so the UI can surface it / let the
+            # user override. (Only in AUTO mode; an explicit user choice wins.)
+            mode = str(getattr(self, "_pp_source_mode", "auto")).lower()
+            if mode not in {"auto", "fullmix", "stems"}:
+                mode = "auto"
+            self._pp_source_mode = mode
+            self._pp_source_note = ""
+            if mode == "fullmix" and paths.get("song"):
+                # Explicit Full Mix: play the (first) song track ALONE.
+                paths["song"] = paths["song"][:1]
+                paths.pop("drums", None)
+            elif (mode == "auto"
+                    and len(paths.get("song") or ()) == 1
+                    and paths.get("drums")):
+                if self._pp_detect_doubled_source(paths["song"][0], paths["drums"][0]):
+                    paths["song"] = paths["song"][:1]
+                    paths.pop("drums", None)
+                    self._pp_source_note = "fullmix_auto"
+            # mode == "stems": keep every bus as loaded (no filtering).
+            self._pp_stem_paths = paths
+            return True
+        except Exception:
+            return False
+
+    def _pp_mix_free_stems(self):
+        self._pp_mix_stop_channels()
+        self._pp_stem_paths = {}
+        self._pp_mix_playing = False
+        self._pp_mix_paused = False
+
+    def _pp_mix_play(self, from_song, speed, owner):
+        """Play the loaded stems from song-second `from_song` at `speed` on
+        dedicated channels, holding Sound refs so GC can't cut the audio. The
+        TAB stays position-authority (song_time = wall*speed); this just makes
+        sound. Returns True on success, False -> tab uses its silent clock."""
+        try:
+            import numpy as np
+            import pygame
+            import time
+            self._yt_preview_ensure_mixer()
+            speed = float(speed) or 1.0
+            self._pp_mix_speed = speed
+            if not self._pp_stem_paths:
+                # No audio loaded — report success anyway so the tab clock still
+                # advances via song_time (a silent play is not a failure here).
+                self._pp_mix_anchor_song = float(from_song)
+                self._pp_mix_anchor_wall = time.perf_counter()
+                self._pp_mix_playing = True
+                self._pp_mix_paused = False
+                self._mixer_music_owner = owner
+                return True
+            # Singleton-mixer takeover (R2-7, mirrors _spec_mix_play): silence
+            # every other tab's audio BEFORE we claim, so nothing layers under us.
+            try:
+                pygame.mixer.music.stop()
+                pygame.mixer.music.unload()
+            except Exception:
+                pass
+            try:
+                _me_ch = getattr(self, "_me_sound_channel", None)
+                if _me_ch is not None:
+                    _me_ch.stop()
+                for _c in (getattr(self, "_me_stem_channels", None) or {}).values():
+                    try:
+                        _c.stop()
+                    except Exception:
+                        pass
+                _sc = getattr(self, "_spec_channel", None)
+                if _sc is not None:
+                    _sc.stop()
+            except Exception:
+                pass
+            self._pp_mix_stop_channels()
+            init = pygame.mixer.get_init()
+            rate = init[0] if init else 44100
+            nudge_s = float(self._pp_stem_nudge_ms) / 1000.0
+            sounds, channels = {}, {}
+            ready = []   # (bus, Sound) for every track of every bus
+            _fs = float(from_song)
+            for bus, plist in self._pp_stem_paths.items():
+                for path in (plist or []):
+                    arr, srate = self._pp_decode_stem(path, speed)
+                    if arr is None:
+                        continue
+                    base = int(max(0.0, _fs) / max(0.01, speed) * srate)
+                    if bus == "drums" and nudge_s:
+                        base += int(nudge_s / max(0.01, speed) * srate)
+                    base = max(0, min(base, len(arr) - 1))
+                    trimmed = np.ascontiguousarray(arr[base:])
+                    if len(trimmed) == 0:
+                        continue
+                    # v4.9.1 FIX (owner live-smoke: "starts, then must pause+
+                    # unpause before you can play"): the Practice tab starts its
+                    # clock at NEGATIVE from_song (the lead-in that lets notes
+                    # fall before the first hit), but the old max(0.0, …) clamp
+                    # started the AUDIO at 0:00 immediately — music ran ~2.5s
+                    # AHEAD of the highway on every song start. (Pause→unpause
+                    # accidentally healed it because resume re-seeks + replays
+                    # at a positive clock — that was the ritual users learned.)
+                    # A negative start now pads the stems with real lead-in
+                    # silence so sound begins exactly when the clock hits 0.
+                    if _fs < 0.0:
+                        _pad = int(-_fs / max(0.01, speed) * srate)
+                        if _pad > 0:
+                            _sil = np.zeros((_pad,) + trimmed.shape[1:],
+                                            dtype=trimmed.dtype)
+                            trimmed = np.ascontiguousarray(
+                                np.concatenate([_sil, trimmed]))
+                    snd = pygame.sndarray.make_sound(trimmed)
+                    sounds.setdefault(bus, []).append(snd)
+                    ready.append((bus, snd))
+            # Fire play() in one tight loop to minimise skew (mirrors ME layered).
+            master = float(self._pp_bus_gain.get("master", 1.0))
+            for bus, snd in ready:
+                ch = snd.play()
+                if ch:
+                    try:
+                        ch.set_volume(max(0.0, min(
+                            1.0, float(self._pp_bus_gain.get(bus, 1.0)) * master)))
+                    except Exception:
+                        pass
+                    channels.setdefault(bus, []).append(ch)
+            self._pp_stem_sounds = sounds
+            self._pp_stem_channels = channels
+            self._pp_mix_anchor_song = float(from_song)
+            self._pp_mix_anchor_wall = time.perf_counter()
+            self._pp_mix_playing = True
+            self._pp_mix_paused = False
+            self._mixer_music_owner = owner
+            try:
+                gc.disable()   # avoid gen-2 stalls -> underruns (as _spec_mix_play)
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
+
+    def _pp_mix_song_time(self):
+        try:
+            if not self._pp_mix_playing:
+                return self._pp_mix_anchor_song
+            if self._pp_mix_paused or self._pp_mix_anchor_wall is None:
+                return self._pp_mix_anchor_song
+            return (self._pp_mix_anchor_song
+                    + (time.perf_counter() - self._pp_mix_anchor_wall)
+                    * self._pp_mix_speed)
+        except Exception:
+            return 0.0
+
+    def _pp_mix_pause(self):
+        try:
+            self._pp_mix_anchor_song = self._pp_mix_song_time()   # freeze
+            self._pp_mix_paused = True
+            # _pp_stem_channels maps bus -> LIST of channels; iterate INTO the
+            # list (breaker fix, Codex team round 2026-07-21): the old single
+            # loop called .pause() on the list itself -> AttributeError swallowed
+            # -> Pause froze the UI/clock while the stems kept playing (desync).
+            for chans in list(self._pp_stem_channels.values()):
+                for ch in (chans or []):
+                    try:
+                        if ch is not None:
+                            ch.pause()
+                    except Exception:
+                        pass
+            try:
+                gc.enable()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _pp_mix_unpause(self):
+        try:
+            self._pp_mix_anchor_wall = time.perf_counter()
+            self._pp_mix_paused = False
+            for chans in list(self._pp_stem_channels.values()):   # bus -> LIST (see _pp_mix_pause)
+                for ch in (chans or []):
+                    try:
+                        if ch is not None:
+                            ch.unpause()
+                    except Exception:
+                        pass
+            try:
+                gc.disable()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _pp_mix_stop(self, owner=None):
+        try:
+            self._pp_mix_stop_channels()
+            self._pp_mix_playing = False
+            self._pp_mix_paused = False
+            if getattr(self, "_mixer_music_owner", None) in ("preview", "practice"):
+                self._mixer_music_owner = None
+            # Exit-freeze fix (2026-07-22): _pp_mix_play does gc.disable() for the
+            # whole session (underrun protection), so a full song accumulates
+            # uncollected cyclic garbage (per-tick canvas redraws / closures).
+            # Re-enabling GC inline let the first gen-2 collection sweep ALL of it
+            # on the exit-click path -> a multi-hundred-ms freeze that read like a
+            # crash right when the user pressed "Quit to library". Defer the
+            # re-enable+collect one idle beat so the tab has already transitioned
+            # (Home painted) before the sweep runs. The ownership gate in
+            # _gc_playback_enable still no-ops if another tab re-claimed playback
+            # in the interim (owner was just cleared to None above, so an
+            # unclaimed exit enables; a re-claim sets owner != "pp" -> skipped).
+            # Coalesce to ONE pending job (breaker codex #4, 2026-07-22): rapid
+            # repeat stops (stop/seek spam) used to queue a SEPARATE after(60)
+            # gc.collect each — 100 stops -> 100 deferred collects. Cancel the
+            # prior deferred job before scheduling a fresh one.
+            try:
+                _prev = getattr(self, "_pp_gc_job", None)
+                if _prev is not None:
+                    try:
+                        self.root.after_cancel(_prev)
+                    except Exception:
+                        pass
+
+                def _pp_gc_fire():
+                    self._pp_gc_job = None
+                    self._gc_playback_enable("pp", collect=True)
+                self._pp_gc_job = self.root.after(60, _pp_gc_fire)
+            except Exception:
+                self._gc_playback_enable("pp", collect=True)
+        except Exception:
+            pass
+
+    def _pp_mix_seek(self, t):
+        try:
+            was_playing = self._pp_mix_playing and not self._pp_mix_paused
+            if was_playing and self._pp_stem_paths:
+                owner = getattr(self, "_mixer_music_owner", None) or "preview"
+                return self._pp_mix_play(t, self._pp_mix_speed, owner)
+            self._pp_mix_anchor_song = float(t)
+            self._pp_mix_anchor_wall = time.perf_counter()
+            return True
+        except Exception:
+            return False
+
+    def _pp_mix_set_speed(self, s):
+        try:
+            import time
+            s = float(s) or 1.0
+            if self._pp_mix_playing and not self._pp_mix_paused:
+                if self._pp_stem_paths:
+                    now = self._pp_mix_song_time()
+                    owner = getattr(self, "_mixer_music_owner", None) or "preview"
+                    self._pp_mix_speed = s
+                    return self._pp_mix_play(now, s, owner)   # re-cue the audio
+                # No stems (silent play): RE-ANCHOR the wall clock at the current
+                # position before changing speed (breaker fix, 2026-07-21) — else
+                # song_time = anchor + elapsed*speed retroactively rescales ALL
+                # already-elapsed time, teleporting the highway/scoring clock (the
+                # jump grows with how long you've been playing). Matches the
+                # with-stems branch, which re-anchors via _pp_mix_play.
+                self._pp_mix_anchor_song = self._pp_mix_song_time()
+                self._pp_mix_anchor_wall = time.perf_counter()
+                self._pp_mix_speed = s
+                return True
+            self._pp_mix_speed = s
+            return True
+        except Exception:
+            return False
+
+    def _pp_mix_set_bus_gain(self, bus, gain):
+        try:
+            self._pp_bus_gain[bus] = float(gain)
+            self._pp_mix_apply_gains()
+        except Exception:
+            pass
+
+    def _pp_mix_stem_nudge(self, v_ms):
+        # Fine drums-vs-song timing nudge (ms). Stored; takes effect on the next
+        # play/seek re-cue (a live re-slice while sounding would click).
+        try:
+            self._pp_stem_nudge_ms = int(round(float(v_ms)))
+        except Exception:
+            pass
+
+    def _pp_mix_has_bus(self, bus):
+        return bool(getattr(self, "_pp_stem_paths", {}).get(bus))
+
+    def _pp_mix_audio_duration(self):
+        try:
+            import soundfile as sf
+            best = 0.0
+            for plist in self._pp_stem_paths.values():
+                for p in (plist or []):
+                    if p and os.path.isfile(p):
+                        try:
+                            best = max(best, float(sf.info(p).duration))
+                        except Exception:
+                            pass
+            return best
+        except Exception:
+            return 0.0
+
+    def _build_pp_hooks(self, consumer):
+        """Shared hooks dict for the Preview/Practice tabs. `consumer` is
+        'preview' or 'practice' (the singleton-mixer ownership token). Every
+        hook is optional to the tabs' _hook_call seam, so an unlanded hook just
+        means that feature degrades — never a crash. Phase-1 owner decisions:
+        synth_play OMITTED (silent hits + status note); get_kit_layout OMITTED
+        (no host kit store). Config uses the SAME partial-merge save_config as
+        Spectral (never load-all/save-all — audit MAJOR-1)."""
+        def _get_cfg(key, default=None):
+            try:
+                return load_config().get(key, default)
+            except Exception:
+                return default
+
+        def _set_cfg(key, value):
+            try:
+                save_config({key: value})   # partial merge — do NOT load-all/save-all
+            except Exception:
+                pass
+
+        def _load_stems(specs):
+            # Source selection belongs to the Practice picker. Preview isolates
+            # which bus plays via its own mode gains, so it always loads with the
+            # no-filter 'stems' policy (never auto-drops a bus out from under the
+            # Preview Stems/Full-Mix switch).
+            if consumer != "practice":
+                self._pp_mix_set_source_mode("stems")
+            return self._pp_mix_load_stems(specs)
+
+        return {
+            "get_cfg": _get_cfg, "set_cfg": _set_cfg,
+            "status_message": (lambda text, ms=4000:
+                               self._set_global_status(text, ms)),
+            # MIDI — carry over the verified _midi_* e-kit engine (raw note
+            # forward + shared-port ref-count; see _pp_midi_start/_stop).
+            "midi_list_ports": self._midi_refresh_input_names,
+            "midi_start": self._pp_midi_start(consumer),
+            "midi_stop": self._pp_midi_stop(consumer),
+            # Auto Fetch Audio (Preview) — reshaped to a dict.
+            "auto_fetch_audio": self._pp_auto_fetch_audio,
+            # Metronome click (both) — reuse the host synth.
+            "synth_met_click": (lambda accent=False:
+                                self._metronome_play(accent=bool(accent))),
+            # Stem mixer (both) — Preview/Practice-owned dedicated channels.
+            "mixer_set_source_mode": self._pp_mix_set_source_mode,
+            "mixer_detect_doubled_source": self._pp_detect_doubled_source,
+            "mixer_load_stems": _load_stems,
+            "mixer_free_stems": self._pp_mix_free_stems,
+            "mixer_play": (lambda from_song, speed=1.0, o=consumer:
+                           self._pp_mix_play(from_song, speed, o)),
+            "mixer_pause": self._pp_mix_pause,
+            "mixer_unpause": self._pp_mix_unpause,
+            "mixer_stop": self._pp_mix_stop,
+            "mixer_seek": self._pp_mix_seek,
+            "mixer_set_speed": self._pp_mix_set_speed,
+            "mixer_set_bus_gain": self._pp_mix_set_bus_gain,
+            "mixer_stem_nudge": self._pp_mix_stem_nudge,
+            "mixer_song_time": self._pp_mix_song_time,
+            "mixer_has_bus": self._pp_mix_has_bus,
+            "mixer_audio_duration": self._pp_mix_audio_duration,
+            # v4.9.1 — the per-lane DRUM SYNTH is now LIVE (owner: "the synth
+            # toggle does nothing"): numpy-rendered ports of the HTML
+            # voiceRecipes() (parakit_synth_voices sidecar), cached as pygame
+            # Sounds at the live mixer rate, 3 velocity layers per voice.
+            "synth_ensure_rendered": self._pp_synth_ensure,
+            "synth_play": self._pp_synth_play,
+            "synth_set_muted": (lambda m:
+                                setattr(self, "_pp_synth_muted", bool(m))),
+            # OMITTED (phase-1): get_kit_layout (no host kit store),
+            # midi_on_devices_changed.
+        }
+
+    def _pp_synth_ensure(self):
+        """Render + cache the drum-synth voice bank (once per mixer rate).
+        Returns True when the bank is ready, False -> the tabs keep their
+        documented silent-hits degrade. Never raises."""
+        try:
+            import pygame
+            self._yt_preview_ensure_mixer()
+            init = pygame.mixer.get_init()
+            rate = init[0] if init else 44100
+            # v4.9.1 — a rapid drum roll fires many overlapping voice Sounds;
+            # pygame's DEFAULT 8 channels starve almost instantly (a 20-hit
+            # snare roll drops 12), which sounds like "hit-pause-hit-pause"
+            # instead of a fast roll. Raise the ceiling generously (idle
+            # channels are free — this is just the concurrency cap), never
+            # LOWER it if something already set more. Stems/ME allocate from
+            # the same pool, so more headroom helps them too.
+            # v4.9.3 — RE-ASSERT every call, not only on first render: a stem
+            # load (line ~26788/34264) and the ME layered path (line ~26934)
+            # re-init/quit the mixer or force it back to 8 channels. On the
+            # cached-bank fast-path we used to skip this, so dense synth
+            # passages starved again and stole each other's channels (owner:
+            # "each note hogs the audio lane and mutes notes on the same
+            # timing"). HTML/v5 don't hit this — Web Audio is unbounded-poly.
+            try:
+                if pygame.mixer.get_num_channels() < 64:
+                    pygame.mixer.set_num_channels(64)
+            except Exception:
+                pass
+            # Reuse the cached bank ONLY when it was rendered for the CURRENT
+            # mixer rate. A re-init at a new rate leaves stale Sounds that play
+            # at the wrong pitch/speed, so rebuild them.
+            if (getattr(self, "_pp_synth_bank", None)
+                    and getattr(self, "_pp_synth_bank_rate", None) == rate):
+                return True
+            import parakit_synth_voices as psv
+            bank = {}
+            for name, layers in psv.render_all(sr=rate).items():
+                bank[name] = [
+                    pygame.sndarray.make_sound(psv.to_stereo_i16(mono))
+                    for mono in layers]
+            self._pp_synth_bank = bank
+            self._pp_synth_bank_rate = rate
+            self._pp_synth_muted = bool(getattr(self, "_pp_synth_muted", False))
+            return True
+        except Exception:
+            self._pp_synth_bank = None
+            return False
+
+    def _pp_synth_play(self, voice, vel=100):
+        """Play one drum-synth voice at MIDI velocity ``vel``. Layer pick +
+        output gain mirror the HTML (li: v<0.4 soft / <0.8 med / hard;
+        gain 0.35 + v*0.75). Unknown voice -> the 'neutral' fallback, matching
+        the tabs' own vocabulary. Muted or no bank -> silent no-op."""
+        try:
+            if getattr(self, "_pp_synth_muted", False):
+                return True
+            bank = getattr(self, "_pp_synth_bank", None)
+            if not bank and not self._pp_synth_ensure():
+                return False
+            bank = self._pp_synth_bank
+            layers = bank.get(str(voice)) or bank.get("neutral")
+            if not layers:
+                return False
+            v = max(1, min(127, int(vel or 100))) / 127.0
+            snd = layers[0 if v < 0.4 else (1 if v < 0.8 else 2)]
+            # Keep the polyphony ceiling up even between _pp_synth_ensure()
+            # calls: a mid-session mixer re-init (stem load) can drop
+            # num_channels back to 8, and this play path would then steal/cut
+            # still-ringing notes. Cheap no-op once already >= 64.
+            try:
+                import pygame as _pg
+                if _pg.mixer.get_num_channels() < 64:
+                    _pg.mixer.set_num_channels(64)
+            except Exception:
+                pass
+            ch = snd.play()
+            if ch is None:
+                # Even 64 channels can starve on a very dense buzz roll. Rather
+                # than DROP the new hit (the audible gap), steal the oldest
+                # channel and play there — a real drum interrupts its own ring
+                # too, so a rapid roll stays continuous instead of gapping.
+                try:
+                    import pygame
+                    ch = pygame.mixer.find_channel(True)
+                    if ch is not None:
+                        ch.play(snd)
+                except Exception:
+                    ch = None
+            if ch is not None:
+                try:
+                    ch.set_volume(min(1.0, 0.35 + v * 0.75))
+                except Exception:
+                    pass
+            return True
+        except Exception:
+            return False
+
+    def _pp_midi_start(self, consumer):
+        """Return a midi_start(port, on_note_on) closure that registers this
+        consumer's RAW note sink and opens the shared port via the verified
+        _midi_open (which carries e-kit profile + latency offset for free)."""
+        def start(port, on_note_on):
+            try:
+                self._pp_midi_note_cbs[consumer] = on_note_on
+                if self._midi_port is None or self._midi_device_name != port:
+                    # Never yank a live MIDI-Editor recording's port to switch to
+                    # a different device (v4.9.0 — MIDI-editor-QA note). Register
+                    # the sink now; it starts receiving once recording ends and
+                    # the tab re-selects the device. The already-open device's
+                    # notes still flow to this sink in the meantime.
+                    if (getattr(self, "_midi_record_state", "IDLE") == "RECORDING"
+                            and self._midi_port is not None):
+                        return True
+                    return bool(self._midi_open(port))
+                return True
+            except Exception:
+                return False
+        return start
+
+    def _pp_midi_stop(self, consumer):
+        """Return a midi_stop() closure. Ref-counts the shared port: it closes
+        ONLY when no other Preview/Practice sink is registered AND the MIDI
+        Editor is not mid-recording — so a tab-leave never yanks the port out
+        from under a live recording (plan §4.2)."""
+        def stop():
+            try:
+                self._pp_midi_note_cbs.pop(consumer, None)
+                if (not self._pp_midi_note_cbs
+                        and getattr(self, "_midi_record_state", "IDLE") != "RECORDING"):
+                    self._midi_close()
+            except Exception:
+                pass
+        return stop
+
+    def _build_preview_tab(self, parent):
+        """Preview falling-note sidecar tab (v4.9.0) — replaces the old
+        combined Preview/Practice Track tab."""
+        try:
+            from parakit_preview_tab import PreviewTab
+        except Exception as e:
+            ttk.Label(parent, text=(
+                "Preview could not load:\n%r\n\n"
+                "parakit_preview_tab.py / parakit_preview_engine.py must sit "
+                "next to ParaKit v4.0.py." % (e,))).pack(pady=40)
+            return
+        try:
+            self._preview_tab = PreviewTab(parent, hooks=self._build_pp_hooks("preview"))
+            self._preview_tab.pack(fill=tk.BOTH, expand=True)
+        except Exception as _pv_e:
+            for _c in parent.winfo_children():
+                try:
+                    _c.destroy()
+                except Exception:
+                    pass
+            ttk.Label(parent, text=(
+                "Preview could not start:\n%r\n\n"
+                "The rest of ParaKit is unaffected." % (_pv_e,))).pack(pady=40)
+            return
+
+        def _preview_on_tab_changed_stop(_e=None):
+            try:
+                if (getattr(self, "_mixer_music_owner", None) == "preview"
+                        and self.notebook.index("current")
+                        != self._tab_indexes.get("preview")):
+                    stop_fn = getattr(self._preview_tab, "external_stop", None)
+                    if callable(stop_fn):
+                        stop_fn()
+                    else:
+                        self._pp_mix_stop()
+            except Exception:
+                pass
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           _preview_on_tab_changed_stop, add="+")
+
+    def _build_practice_tab(self, parent):
+        """Practice v3 sidecar tab (v4.9.0) — Home -> Play -> Results router."""
+        try:
+            from parakit_practice_tab import PracticeTab
+        except Exception as e:
+            ttk.Label(parent, text=(
+                "Practice could not load:\n%r\n\n"
+                "parakit_practice_tab.py + its parakit_practice_*.py modules must "
+                "sit next to ParaKit v4.0.py." % (e,))).pack(pady=40)
+            return
+        try:
+            self._practice_tab = PracticeTab(parent, hooks=self._build_pp_hooks("practice"))
+            self._practice_tab.pack(fill=tk.BOTH, expand=True)
+        except Exception as _pr_e:
+            for _c in parent.winfo_children():
+                try:
+                    _c.destroy()
+                except Exception:
+                    pass
+            ttk.Label(parent, text=(
+                "Practice could not start:\n%r\n\n"
+                "The rest of ParaKit is unaffected." % (_pr_e,))).pack(pady=40)
+            return
+
+        def _practice_on_tab_changed_stop(_e=None):
+            try:
+                if (getattr(self, "_mixer_music_owner", None) == "practice"
+                        and self.notebook.index("current")
+                        != self._tab_indexes.get("practice")):
+                    stop_fn = getattr(self._practice_tab, "external_stop", None)
+                    if callable(stop_fn):
+                        stop_fn()
+                    else:
+                        self._pp_mix_stop()
+            except Exception:
+                pass
+        self.notebook.bind("<<NotebookTabChanged>>",
+                           _practice_on_tab_changed_stop, add="+")
+
+    def _send_to_preview(self, midi=None, audio=None, drums=None, offset=None):
+        """Cross-tab hand-off into the Preview tab (replaces _viz_send). Loads
+        the chart via the tab's own path loader and switches to it. Degrades
+        quietly if the sidecar failed to import."""
+        pv = getattr(self, "_preview_tab", None)
+        if pv is None:
+            messagebox.showinfo(
+                "Preview",
+                "The Preview tab is not available (its module failed to load).")
+            return
+        try:
+            self.notebook.select(self._tab_indexes["preview"])
+        except Exception:
+            pass
+        try:
+            if midi and os.path.isfile(midi):
+                pv.import_chart(midi)
+            # Push any auto-fetched stems into the tab's mixer buses.
+            for bus, path in (("song", audio), ("drums", drums)):
+                if path and os.path.isfile(path) and hasattr(pv, "_load_stem"):
+                    try:
+                        pv._load_stem(bus, path)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        self._update_menu_state()
+
     def _build_help_tab(self, parent):
         """Quick Start & FAQ tab — two-column layout."""
         canvas = tk.Canvas(parent, bg=APP_BG, highlightthickness=0)
@@ -33729,7 +35871,7 @@ demucs.separate.main()
               ".wav   —  Lossless + uncompressed. Larger files, same quality as FLAC.\n"
               ".mp3   —  Accepted but not recommended. Less accurate results.")
         tip(s, "Converting MP3 to FLAC does NOT recover quality — that data is gone "
-               "permanently. Use the YouTube → FLAC tab (Tab 8) to download lossless audio directly — "
+               "permanently. Use the YouTube → FLAC tab (Tab 9) to download lossless audio directly — "
                "this is the recommended source. Bandcamp is a good alternative if you own the release, "
                "as it often offers FLAC downloads from artists.")
         tip(s, "Audio → MIDI accuracy — FLAC vs WAV: FLAC and WAV are both lossless, "
@@ -33758,6 +35900,12 @@ demucs.separate.main()
               "  MIDI Converter' button on the success popup routes the FLAC automatically.\n\n"
               "  Use htdemucs for fastest results. htdemucs_ft is slower but slightly\n"
               "  more accurate. Both are excellent for charting purposes.\n\n"
+              "GPU acceleration:\n"
+              "  Splitting is much faster on a supported NVIDIA GPU. The\n"
+              "  'Hardware speed notes ▸ 🔍 Check' button verifies whether your GPU\n"
+              "  can accelerate it — and if not, tells you why and how to enable it\n"
+              "  (GTX 10-series–RTX 40-series work by default; RTX 50-series needs a\n"
+              "  CUDA 12.8+ build; AMD/Intel run on CPU).\n\n"
               "Custom Isolation Split  [🧪 BETA]:\n"
               "  Splits audio into up to 6 individual stems using htdemucs_6s.\n"
               "  These are the actual stems the model separates — NOT individual\n"
@@ -34508,6 +36656,19 @@ demucs.separate.main()
               "  With multiple notes selected, both methods affect all selected notes.\n"
               "  Ctrl+Z undoes any reclassification.")
         divider(s)
+        note(s, "About the time readout: the second markers along the timeline "
+                "(\"13.7s\", \"15.1s\", …) are a reading AID to help you see roughly "
+                "where you are. They sit on the beat grid and their text is rounded "
+                "to the nearest tenth of a second so they stay readable, so at very "
+                "deep zoom a marker can sit a hair off the green playhead. That is "
+                "purely the label's rounding + beat-snapping — it is NOT a timing "
+                "error and it does NOT affect your chart. The green playhead shows "
+                "the EXACT current position, and every note's time is stored and "
+                "exported at its true, precise value. In other words: if a label "
+                "looks a touch off at maximum zoom, your notes are still placed and "
+                "saved exactly where they should be — the readout is just a QA "
+                "convenience, not the source of truth.")
+        divider(s)
         entry(s,
               "🥁 Manual MIDI Note Manager  (button next to Tempo Map):\n\n"
               "  Choose which MIDI note each drum lane writes on export\n"
@@ -34565,7 +36726,7 @@ demucs.separate.main()
               "      ParaKit doesn't assume which stem ships as the in-game\n"
               "      backing track.\n"
               "    - Fill in metadata (title, artist, difficulty, complexity)\n"
-              "      and cover art — Asset Manager (Tab 9) can auto-fetch\n"
+              "      and cover art — Asset Manager (Tab 10) can auto-fetch\n"
               "      metadata + album art with one click.")
         divider(s)
         entry(s,
@@ -34792,7 +36953,7 @@ demucs.separate.main()
                  "  5.  Press T at the exact moment you hear it — or while paused\n"
                  "      at the correct position\n"
                  "  6.  The timestamp writes to the Drum start offset field on the\n"
-                 "      Sheet Music tab (Tab 7) automatically\n"
+                 "      Sheet Music tab (Tab 8) automatically\n"
                  "  7.  Switch to Sheet Music tab and convert — offset is set\n\n"
                  "  Use the ±10ms / ±100ms nudge buttons on the Sheet Music tab\n"
                  "  to fine-tune after tapping if needed.\n\n"
@@ -35030,12 +37191,53 @@ demucs.separate.main()
         # Detection Troubleshooter output box can extend down beside it.
         whats_new_frame.pack(fill=tk.X, pady=(10, 12))
 
+        # ── Spectral Comparison (v4.8.0) ────────────────────────────────────
         # ══════════════════════════════════════════════════════════════════════
         # RIGHT COLUMN — Problems, Tools & Reference
         # ══════════════════════════════════════════════════════════════════════
 
+        # ── Spectral Comparison (NEW — first in the right column for visibility) ──
+        s = section("📊  Spectral Comparison (Tab 7)", right, expanded=False,
+                    summary="NEW — did the detector chart it right?  Overlay the chart on the drums stem and flag MISS / PHANTOM.",
+                    badge="⭐ New!")
+        entry(s,
+              "Answers one question: did the detector chart it right?  Load a\n"
+              "drums stem and the detected chart, press Compare, and the tab\n"
+              "overlays the chart on the audio's energy and flags disagreements:\n"
+              "  +  MISS     →  the audio has a hit there, but no note is charted\n"
+              "  ×  PHANTOM  →  a note is charted, but the audio is silent there\n\n"
+              "Energy alone is NOT a miss — drums share frequency bands (all\n"
+              "cymbals share one band, all toms share one), so bleed shows up as\n"
+              "energy in lanes you didn't play. Only the + / × flags mark\n"
+              "disagreements — treat them as review candidates to check by\n"
+              "ear, not verdicts.\n\n"
+              "Sources:\n"
+              "  • Drums stem (required)  →  the ISOLATED drums stem. This is the\n"
+              "    audio drawn on the graph and checked against the chart; a full\n"
+              "    mix pollutes the view with every other instrument, so the drums\n"
+              "    stem reads cleanest. It is the important file here.\n"
+              "  • Chart (required)  →  the detected .mid (.json / .rlrr also work)\n"
+              "  • Full mix (optional)  →  the full mix, for playback / masking\n"
+              "    context only. The graph still analyses the drums by default.\n\n"
+              "Workflow:\n"
+              "  1.  Load the drums stem + the chart, then Compare — flags appear\n"
+              "      on the lanes and counts show in the header\n"
+              "  2.  Click the canvas to seek; Play to listen along the playhead\n"
+              "  3.  Edit mode  →  click to add / delete notes (Undo/Redo on the\n"
+              "      toolbar), then Overwrite MIDI or Export MIDI\n\n"
+              "Toggles (appear once a full mix is also loaded):\n"
+              "  • Play source (Drums | Full Mix)  →  which audio you HEAR\n"
+              "  • Analyze (Drums | Full Mix)  →  which audio the graph ANALYSES\n"
+              "    (default Drums; switch to Full Mix for masking context)\n\n"
+              "Shortcut: the 📊 Spectral button on the MIDI Editor, Audio → MIDI,\n"
+              "Song Tester and Preview tabs sends that song's drums + chart here.\n\n"
+              "Two views (toolbar toggle): Per-Lane (energy ribbon + notes per\n"
+              "drum) and Spectrogram (full heatmap with the chart's note rows).\n"
+              "Zoom with the slider, Ctrl+wheel, or Fit. The Render panel on the\n"
+              "Spectrogram view adjusts brightness, top frequency and colormap.")
+
         # ── Preview/Practice Track ───────────────────────────────────────────
-        s = section("📺  Preview/Practice Track (Tab 11)", right)
+        s = section("📺  Preview/Practice Track (Tab 12)", right)
         entry(s,
               "Preview subtab — visual reference only:\n"
               "  Load a MIDI file to watch your chart fall exactly as it will in\n"
@@ -35074,6 +37276,30 @@ demucs.separate.main()
               "  • End-of-song results screen with grade letter (S/A/B/C/D), score,\n"
               "    timing histogram, and per-grade breakdown\n"
               "  • Play Again button to restart the chart; Esc or Back to ParaKit to exit\n\n"
+              "Choosing the audio before you play:\n"
+              "  The pre-play panel offers two audio sources per song:\n"
+              "  • Backing + Drums — the linked stems (backing track plus the drum\n"
+              "    stem). Greyed out if those stems aren't on disk.\n"
+              "  • Full Mix — one file that already contains the whole song.\n"
+              "  If a song's 'backing' is really a full mix that already has drums in\n"
+              "  it, picking Backing + Drums would play the drums twice. ParaKit detects\n"
+              "  that, marks the button '(not recommended)', and explains why just below\n"
+              "  it — you can still choose it if you know better.\n"
+              "  'Linked audio ▸' expands to show exactly which files are linked, so a\n"
+              "  missing or wrong stem is easy to spot.\n\n"
+              "Built-in drum synth:\n"
+              "  No audio linked to a song? Practice still works — ParaKit synthesizes\n"
+              "  the drum hits from the chart itself and keeps time with a silent clock,\n"
+              "  so a chart is always playable and audible without any external sampler\n"
+              "  or sound font. When you DO have audio, the synth layers on top of it so\n"
+              "  you can hear your own hits against the track; press M in the Practice\n"
+              "  window to mute it.\n\n"
+              "Checking your keys/pads first:\n"
+              "  'Keyboard / MIDI test…' on the Practice home screen opens an input\n"
+              "  tester: hit your bound keys (and MIDI pads, when connected) and see\n"
+              "  which instrument each one triggers — useful for confirming a remap or a\n"
+              "  kit's pad layout before starting a song. The keyboard works out of the\n"
+              "  box, and holding Shift plays an accent.\n\n"
               "Window controls:\n"
               "  • Drag the corner to resize (minimum 800×600)\n"
               "  • Alt+Enter or F11 to toggle fullscreen\n"
@@ -35162,7 +37388,7 @@ demucs.separate.main()
               "features like per-velocity calibration are still planned for later.")
 
         # ── Sheet Music → MIDI ────────────────────────────────────────────────
-        s = section("🎼  Sheet Music → MIDI (Tab 7)", right)
+        s = section("🎼  Sheet Music → MIDI (Tab 8)", right)
         entry(s,
               "Converts a MusicXML drum chart into a Paradiddle-ready MIDI file.\n"
               "Unlike Audio → MIDI detection, the result is 1:1 accurate — every note\n"
@@ -35288,10 +37514,10 @@ demucs.separate.main()
                 "music tempo does not exactly match your recording, or the audio has an intro "
                 "the sheet music does not account for, notes will be out of sync in-game. "
                 "Always use the Audio Offset field for intros, then run the Song Tester "
-                "(Tab 10) to verify BPM and fine-tune offset before creating your .rlrr file.")
+                "(Tab 11) to verify BPM and fine-tune offset before creating your .rlrr file.")
 
         # ── Common Problems ───────────────────────────────────────────────────
-        s = section("▶  YouTube → FLAC (Tab 8)", right)
+        s = section("▶  YouTube → FLAC (Tab 9)", right)
         entry(s,
               "Downloads audio from YouTube and converts it to FLAC.\n"
               "FLAC is the recommended format for the Stem Splitter — lossless quality\n"
@@ -35345,7 +37571,7 @@ demucs.separate.main()
             "changed their API again — check yt-dlp's GitHub for a newer release.")
         divider(s)
 
-        s = section("🎨  Asset Manager (Tab 9)", right)
+        s = section("🎨  Asset Manager (Tab 10)", right)
         entry(s,
               "Auto-Fetch Metadata:\n"
               "  Searches MusicBrainz for song title, artist, and album,\n"
@@ -35517,7 +37743,7 @@ demucs.separate.main()
         # ── General Tips ──────────────────────────────────────────────────────
         s = section("💡  General Tips", right)
         tip(s, "Always convert audio to .ogg before use. MP3 can cause sync drift in "
-               "Paradiddle due to encoding header variations. Use YouTube → FLAC (Tab 8) "
+               "Paradiddle due to encoding header variations. Use YouTube → FLAC (Tab 9) "
                "or download from Bandcamp for the best lossless source.")
         divider(s)
         tip(s, "For Audio → MIDI, always run Stem Splitter first to get a drums-only stem, "
@@ -35534,7 +37760,7 @@ demucs.separate.main()
         divider(s)
         tip(s, "External MIDI files from a repository will almost always give better results "
                "than Audio → MIDI. MuseScore.com often has community drum sheets — download "
-               "as .mxl and use Sheet Music → MIDI (Tab 7) for near-perfect accuracy.")
+               "as .mxl and use Sheet Music → MIDI (Tab 8) for near-perfect accuracy.")
         divider(s)
         tip(s, "If auto-detected BPM seems wrong, it is often exactly half or double "
                "the correct value. Try ×2 or ÷2 first before adjusting manually. "
@@ -35542,7 +37768,7 @@ demucs.separate.main()
                "audio offset for sync alignment.")
         divider(s)
         tip(s, "A missing cover image silently prevents Paradiddle from loading the song. "
-               "Make sure the image file is in the output folder. Use Asset Manager (Tab 9) "
+               "Make sure the image file is in the output folder. Use Asset Manager (Tab 10) "
                "to auto-fetch art and crop it to the required 1:1 square ratio. "
                "Or, in Song Creator, enable 'Use album art from audio file metadata' to "
                "auto-extract embedded cover art from FLAC, MP3, OGG, or M4A files.")
@@ -37404,17 +39630,30 @@ demucs.separate.main()
             self.midi_queue.put(msg)
 
     def _poll_midi_queue(self):
-        while True:
+        # Drain the queue (bounded so a MIDI flood can't monopolize the Tk loop;
+        # any remainder is picked up on the next tick, no message is dropped).
+        _n = 0
+        while _n < 256:
             try:
                 msg = self.midi_queue.get(block=False)
             except queue.Empty:
                 break
+            _n += 1
             try:
                 self._handle_midi_message(msg)
             except Exception as exc:
                 print(f"[MIDI] handler error: {exc}")
+        # Idle-gate the cadence. Only a live producer -- an open MIDI input port
+        # (_midi_port) or a registered Practice/Preview recording sink
+        # (_pp_midi_note_cbs) -- ever enqueues here, so poll at a relaxed 200 ms
+        # when none is active instead of a flat 5 ms for the whole app life
+        # (~200 Tk wakeups/s even with no e-kit, on every tab, even minimized).
+        # Tighten back to 5 ms while a consumer is live; a newly-opened port
+        # starts fast within one slow tick (opening a port is a user action, not
+        # latency-sensitive to 200 ms).
+        _active = (self._midi_port is not None) or bool(self._pp_midi_note_cbs)
         try:
-            self.root.after(5, self._poll_midi_queue)
+            self.root.after(5 if _active else 200, self._poll_midi_queue)
         except Exception:
             pass
 
@@ -37456,12 +39695,23 @@ demucs.separate.main()
         except Exception:
             pass
 
+        # v4.9.0 — forward the RAW note-on to any registered Preview/Practice
+        # sink. Done BEFORE the `lane_idx is None` gate ON PURPOSE: the tabs do
+        # their OWN note->lane map (eng.MIDI_TO_LANE), whose note-set differs
+        # from the host's (a narrowing device profile or a user override can
+        # leave a note the HOST can't map but the TAB can). Sending the host
+        # lane_idx would double-map. Signature (note, vel, stamp) matches
+        # PreviewTab._on_midi_note_on (parakit_preview_tab.py:2474).
+        for _cb in list(self._pp_midi_note_cbs.values()):
+            try:
+                _cb(msg.note, msg.velocity, _mtime.time())
+            except Exception as _e:
+                print(f"[MIDI] pp sink error: {_e}")
+
         if lane_idx is None:
             return
         if getattr(self, "_midi_record_state", "IDLE") == "RECORDING":
-            self._midi_record_capture_midi_hit(msg, lane_idx)
-        if self._viz_practice_active():
-            self._viz_practice_register_hit(lane_idx)
+            self._midi_record_capture_midi_hit(msg, lane_idx)   # keep — MIDI-Editor recording
 
     def _midi_apply_learn_capture(self, lane_name, note):
         """Record `note` as the new mapping for `lane_name` in the user
@@ -38163,6 +40413,22 @@ demucs.separate.main()
         self.viz_play_btn.pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(ctrl_row, text="⏹  Stop",
                    command=self._viz_stop).pack(side=tk.LEFT, padx=(0, 12))
+
+        # Send this song's drums / chart / full-mix to Spectral Comparison
+        # (owner 2026-07-20).
+        _viz_spectral_btn = ttk.Button(
+            ctrl_row, text="📊  Spectral",
+            command=lambda: self._send_to_spectral(
+                drums=self.viz_drum_var.get().strip(),
+                chart=(self.viz_rlrr_override_var.get().strip()
+                       or self.viz_midi_var.get().strip()),
+                mix=self.viz_audio_var.get().strip()))
+        _viz_spectral_btn.pack(side=tk.LEFT, padx=(0, 12))
+        self._add_tooltip(
+            _viz_spectral_btn,
+            "Open this song in the Spectral Comparison tab to check the detection\n"
+            "against the audio -- sends the Drums stem, chart, and Full Mix so\n"
+            "MISS / PHANTOM disagreements show on the graph.")
 
         self.viz_pos_var = tk.StringVar(value="00:00.0")
         ttk.Label(ctrl_row, textvariable=self.viz_pos_var,
@@ -39444,7 +41710,7 @@ demucs.separate.main()
         try:
             import json as _json
             text = None
-            for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
+            for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1"):
                 try:
                     with open(rlrr_path, "r", encoding=enc) as f:
                         text = f.read()
@@ -39901,10 +42167,7 @@ demucs.separate.main()
             # Undo the playing/GC state if we failed after arming playback so GC
             # can't get stuck disabled and the button can't get stuck on "Pause".
             self._viz_playing = False
-            try:
-                gc.enable()
-            except Exception:
-                pass
+            self._gc_playback_enable("viz")
             self.viz_play_btn.configure(text="▶  Play")
             messagebox.showerror("Playback error", str(e))
 
@@ -39928,11 +42191,9 @@ demucs.separate.main()
         except Exception:
             pass
         self._viz_playing = False
-        # v4.5.6.2 — re-enable the cyclic GC that _viz_play paused.
-        try:
-            gc.enable()
-        except Exception:
-            pass
+        # v4.5.6.2 — re-enable the cyclic GC that _viz_play paused
+        # (ownership-aware since 2026-07-20: never undoes another owner's pause).
+        self._gc_playback_enable("viz")
         self.viz_play_btn.configure(text="▶  Play")
         if self._viz_tick_id:
             self.root.after_cancel(self._viz_tick_id)
@@ -39948,12 +42209,9 @@ demucs.separate.main()
         except Exception:
             pass
         self._viz_playing = False
-        # v4.5.6.2 — re-enable + run the cyclic GC that _viz_play paused.
-        try:
-            gc.enable()
-            gc.collect()
-        except Exception:
-            pass
+        # v4.5.6.2 — re-enable + run the cyclic GC that _viz_play paused
+        # (ownership-aware since 2026-07-20: never undoes another owner's pause).
+        self._gc_playback_enable("viz", collect=True)
         self._viz_play_offset_secs = 0.0
         self.viz_play_btn.configure(text="▶  Play")
         if self._viz_tick_id:
@@ -39971,12 +42229,9 @@ demucs.separate.main()
         """State-only release for when another tab took mixer.music ownership
         (R2-7): reset OUR playing state/UI without touching pygame — a real
         _viz_stop() would call music.stop()/unload() and kill the NEW owner's
-        audio. GC re-enable matters: _viz_play disabled it for playback."""
+        audio. GC handling is ownership-aware: see _gc_playback_enable."""
         self._viz_playing = False
-        try:
-            gc.enable()
-        except Exception:
-            pass
+        self._gc_playback_enable("viz")
         self.viz_play_btn.configure(text="▶  Play")
         if self._viz_tick_id:
             self.root.after_cancel(self._viz_tick_id)
@@ -40489,7 +42744,7 @@ demucs.separate.main()
         if not midi:
             messagebox.showwarning("No MIDI", "Load a MIDI in the editor first.")
             return
-        self._viz_send(midi=midi, audio=audio, drum=drum)
+        self._send_to_preview(midi=midi, audio=audio, drums=drum)   # v4.9.0
 
     def _tester_send_to_visualizer(self):
         """Send Song Tester files and values to Preview/Practice Track."""
@@ -40497,15 +42752,15 @@ demucs.separate.main()
         audio = self.tester_audio_var.get().strip()
         drum  = self.tester_drum_var.get().strip()
         off   = self.tester_offset_var.get().strip()
-        self._viz_send(midi=midi or None,
-                       audio=audio or None, drum=drum or None,
-                       offset=off or None)
+        self._send_to_preview(midi=midi or None,          # v4.9.0
+                              audio=audio or None, drums=drum or None,
+                              offset=off or None)
 
     def _creator_send_to_visualizer(self):
         """Send Song Creator files to Preview/Practice Track."""
         midi  = self.midi_var.get().strip()
         audio = self.audio_var.get().strip()
-        self._viz_send(midi=midi or None, audio=audio or None)
+        self._send_to_preview(midi=midi or None, audio=audio or None)   # v4.9.0
 
     def _build_tester_tab(self, parent):
         """Diagnostic tab — checks MIDI/audio sync and recommends settings."""
@@ -40640,6 +42895,22 @@ demucs.separate.main()
                                      style="Convert.TButton",
                                      command=self._tester_start)
         self.tester_btn.pack(fill=tk.X, pady=(5, 6), ipady=8)
+
+        # Send this song's drums / chart / full-mix to Spectral Comparison
+        # (owner 2026-07-20) -- Song Tester is the conceptual twin of Spectral.
+        _tester_spectral_btn = ttk.Button(
+            main, text="📊  Send to Spectral Comparison",
+            command=lambda: self._send_to_spectral(
+                drums=self.tester_drum_var.get().strip(),
+                chart=(self.tester_rlrr_var.get().strip()
+                       or self.tester_midi_var.get().strip()),
+                mix=self.tester_audio_var.get().strip()))
+        _tester_spectral_btn.pack(fill=tk.X, pady=(0, 6), ipady=4)
+        self._add_tooltip(
+            _tester_spectral_btn,
+            "Open this song in the Spectral Comparison tab to check the detection\n"
+            "against the audio -- sends the Drums stem, chart, and Full Mix so\n"
+            "MISS / PHANTOM disagreements show on the graph.")
 
         # ── BPM / Offset adjuster (populated after test runs) ─────────────────
         adj_frame = ttk.LabelFrame(main, text=" Adjust & Re-test ", padding=10)
@@ -40960,7 +43231,7 @@ demucs.separate.main()
                 self._tester_log("  Using .rlrr events for alignment test "
                                  "(most accurate)", "#b388ff")
                 text = None
-                for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
+                for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1"):
                     try:
                         with open(rlrr_path, "r", encoding=enc) as f:
                             text = f.read()
@@ -41197,7 +43468,7 @@ demucs.separate.main()
             inst_counts = {}
             if rlrr_path and os.path.exists(rlrr_path):
                 _text = None
-                for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
+                for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1"):
                     try:
                         with open(rlrr_path, "r", encoding=enc) as _f:
                             _text = _f.read()
@@ -44647,9 +46918,9 @@ demucs.separate.main()
                 f"intentionally cautious and false positives are common, especially "
                 f"after manual MIDI edits.\n\n"
                 f"What to do next:\n"
-                f"  1. Open the Preview/Practice Track tab (Tab 11) and load your MIDI "
+                f"  1. Open the Preview/Practice Track tab (Tab 12) and load your MIDI "
                 f"to watch the notes fall against your audio visually.\n"
-                f"  2. If something looks off, open the Song Tester tab (Tab 10) "
+                f"  2. If something looks off, open the Song Tester tab (Tab 11) "
                 f"for a detailed breakdown of what was flagged and recommended "
                 f"BPM/offset corrections.\n"
                 f"  3. The file is ready to test on your Quest regardless.\n\n"

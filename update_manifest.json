@@ -1,10 +1,10 @@
 {
-  "version": "4.7.26",
+  "version": "4.9.3",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "574fa46b9b8acbb20fdaf2c13f961be994d3a6acd868006c4d336f603742f705"
+      "sha256": "5bf0409dde29fc5bf1494808d728e0b21d9e5ec0022d4e5d4de88aa5c78753d0"
     },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
@@ -52,11 +52,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "d1251e3ed7407513d77090645f0026e982feb655aa847979c31f3ed046225026"
+      "sha256": "1a1865595eb49f10595039644b7235c94d18572ec805e55334e98b10a44c1e92"
     },
     {
       "path": "README.txt",
-      "sha256": "cdb60afebac4655865b769c397b1fa1bc96163421f8e79ba258096d103ebcf06"
+      "sha256": "ffdd45f2459e50f6f569312a153c655998ce4635f0e8f043aabe67d029505715"
     },
     {
       "path": "Run ParaKit v4.0.bat",
@@ -159,6 +159,38 @@
       "sha256": "99179f00b65716143cf7e2c899422b08245b3fcaac8bcf59fe09a4e1ffd69705"
     },
     {
+      "path": "parakit_practice_engine.py",
+      "sha256": "b2f56ae412ae6bae7c8c724c4e96a431a742ffb3046f75b36af274c7244bd089"
+    },
+    {
+      "path": "parakit_practice_home.py",
+      "sha256": "33413a2780ba9d25a4a5184a6da9d3d1b025c5baa83e1cabea4a928940cec7c2"
+    },
+    {
+      "path": "parakit_practice_sprites.py",
+      "sha256": "5d9e8591945db3f014852fa754781cbc4175e356449e000149b3bd1197e19ea8"
+    },
+    {
+      "path": "parakit_practice_tab.py",
+      "sha256": "05ed33c50d72087090abd516b8c3756f9951195d5d4262039bdccf61fc0cab04"
+    },
+    {
+      "path": "parakit_practice_widgets.py",
+      "sha256": "ecda79c5d501eedb1c6661d227c69a550143290753d1f61888fcdae6d7271254"
+    },
+    {
+      "path": "parakit_preview_engine.py",
+      "sha256": "ae1d03e319b4ec1b47a4caf0a5224ffd98f967c369e5694988fc4016d1db1da5"
+    },
+    {
+      "path": "parakit_preview_sprites.py",
+      "sha256": "6495ac0537ca6bf2eaf7df7a00f59e213f0fe40158edf5215fbd00a238a11ba0"
+    },
+    {
+      "path": "parakit_preview_tab.py",
+      "sha256": "5de271d3b86be5ef4536d6af95b5770da68bd4ec7631e8b37e3c0c2131592c13"
+    },
+    {
       "path": "parakit_separators/__init__.py",
       "sha256": "317be060414de8dd4985349f66c1ac857ae84f9c38ab330740afe896ca707bd1"
     },
@@ -173,6 +205,18 @@
     {
       "path": "parakit_separators/model_resolver.py",
       "sha256": "ad4bb632462a31b102a79b93ef78009f49ce7d7f55c5b93b026e23012630161b"
+    },
+    {
+      "path": "parakit_spectral_engine.py",
+      "sha256": "3e52f6c58b4c34e68cacf4a69295f95f5ef07de3e2f6b4a4c13ea62527909f4a"
+    },
+    {
+      "path": "parakit_spectral_tab.py",
+      "sha256": "cec5b3676e3f15e046de16715ee8656206aed65e4f896b15b2ced336dd206ad9"
+    },
+    {
+      "path": "parakit_synth_voices.py",
+      "sha256": "0a947afc994ac2cc6b82fc13888630eab5bf9a0435ee1b502a141a9c11c5ddd5"
     },
     {
       "path": "practice_minigame/__init__.py",
