@@ -4293,7 +4293,7 @@ def _a2m_cymbal_resolver(hihat_times, crash_times, ride_times, D_full, freqs_arr
 
     # ---- per-candidate features --------------------------------------------
     HOP = 512  # matches STFT hop in _a2m_do_convert
-    # O(1) time-to-index lookup (fixes O(nÂ²) all_times.index)
+    # O(1) time-to-index lookup (fixes O(n²) all_times.index)
     time_to_idx = {t: i for i, t in enumerate(all_times)}
     for c in candidates:
         t = c["time"]
@@ -5791,7 +5791,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.5"
+    VERSION = "4.9.6"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -9595,23 +9595,30 @@ class MidiToRlrrApp:
             "1 = very easy, 5 = very hard.\n"
             "This is just a label — it does not affect note content.")
 
+        # Note reduction moved to the MIDI Editor (◪ Difficulty button): doing
+        # it at compile time forced a full convert → re-import round-trip just
+        # to inspect the result. The variable STAYS (permanently False) — the
+        # conversion/tester paths below still read it, and False simply means
+        # "never reduce at build time".
         self.reduce_difficulty_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(info_frame, text="Enable difficulty-based note reduction",
-                        variable=self.reduce_difficulty_var,
-                        command=self._toggle_difficulty_reduction
-                        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
-        self.difficulty_warning_label = ttk.Label(
-            info_frame,
-            text="⚠  Note reduction active: the number of notes on the track will be\n"
-                 "   adjusted based on the selected difficulty level.",
-            style="Sub.TLabel", foreground="#e94560")
+        # v4.9.6 — VISIBLE relocation notice, sitting exactly where the
+        # "Enable difficulty-based note reduction" checkbox used to be. A
+        # tooltip is not enough here: the failure mode is a user who ticked
+        # that box every session, doesn't read the changelog, and now silently
+        # ships a FULL chart labelled "Easy" — the label still changes, so
+        # nothing looks wrong until it is played. A control that disappears
+        # needs to say where it went, at the place it disappeared from.
+        ttk.Label(opts_row,
+                  text="   Note reduction moved → MIDI Editor ▸ ◪ Difficulty",
+                  style="Sub.TLabel", foreground="#c8a24a").pack(
+                      side=tk.LEFT, padx=(14, 0))
 
         self._add_tooltip(diff_combo,
-            "⚠ WARNING!\nWhen 'Enable difficulty-based note reduction' is checked,\n"
-            "this setting is NOT just a category label!\n"
-            "The selected difficulty will directly affect the number\n"
-            "of MIDI notes on the converted track.")
+            "The difficulty label saved with the song — it is only a category\n"
+            "label shown in Paradiddle's song browser. It does not change any\n"
+            "notes. To thin a chart down to Easy, Medium, or Hard, open it in\n"
+            "the MIDI Editor and use the ◪ Difficulty button there.")
 
         # ── BPM / Timing (band col 3, LOWER card — Tools packs above it via
         # pack(before=) when it's built further down) ─────────────────────────
@@ -11477,7 +11484,7 @@ class MidiToRlrrApp:
         ).pack(anchor="w", pady=(3, 0))
 
         ttk.Label(main,
-                  text="⚡  NEW (v4.4.58-12): RTX 50-series (Blackwell) GPUs are now supported "
+                  text="⚡  RTX 50-series (Blackwell) GPUs are supported "
                        "for GPU-accelerated splitting when a CUDA 12.8+ (cu128) PyTorch build "
                        "is installed. See the Hardware speed notes below for details.",
                   style="Sub.TLabel", foreground="#00e0e0", wraplength=860,
@@ -15477,44 +15484,64 @@ demucs.separate.main()
             text="      •  Remove cross-stem bleed kicks   ⚠ EXPERIMENTAL — needs the FULL MIX",
             variable=self.a2m_cleanup_bleed_var)
         cleanup_bleed_cb.pack(anchor="w")
-        # v4.9.5 — EXPERIMENTAL disclaimer (owner-directed 2026-07-27). The pass
-        # itself behaves correctly; the problem is what turning it ON forces you
-        # into. It only finds anything when the conversion input is a FULL MIX,
-        # and converting from a full mix currently yields a clearly worse chart
-        # than converting from a drums stem. So the honest framing is not "this
-        # pass is broken" but "the workflow it requires is worse than the normal
-        # one" -- which is what a user needs to know before enabling it.
+        # v4.9.5 — EXPERIMENTAL disclaimer (owner-directed 2026-07-27), REWRITTEN
+        # 2026-07-28 for the htdemucs-first routing fix. The old copy said the pass
+        # forces you into a full-mix conversion and that a full-mix conversion is
+        # "clearly worse". The first half is still true; the second half is no
+        # longer, because a full mix is now detected and pre-split before the
+        # detector sees it, and the bleed pass reuses those stems instead of
+        # separating the song twice. Two caveats keep it EXPERIMENTAL and keep the
+        # drums-stem workflow recommended: the pre-split only runs when a separator
+        # slot is active (it lives inside that branch, ~:17770), and the automatic
+        # split lands NEAR a real drums stem, not equal to it.
         ttk.Label(adv_frame,
-                  text=("⚠ EXPERIMENTAL / in development — still flawed, but useful in "
-                        "some cases for spotting ghost kicks. Using it means converting "
-                        "from the FULL MIX, and full-mix conversions currently produce a "
-                        "noticeably worse chart than converting from a drums stem with "
-                        "the normal pipeline. For the best chart, split the song first "
-                        "and convert the drums stem with this OFF."),
+                  text=("⚠ EXPERIMENTAL. What it catches: kicks that are really the "
+                        "BASS guitar bleeding into the drums — a different mistake "
+                        "from the one the remover above finds, so it catches phantoms "
+                        "that pass that check. It only auto-deletes the most clear-cut "
+                        "ones and flags the rest for you to judge in the MIDI Editor. "
+                        "It needs the FULL MIX as the input. That used to mean accepting "
+                        "a much worse chart to use it; it no longer does — with Neural "
+                        "Stem Isolation on, a full mix is split before detection runs, "
+                        "and this pass reuses those stems instead of separating the song "
+                        "again. A drums stem from the Stem Splitter is still the better "
+                        "input, and from one this pass has nothing to compare and finds "
+                        "nothing."),
                   style="Sub.TLabel", foreground="#c8a24a",
                   wraplength=560, justify="left").pack(anchor="w", pady=(0, 6))
         self._add_tooltip(
             cleanup_bleed_cb,
-            "⚠ EXPERIMENTAL — in development, still flawed. Useful in some cases as a\n"
-            "ghost-kick overlay for review, NOT as a way to get a better chart.\n\n"
-            "A second phantom-kick check that catches false kicks the remover above\n"
-            "misses: it splits the song into drums / bass / vocals / other and removes\n"
-            "kicks where another instrument (usually bass) bled into the drums track.\n\n"
-            "⚠ CONVERT FROM THE FULL MIX to use this. It runs its OWN stem separation\n"
-            "and works by comparing the drums against the bass / vocals / other parts —\n"
-            "so if you convert from a drums-only stem there is nothing to compare\n"
-            "against, and the pass finds nothing (it still costs the separation time).\n"
-            "This is easy to miss because the option lives on the Audio → MIDI tab,\n"
-            "which normally comes AFTER splitting.\n\n"
-            "⚠ That requirement is the catch. Converting from a full mix currently\n"
-            "gives a clearly worse chart than converting from an already-split drums\n"
-            "stem — noticeably more phantom kicks — so switching this ON to clean up\n"
-            "kicks can leave you worse off overall than leaving it OFF and converting\n"
-            "the drums stem. The recommended workflow is still: split the song, then\n"
-            "convert the drums stem with this OFF.\n\n"
-            "This runs an extra stem separation, so it adds time to each conversion.\n"
-            "Kicks that are only borderline are highlighted for review in the MIDI\n"
-            "Editor rather than removed.\n"
+            "⚠ EXPERIMENTAL — cautious by design, and still being validated against\n"
+            "human-charted songs. Read the input note below before turning it on.\n\n"
+            "WHAT IT CATCHES\n"
+            "Some 'kicks' the detector finds are really the BASS guitar leaking into\n"
+            "the drums track. This pass splits the song into drums / bass / vocals /\n"
+            "other and, for every kick, compares how much non-drum energy sits at that\n"
+            "exact moment. A kick sitting on far more bass than drum is a phantom.\n"
+            "That is a DIFFERENT mistake from the one the remover above looks for, so\n"
+            "it catches phantoms that pass the other check — the two are independent.\n"
+            "It is deliberately cautious: only the most clear-cut cases are deleted,\n"
+            "and everything borderline is highlighted in the MIDI Editor for you to\n"
+            "judge. On a well-prepared conversion that is a short review list, not a\n"
+            "wall of marks.\n\n"
+            "IT NEEDS THE FULL MIX\n"
+            "It works by comparing the drums against the bass and vocals, so it only\n"
+            "finds anything when you convert from the full mix. From a drums-only\n"
+            "stem there is nothing to compare and it finds nothing, while still\n"
+            "costing the separation time.\n\n"
+            "Converting from a full mix used to be a bad trade on its own — it badly\n"
+            "inflated the kick lane. It no longer is: with Neural Stem Isolation on,\n"
+            "a full mix is now recognized and split before detection runs, so the kick\n"
+            "lane lands close to a drums-stem result instead of roughly double it, and\n"
+            "this pass reuses those same stems rather than separating the song a\n"
+            "second time. With the separator switched off there is no split, and a\n"
+            "full mix still gives the poor chart it always did.\n\n"
+            "⚠ STILL NOT A REPLACEMENT FOR A DRUMS STEM\n"
+            "A properly separated drums stem from the Stem Splitter remains the better\n"
+            "input and the recommended workflow — the automatic split gets close, not\n"
+            "equal. Turn this on when you are converting a full mix anyway and want a\n"
+            "second opinion on bass-bleed kicks, and are willing to review the marks\n"
+            "it leaves.\n\n"
             "Kick lane only; never adds or moves notes. Needs the source audio present.")
 
         self.a2m_remove_flams_var = tk.BooleanVar(
@@ -17496,6 +17523,169 @@ demucs.separate.main()
     # _a2m_do_convert) keeps the wrap site and its enabling helper in
     # adjacent source. The instance is cached on self so multi-song batches
     # don't re-instantiate on every track.
+    # ── htdemucs-first routing (promoted to dev 2026-07-28) ───────────────────
+    # Cheap "is this a drums-only stem or a full mix?" probe, run BEFORE any
+    # separation.
+    #
+    # ⚠ CORRECTED 2026-07-28 — an earlier version of this comment blamed the
+    # Jarredou slot ("no bass bucket, so bass lands in kick"). MEASURED, that is
+    # WRONG. A full mix fed straight to the detector with the separator OFF
+    # gives 1191 / 1189 kicks; with Jarredou it gives 1225 / 1161. Jarredou
+    # barely moves it and is not the cause.
+    #
+    # The actual cause is plainer: the spectral kick gate cannot tell a bass
+    # note from a kick, and a full mix contains bass. Jarredou separates DRUM
+    # COMPONENTS and has no bass output, so it never removes the bass -- it does
+    # not create the problem, it just fails to fix it. htdemucs fixes it because
+    # it actually strips the bass out. Hence: split FIRST, then separate.
+    #
+    # And it was never only the kick lane. Measured on the owner's two songs
+    # (detection only, no cleanup), full mix vs pre-split:
+    #     Running In Circles  kick 1225->522   snare 132->210  hihat  93->252
+    #     Clarity             kick 1161->498   snare  69->202  hihat   6-> 30
+    # against clean drums-stem references of kick 530 / 453. The pre-split lands
+    # on the reference; the full-mix path is ~2.3x off on kick and loses most of
+    # the hi-hat lane.
+    #
+    # Ground truth (Mocha, 334 sync-gated ParaDB songs) agrees on the route:
+    #     Arm A  full mix -> htdemucs -> drums -> detect                F1 0.825
+    #     Arm B  full mix -> htdemucs -> drums -> Jarredou -> detect    F1 0.835
+    # The shipped path (full mix -> Jarredou directly) is still unmeasured
+    # against charts -- that is B-prime, and this routing stays gated on it.
+    #
+    # Metric: harmonic energy fraction from a 20 s excerpt via librosa HPSS.
+    # Calibrated on 120 labelled files from the owner's ParaDB corpus
+    # (drumTracks = drums-only, songTracks = not): AUROC 0.920. Returns None
+    # when it cannot tell -- callers must treat None as "don't change the
+    # routing", never as a guess.
+    #
+    # ── THRESHOLD 0.50, NOT the 0.578 accuracy-optimal point ──────────────────
+    # 0.578 maximised raw classification accuracy (93.3%). That is the wrong
+    # objective, because the two error directions are not remotely symmetric:
+    #
+    #   COSTLY miss  full mix judged drums-only -> stays on the broken path
+    #                -> kick F1 0.418 vs 0.835  = -0.42 for that user.
+    #   CHEAP  miss  drums stem judged full mix -> one needless htdemucs pass
+    #                -> kick F1 0.835 -> 0.839  = +0.004. It does not hurt.
+    #
+    # The cheap miss was MEASURED, not assumed (Mocha idempotency test,
+    # 2026-07-28, 35 songs, 0 failures, control reproduced byte-identical
+    # against the banked Arm B): re-splitting an already-clean drums stem
+    # slightly HELPS kick (FP 4418 -> 4157) and hurts no single song (worst
+    # per-song kick dF1 -0.006; zero songs worse than -0.02). Per incident a
+    # costly miss is ~40x worse than a cheap one, so the threshold is
+    # deliberately biased toward calling things full mix.
+    # At 0.578: 1 costly + 9 cheap. At 0.50: 0 costly + 17 cheap. Below 0.50
+    # buys no further costly-miss reduction, only more harmless re-splits.
+    #
+    # Known cost, recorded honestly: hi-hat -0.010 (0.394 -> 0.384) on a cheap
+    # miss. Accepted because kick is the axis this routing exists to fix, and
+    # because -0.010 on a 0.39 lane is small against a -0.42 costly miss.
+    #
+    # ⚠ CORRECTED 2026-07-28. This comment previously ALSO justified accepting
+    # the hi-hat cost with "hi-hat is the lane whose reference charts are least
+    # trustworthy -- an Expert chart with NO hi-hats is one of the known cases."
+    # That was wrong and has been struck. The song in question (Enemy feat. JID)
+    # has 230 hi-hats in BOTH its Expert and Hard charts; the tier with zero is
+    # EASY, which is ordinary difficulty simplification, not a chart-vs-audio
+    # mismatch. The Easy tier was misread as Expert. There is currently NO
+    # verified instance of hi-hat reference unreliability, so that argument was
+    # unfounded and must not be reused. The threshold decision itself is
+    # unaffected -- it rests on the measured -0.42 vs +0.004 asymmetry below,
+    # not on this. Left in place as a warning rather than deleted silently.
+    _A2M_FULLMIX_HARM_THRESH = 0.50
+    # ⚠ The SUSTAIN TIEBREAK WAS REMOVED with this change -- do not reinstate it
+    # without recalibrating. It existed for one job: rescue inputs sitting on
+    # the old 0.578 threshold, the motivating case being the owner's
+    # "Black & Blue" full mix at harmonic 0.586 (an 0.008 margin). At 0.50 that
+    # song clears by 0.086 and needs no rescue, so the case the tiebreak was
+    # built for no longer exists. Keeping it would have been actively worse
+    # than dropping it: the band travels with the threshold, so it would have
+    # started firing on 0.45-0.55 -- a population its 0.880 sustain cutoff was
+    # never fit to. And it was never worth much: held out over 20 random
+    # half-splits it gained only +1.1% (sd 2.7%, 12 wins / 4 ties / 4 losses),
+    # inside the noise, versus +3.5% when scored on the same files it was fit
+    # on. A component that cannot be evaluated on its new operating point and
+    # was never distinguishable from noise on its old one does not travel.
+    #
+    # VERIFIED on the motivating song itself, both directions correct at 0.50
+    # with no tiebreak (2026-07-28, probe replicated exactly -- 30 s offset,
+    # 20 s window -- and reproducing the recorded 0.586):
+    #     Black & Blue FULL MIX    harmonic 0.586 -> full mix   (+0.086 margin)
+    #     Black & Blue DRUMS STEM  harmonic 0.477 -> drums-only (-0.023 margin)
+    # Note the drums-stem side is the TIGHTER of the two now (0.023). That is
+    # the deliberate asymmetry, not an oversight: if a drums stem does cross,
+    # the result is a cheap miss, which was measured at +0.004 kick F1.
+
+    def _a2m_input_features(self, audio_path):
+        """(harmonic_fraction, sustain) from a 20 s excerpt, or None.
+
+        harmonic_fraction = harmonic share of spectral energy (HPSS).
+        sustain           = fraction of frames whose harmonic energy stays
+                            above 15% of its peak -- high for music that holds
+                            notes, low for percussion-only material.
+        """
+        try:
+            import numpy as _np
+            import librosa as _lb
+            y, sr = _lb.load(audio_path, sr=22050, mono=True,
+                             offset=30.0, duration=20.0)
+            if y.size < sr:
+                y, sr = _lb.load(audio_path, sr=22050, mono=True, duration=20.0)
+            if y.size < sr:
+                return None
+            S = _np.abs(_lb.stft(y, n_fft=2048, hop_length=512))
+            H, P = _lb.decompose.hpss(S)
+            eh = float(_np.sum(H ** 2))
+            ep = float(_np.sum(P ** 2))
+            if eh + ep <= 0.0:
+                return None
+            hf = H.sum(axis=0)
+            peak = float(hf.max())
+            if peak <= 0.0:
+                # Zero harmonic energy is not "cannot tell" -- it is the most
+                # drums-only an input can possibly be. Returning None here made
+                # the log say "probe unavailable" on the clearest case there is.
+                # The routing outcome was already correct either way (no
+                # pre-split on either branch), so this is log accuracy only.
+                # (Kimi K3 audit, 2026-07-28.)
+                return 0.0, 0.0
+            sustain = float(_np.mean((hf / peak) > 0.15))
+            return eh / (eh + ep), sustain
+        except Exception:
+            return None
+
+    def _a2m_input_is_full_mix(self, audio_path):
+        """True = full mix, False = drums-only stem, None = cannot tell.
+
+        None is NOT a guess and callers must not coerce it -- on None the
+        routing is left exactly as the user configured it.
+        """
+        f = self._a2m_input_features(audio_path)
+        if f is None:
+            return None, None, None
+        harm, sustain = f
+        # Single threshold, no borderline band -- see the constant's note for
+        # why the sustain tiebreak was removed rather than moved. `sustain` is
+        # still returned because it is worth having in the log.
+        return (harm >= self._A2M_FULLMIX_HARM_THRESH), harm, sustain
+
+    def _a2m_stem_model_pref(self):
+        """The demucs model the OWNER picked in the Stem Splitter.
+
+        The shipped bleed pass hardcodes "htdemucs" and ignores this, so a user
+        who selected htdemucs_ft for their manual splits silently gets a
+        DIFFERENT model for the app's internal separation. Owner-reported
+        2026-07-27 ("I've been using htdemucs_ft for all my splits"). Any
+        separation this routing adds should match what the user would get by
+        splitting the song themselves.
+        """
+        try:
+            m = load_config().get("stem_model", "htdemucs")
+        except Exception:
+            m = "htdemucs"
+        return m if m in ("htdemucs", "htdemucs_ft") else "htdemucs"
+
     def _a2m_active_separator_for_run(self):
         try:
             slot_value = getattr(self, "a2m_separator_slot_var", None)
@@ -17610,6 +17800,29 @@ demucs.separate.main()
             # log + fall back to the original input_path so the user always
             # gets SOME output. The Settings UI surfaces the model-availability
             # state so failures here should be rare in practice.
+            # SANDBOX: clear any pre-split state from a PREVIOUS conversion
+            # before this one starts. Without this a batch run would hand song
+            # N+1's bleed pass the stems of song N -- the paths still exist on
+            # disk, so it would fail silently and score the wrong audio.
+            #
+            # This also deletes a leftover dir defensively. It is NOT the
+            # guarantee, though — `_a2m_do_convert`'s own outer finally is, and
+            # that is where the real cleanup lives. An earlier version of this
+            # comment claimed "at most ONE dir, reclaimed on the next
+            # conversion", which was wrong twice over: a FAILED pre-split was
+            # never tracked at all (so it was unreachable by every cleaner and
+            # failures accumulated without bound), and "the next conversion"
+            # does not exist when the user closes the app. The cleanup-pass
+            # finally is also bypassed by FIVE early returns, not two.
+            _stale_tmp = getattr(self, "_a2m_presplit_tmp", None)
+            if _stale_tmp:
+                try:
+                    import shutil as _sh0
+                    _sh0.rmtree(_stale_tmp, ignore_errors=True)
+                except Exception:
+                    pass
+            self._a2m_presplit_stems = None
+            self._a2m_presplit_tmp = None
             try:
                 _sep_active = self._a2m_active_separator_for_run()
             except Exception as _sep_exc:
@@ -17629,9 +17842,64 @@ demucs.separate.main()
                         COMPOSITE_CLASSES as _SEP_COMPOSITE_CLASSES)
                     _sep_workdir = Path(_sep_tempfile.mkdtemp(
                         prefix="parakit_sep_v4_4_4_"))
+                    # ── htdemucs-FIRST routing ───────────────────────────────
+                    # The Jarredou slot separates DRUM COMPONENTS. It has no
+                    # bass / vocals / other bucket, so a full mix's non-drum
+                    # energy is forced into the drum stems and the low end lands
+                    # in KICK. Split first, then hand it the drums stem -- that
+                    # is Arm B (F1 0.835), the best ground-truth-measured route.
+                    # Skipped when the input already looks drums-only (that IS
+                    # Arm B's input) and when the probe cannot tell.
+                    _sep_input = Path(input_path)
+                    _isfm, _harm, _sus = self._a2m_input_is_full_mix(input_path)
+                    _why = ("" if _harm is None else
+                            f"harmonic {_harm:.3f} vs "
+                            f"{self._A2M_FULLMIX_HARM_THRESH:.2f}, "
+                            f"sustain {_sus:.3f}")
+                    if _isfm is None:
+                        self._a2m_log("  Input-type probe unavailable — feeding "
+                                      "the input to the separator unchanged.")
+                    elif not _isfm:
+                        self._a2m_log(f"  Input looks DRUMS-ONLY ({_why}) — "
+                                      f"no pre-split needed.")
+                    else:
+                        _mdl = self._a2m_stem_model_pref()
+                        self._a2m_log(
+                            f"  Input looks like a FULL MIX ({_why}). "
+                            f"Pre-splitting with {_mdl} first — a drum-component "
+                            f"separator has nowhere to put bass/vocals, and "
+                            f"feeding it a full mix inflates the kick lane.")
+                        _pre_tmp = _sep_tempfile.mkdtemp(prefix="pk_presplit_")
+                        # TRACK IT IMMEDIATELY — before the separation, not after
+                        # it succeeds. Every cleaner finds this dir through
+                        # self._a2m_presplit_tmp, so assigning only on the success
+                        # branch made a FAILED pre-split unreachable by any of
+                        # them: the dir leaked, permanently, and failed attempts
+                        # accumulated without bound. That fires on a COMMON path
+                        # (demucs missing, ft model not downloaded, nonzero exit),
+                        # so every full-mix conversion would have leaked one.
+                        # Found by Mocha's independent review + Kimi K3's audit,
+                        # 2026-07-28; it also falsified the "at most one dir"
+                        # invariant this code claimed, because only SUCCESSFUL
+                        # pre-splits were ever tracked.
+                        self._a2m_presplit_tmp = _pre_tmp
+                        _pre = self._a2m_ensure_4stem(input_path, _pre_tmp,
+                                                      model=_mdl)
+                        if _pre and _pre.get("drums") and os.path.isfile(_pre["drums"]):
+                            _sep_input = Path(_pre["drums"])
+                            # Hand these to the bleed pass instead of making it
+                            # run a SECOND separation of the same song.
+                            self._a2m_presplit_stems = _pre
+                            self._a2m_log("  Pre-split OK — the separator now "
+                                          "sees the drums stem, and the bleed "
+                                          "pass will reuse these stems.")
+                        else:
+                            self._a2m_log("  Pre-split FAILED — falling back to "
+                                          "the original input (unchanged "
+                                          "behaviour).")
                     _t0 = _sep_time.time()
                     _stem_paths = _sep_active.separate(
-                        Path(input_path), _sep_workdir)
+                        _sep_input, _sep_workdir)
                     self._a2m_log(f"  Separator finished in "
                                   f"{_sep_time.time() - _t0:.1f}s; "
                                   f"got {len(_stem_paths)} stems "
@@ -18715,6 +18983,28 @@ demucs.separate.main()
                 "Conversion Failed", f"An error occurred:\n{e}\n\nCheck the log for details.")
 
         finally:
+            # Pre-split temp dir (four full-length wavs, hundreds of MB) — clean
+            # it HERE, in _a2m_do_convert's own finally, because this is the only
+            # cleanup site that fires on EVERY exit path. The two earlier hooks
+            # both miss cases: _a2m_apply_cleanup_pass's finally is skipped by
+            # FIVE early returns (cleanup master off, all three toggles off,
+            # incomplete flags, source audio missing, multi-tempo MIDI) and is
+            # never reached at all if this function raises before calling it;
+            # and the next-conversion stale-clear does nothing when there IS no
+            # next conversion — convert one full mix with the cleanup pass off,
+            # close the app, and the dir was stranded forever. Runs after the
+            # cleanup pass has already reused the stems, so nothing is pulled out
+            # from under the bleed pass. (Mocha review + Kimi K3 audit,
+            # 2026-07-28.)
+            _pre_tmp_final = getattr(self, "_a2m_presplit_tmp", None)
+            if _pre_tmp_final:
+                try:
+                    import shutil as _sh_fin
+                    _sh_fin.rmtree(_pre_tmp_final, ignore_errors=True)
+                except Exception:
+                    pass
+            self._a2m_presplit_tmp = None
+            self._a2m_presplit_stems = None
             self.root.after(0, lambda: self.a2m_btn.configure(
                 state="normal", text="🎹  Convert Audio to MIDI"))
             self.root.after(0, lambda: self._a2m_set_controls_locked(False))
@@ -18894,8 +19184,11 @@ demucs.separate.main()
 
         messagebox.showinfo("Copied to Batch",
             f"Settings copied to Song {i+1} in the Create Multiple Songs tab.\n\n"
-            f"Tip: you can copy the same song multiple times with different\n"
-            f"difficulty settings to create Easy/Medium/Hard versions at once.")
+            f"Tip: difficulty is a LABEL here — copying the song several times\n"
+            f"with different difficulty settings produces identical charts under\n"
+            f"different names. To make genuinely thinner Easy/Medium/Hard charts,\n"
+            f"reduce them first in the MIDI Editor (◪ Difficulty), then batch the\n"
+            f"reduced files.")
 
     def _quick_test_from_converter(self):
         """Load current Single Song Creator fields into the Tester tab and switch to it."""
@@ -18914,8 +19207,12 @@ demucs.separate.main()
         if drum:
             self.tester_drum_var.set(drum)
 
-        # Pass current difficulty/reduction settings to tester
-        self.tester_reduce_var.set(self.reduce_difficulty_var.get())
+        # Pass the current difficulty label to the tester. The reduction flag
+        # is deliberately NOT passed any more: reduce_difficulty_var is now
+        # permanently False (the Single Song control moved to the MIDI
+        # Editor), while the Song Tester's own reduction checkbox is still
+        # live and user-settable -- so copying the dead var across silently
+        # unchecked a control the user had set by hand.
         self.tester_diff_var.set(self.difficulty_var.get())
 
         # Try to find the rlrr in the output folder
@@ -19623,9 +19920,6 @@ demucs.separate.main()
                      "Add a quiet grace note just before selected notes to create a flam effect.")
         _tool_button(edit_frame, "⊞~ Soft Quantize", self._me_soft_quantize,
                      "Gently pull selected notes toward the grid without fully snapping their timing.")
-        _tool_button(edit_frame, "⚡ Re-run ML", self._me_rerun_ml,
-                     "Re-run Audio→MIDI detection with current settings. "
-                     "Use the Help tab → Detection Troubleshooter first to diagnose and tune settings.")
         _tool_button(edit_frame, "🔍 Review Issues", self._me_cleanup_wizard,
                      "After conversion, scan for duplicates, low-confidence hits, and cymbal mix-ups. "
                      "To fix the detection itself (too many/few hits), use Help tab → Detection Troubleshooter instead.")
@@ -19636,6 +19930,12 @@ demucs.separate.main()
                      "Right-click any flagged note to clear its flag individually.")
         _tool_button(edit_frame, "🏳 Clear Flags", self._me_clear_all_flags,
                      "Remove all flag highlights from every note. Flags are visual only — no notes are changed.")
+        _tool_button(edit_frame, "◪ Difficulty", self._me_difficulty_reduction,
+                     "Thin the chart down to Easy, Medium, or Hard.\n"
+                     "Expert is the full chart — lower difficulties keep the\n"
+                     "strongest hits in each lane and drop the rest.\n\n"
+                     "Apply it to the open chart (Ctrl+Z undoes it), save it as\n"
+                     "a separate file, or save and compare against the original.")
 
         ttk.Label(edit_col,
                   text=("Ctrl+scroll=zoom  Ctrl+C/V=copy/paste  Ctrl+Q=quantize"
@@ -22129,12 +22429,24 @@ demucs.separate.main()
                 f"The MIDI Editor has unsaved changes.\nDiscard them and {action}?")
         return True
 
-    def _me_load(self, path=None):
+    def _me_load(self, path=None, exact_midi=False):
         """Load a MIDI file (or paired .rlrr) into the editor.
 
         v4.4.57.5-6 adds defensive .rlrr-aware loading: manual override
         (Option C) > sibling .rlrr autodetect (Option B) > MIDI ticks
         with suspicious-timing warning (Option A). See helper docstrings.
+
+        exact_midi=True loads EXACTLY the MIDI at `path`, skipping Options C
+        and B. Only for callers that just WROTE that file and mean it
+        literally. Both .rlrr options exist to rescue a user-chosen MIDI whose
+        timing drifted; applied to a file the app generated one line earlier
+        they do the opposite — they silently substitute a different chart. The
+        difficulty reducer's compare mode hit both: the override field
+        persists across loads by design, and the sibling matcher accepts any
+        *.rlrr within +/-2 notes, which the ORIGINAL chart satisfies whenever
+        a reduction removed <=2 notes (routine at Hard, retention 0.85-1.00).
+        The editor then showed the unreduced chart under the reduced
+        filename. Found by all three breaker legs, 2026-07-28.
 
         Returns True when the load completed, False when it was declined at
         the unsaved-changes guard or failed — callers with follow-on steps
@@ -22233,10 +22545,11 @@ demucs.separate.main()
 
             # Option C: manual .rlrr override (highest priority)
             override_path = ""
-            try:
-                override_path = self.me_rlrr_override_var.get().strip()
-            except AttributeError:
-                override_path = ""
+            if not exact_midi:
+                try:
+                    override_path = self.me_rlrr_override_var.get().strip()
+                except AttributeError:
+                    override_path = ""
             if override_path and os.path.exists(override_path):
                 r_notes, r_bpm = self._load_rlrr_as_me_notes(override_path)
                 if r_notes:
@@ -22246,7 +22559,7 @@ demucs.separate.main()
                     chosen_rlrr_path = override_path
 
             # Option B: sibling .rlrr autodetect (only if no override hit)
-            if chosen_notes is None:
+            if chosen_notes is None and not exact_midi:
                 s_path, s_notes, s_bpm = self._me_find_sibling_rlrr(
                     fpath, len(midi_notes))
                 if s_notes:
@@ -25287,6 +25600,314 @@ demucs.separate.main()
         ttk.Button(btn_row, text="Cancel", command=top.destroy).pack(side=tk.LEFT)
         top.grab_set()
 
+    def _me_difficulty_reduction(self):
+        """Thin the open chart down to Easy / Medium / Hard.
+
+        The same reduce_notes_for_difficulty pass that used to run at compile
+        time (Single/Multi Song Creator), now offered as an edit-and-look-at-it
+        step: apply in place (undoable), save to a separate file, or save and
+        set up the reduced-vs-original ghost comparison in one click. Expert is
+        the unreduced chart, so it is deliberately not an option. The reducer
+        itself is untouched — this only changes WHERE it is called from.
+        """
+        if not self.me_notes:
+            self.me_status_var.set("◪  No notes loaded — open a chart first")
+            return
+        if not self.me_bpm or self.me_bpm <= 0:
+            messagebox.showerror("Unknown BPM",
+                                 "The loaded chart has no usable tempo, so notes cannot be "
+                                 "thinned. Load a chart with a valid BPM and try again.")
+            return
+
+        top = tk.Toplevel(self.root)
+        top.title("◪  Difficulty Reduction")
+        top.resizable(False, False)
+        top.transient(self.root)
+        top.configure(bg=APP_BG)
+        f = tk.Frame(top, bg=APP_BG, padx=14, pady=12)
+        f.pack()
+        tk.Label(f, text="◪  Difficulty Reduction", bg=APP_BG, fg="#b388ff",
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 4))
+        tk.Label(f,
+                 text="Difficulty reduction moved here from the Song Creator tabs.\n"
+                      "Doing it at build time meant re-importing the finished file just to see what\n"
+                      "changed — this way you can look at the result, compare it to the original,\n"
+                      "and undo it.",
+                 bg=APP_BG, fg="#888", font=("Segoe UI", 8),
+                 justify=tk.LEFT).pack(anchor="w", pady=(0, 8))
+
+        tk.Label(f, text="Reduce the chart to:", bg=APP_BG, fg="#e0e0e0",
+                 font=("Segoe UI", 9)).pack(anchor="w")
+        diff_var = tk.StringVar(value="Medium")
+        diff_row = tk.Frame(f, bg=APP_BG)
+        diff_row.pack(anchor="w", pady=(2, 2))
+        for label in ("Easy", "Medium", "Hard"):
+            ttk.Radiobutton(diff_row, text=label, value=label,
+                            variable=diff_var).pack(side=tk.LEFT, padx=(0, 10))
+        tk.Label(f, text="Expert is the full chart, so it is not an option here.",
+                 bg=APP_BG, fg="#888", font=("Segoe UI", 8),
+                 justify=tk.LEFT).pack(anchor="w", pady=(0, 8))
+
+        ttk.Separator(f, orient="horizontal").pack(fill=tk.X, pady=(2, 8))
+
+        mode_var    = tk.StringVar(value="apply")
+        compare_var = tk.BooleanVar(value=False)
+
+        def _sync_compare():
+            compare_cb.configure(
+                state="normal" if mode_var.get() == "save" else "disabled")
+
+        ttk.Radiobutton(f, text="Apply to the loaded chart  (undo with Ctrl+Z)",
+                        value="apply", variable=mode_var,
+                        command=_sync_compare).pack(anchor="w")
+        ttk.Radiobutton(f, text="Save as a separate chart file  (the open chart is left untouched)",
+                        value="save", variable=mode_var,
+                        command=_sync_compare).pack(anchor="w", pady=(2, 0))
+        compare_cb = ttk.Checkbutton(
+            f,
+            text="Then load the reduced chart and show the original as a\n"
+                 "ghost overlay, so you can compare the two side by side",
+            variable=compare_var)
+        compare_cb.pack(anchor="w", padx=(24, 0), pady=(2, 0))
+        _sync_compare()
+
+        btn_row = tk.Frame(f, bg=APP_BG)
+        btn_row.pack(pady=(12, 0))
+
+        def _apply():
+            difficulty = diff_var.get()
+            mode       = mode_var.get()
+            compare    = bool(compare_var.get()) and mode == "save"
+
+            # Build the reducer's event view over the editor notes — same call
+            # shape as the old compile-time paths: (events, bpm, difficulty).
+            # The reducer matches lanes by name prefix, so the MIDI_MAP class
+            # strings feed it directly; notes whose number is not in MIDI_MAP
+            # (e.g. folded to a lane on load) fall back to their lane's class.
+            lane_class = {"Kick": "BP_Kick_C", "Snare": "BP_Snare_C",
+                          "Hi-Hat": "BP_HiHat_C", "Crash": "BP_Crash15_C",
+                          "Ride": "BP_Ride17_C", "Tom 1": "BP_Tom1_C",
+                          "Tom 2": "BP_Tom2_C", "Tom 3": "BP_FloorTom_C"}
+            # ── REDUCE FROM THE BASE CHART, NOT FROM THE LAST REDUCTION ──────
+            # Tiers must RETARGET, not COMPOUND. Feeding an already-reduced
+            # chart back to the reducer thins it again, because the reducer
+            # keeps a FRACTION of whatever it is handed. Measured on a
+            # 180-note chart (Expert 180 -> Easy 73 / Medium 107 / Hard 172):
+            #     Medium then Hard  -> 103   (direct Hard = 172)
+            #     Medium then Medium ->  67  (direct Medium = 107)
+            #     Hard then Hard    -> 164   (direct Hard = 172)
+            # So picking the HARDER tier after Medium produced 103 notes --
+            # sparser than Medium's own 107. The tier label became
+            # order-dependent and the result persisted into a saved file. The
+            # reducer is not idempotent at any tier, so "just re-apply" is not
+            # a workaround. (Codex called this; Grok and Kimi both read it as
+            # expected/idempotent-ish and were wrong.)
+            #
+            # Fix lives HERE, in the caller -- reduce_notes_for_difficulty is
+            # protected and is not the thing at fault; it was being fed the
+            # wrong input.
+            #
+            # ⚠ A STALE BASE WOULD BE WORSE THAN THE BUG. If the user edits
+            # after reducing, reducing from a remembered base would resurrect
+            # notes they deleted and discard notes they added. So the base is
+            # used ONLY when the open chart is provably still exactly what this
+            # feature last produced: identity, time, pitch and velocity of
+            # every note must match the list we installed. Any other edit,
+            # a load, or an undo makes the signature differ, the base is
+            # dropped, and the current chart becomes the new base -- which
+            # self-heals, because after an undo the current chart IS the
+            # unreduced one.
+            def _sig(notes):
+                return tuple((id(n), n["time"], n["note"], n.get("vel", 100))
+                             for n in notes)
+
+            _base = getattr(self, "_me_diff_base", None)
+            if _base is None or _sig(self.me_notes) != getattr(
+                    self, "_me_diff_base_sig", None):
+                _base = self.me_notes          # first reduction, or chart moved on
+                self._me_diff_base = None
+                self._me_diff_base_sig = None
+
+            events = []
+            for n in _base:
+                name = MIDI_MAP.get(n["note"]) or lane_class.get(
+                    self.MIDI_EDITOR_LANES[n["lane_idx"]]["name"], "")
+                events.append({"name": name, "time": n["time"],
+                               "vel": n.get("vel", 100), "_note": n})
+            try:
+                reduced = reduce_notes_for_difficulty(events, self.me_bpm, difficulty)
+            except Exception as e:
+                messagebox.showerror("Reduction Failed",
+                                     f"Could not reduce the chart:\n{e}")
+                return
+            # The reducer returns the SAME event dicts it kept — match notes
+            # back by identity (duplicate timestamps make value keys unsafe).
+            # Filter the SOURCE list, not self.me_notes: when reducing from a
+            # remembered base those are different lists, and filtering the
+            # open chart would drop every survivor the last reduction removed.
+            kept          = {id(e["_note"]) for e in reduced}
+            reduced_notes = [n for n in _base if id(n) in kept]
+            removed       = len(self.me_notes) - len(reduced_notes)
+
+            if mode == "apply":
+                # Retargeting means a tier can now RESTORE notes as well as
+                # remove them (Medium 107 -> Hard 172), so `removed` goes
+                # NEGATIVE and "removed -65 note(s)" is not a sentence. Judge
+                # the no-op on whether the chart actually changed, and word the
+                # status from the direction of travel.
+                if _sig(reduced_notes) == _sig(self.me_notes):
+                    # A no-op must not dirty the chart. _me_push_undo also
+                    # calls _me_mark_edit_started and clears the redo stack,
+                    # so pushing here locked the mode radios, threw away redo
+                    # and armed the unsaved-changes guard -- for a chart that
+                    # did not change. Same class as the soft-quantize no-op
+                    # fix already in this file.
+                    self.me_status_var.set(
+                        f"◪  Already at {difficulty} — chart unchanged")
+                    self.root.after(3000, lambda: self.me_status_var.set(
+                        self.ME_DEFAULT_STATUS))
+                    top.destroy()
+                    return
+                _delta = len(reduced_notes) - len(self.me_notes)
+                self._me_push_undo()
+                _sel = self._me_capture_selection()
+                self.me_notes = reduced_notes
+                # Remember what the tier was computed FROM, and exactly what we
+                # installed, so the next tier retargets off the same base
+                # instead of compounding. The signature is what makes it safe:
+                # any later edit invalidates it (see _sig above).
+                self._me_diff_base = _base
+                self._me_diff_base_sig = _sig(reduced_notes)
+                self._me_restore_selection(_sel)
+                self._me_purge_orphan_flags()
+                self._me_redraw()
+                self._me_update_info()
+                _what = (f"removed {-_delta} note(s)" if _delta < 0
+                         else f"restored {_delta} note(s)")
+                self.me_status_var.set(
+                    f"◪  Set to {difficulty}: {_what} — Ctrl+Z to undo")
+                self.root.after(3000, lambda: self.me_status_var.set(
+                    self.ME_DEFAULT_STATUS))
+                top.destroy()
+                return
+
+            # mode == "save" — write the reduced notes to a NEW file beside
+            # the current one, leaving the open chart untouched.
+            original_path = self.me_midi_var.get().strip()
+            if original_path and os.path.isfile(original_path):
+                stem, _ext = os.path.splitext(original_path)
+                out_path = f"{stem}_{difficulty.lower()}.mid"
+                # The auto-derived path skips the save dialog, so it also
+                # skipped the dialog's native overwrite prompt. Reducing the
+                # same tier twice therefore replaced an existing (possibly
+                # hand-edited) chart with no warning at all, and the
+                # .parakit_bak insurance does NOT cover it: that backup is
+                # written once EVER per path, so when one already exists it
+                # holds the FIRST occupant, not the file about to be
+                # destroyed. _me_write_midi never calls
+                # _me_confirm_lossy_overwrite -- only _me_save and the Song
+                # Creator handoff do (and the latter was itself a fix for
+                # this same bypass, R2-5).
+                if os.path.exists(out_path):
+                    if not messagebox.askyesno(
+                            "Overwrite Chart?",
+                            f"{os.path.basename(out_path)} already exists.\n\n"
+                            f"Replace it with the {difficulty} reduction?\n\n"
+                            f"If that file has its own edits they will be lost — "
+                            f"the automatic backup only ever keeps the first "
+                            f"version of a file, so it may not hold this one.",
+                            parent=top):
+                        return
+            else:
+                if compare:
+                    messagebox.showerror(
+                        "No Chart File",
+                        "The side-by-side comparison needs the original chart saved\n"
+                        "as a file. Open a chart file (or save this one) and try again.")
+                    return
+                out_path = filedialog.asksaveasfilename(
+                    defaultextension=".mid",
+                    filetypes=[("MIDI files", "*.mid"), ("All files", "*.*")],
+                    initialfile=f"reduced_{difficulty.lower()}.mid")
+                if not out_path:
+                    return
+
+            # _me_write_midi saves self.me_notes and repoints the editor's file
+            # field at whatever it wrote — so swap the reduced notes in, save,
+            # then put every bit of editor state back.
+            prev_notes = self.me_notes
+            prev_path  = self.me_midi_var.get()
+            prev_last  = self._me_last_midi
+            prev_edit  = self.me_edit_started
+            self.me_notes = reduced_notes
+            try:
+                saved = self._me_write_midi(out_path, show_message=False)
+            finally:
+                self.me_notes = prev_notes
+                self.me_midi_var.set(prev_path)
+                self._me_last_midi = prev_last
+                if prev_edit and not self.me_edit_started:
+                    # The save cleared the first-edit lock — put it back.
+                    self.me_edit_started = True
+                    self.me_mode_inplace_rb.configure(state="disabled")
+                    self.me_mode_copy_rb.configure(state="disabled")
+                    self.me_mode_lock_lbl.pack(side=tk.LEFT)
+            if not saved:
+                return   # _me_write_midi already showed the error
+
+            if compare:
+                # One-click comparison: reduced chart becomes the working
+                # chart, the ORIGINAL (unreduced) chart goes in as the ghost.
+                # exact_midi=True is REQUIRED here: the plain loader prefers a
+                # .rlrr override, then any sibling .rlrr within +/-2 notes,
+                # over the file it was handed -- so it could load the
+                # UNREDUCED chart and this code would then label it with the
+                # reduced path. See _me_load's docstring.
+                if not self._me_load(saved, exact_midi=True):
+                    # False means declined at the unsaved-changes guard OR a
+                    # load failure; do not assert which one.
+                    self.me_status_var.set(
+                        f"◪  Saved {os.path.basename(saved)} — not loaded, open chart unchanged")
+                    self.root.after(4000, lambda: self.me_status_var.set(
+                        self.ME_DEFAULT_STATUS))
+                    top.destroy()
+                    return
+                self.me_midi_var.set(saved)
+                self.me_ghost_var.set(original_path)
+                # _me_load_ghost returns None on EVERY path (success, missing
+                # file, and the except branch alike), so its return value
+                # cannot be tested. Clear the list first and judge by what
+                # actually landed -- otherwise this status would assert a
+                # ghost overlay that may have errored out behind a dialog.
+                self.me_ghost_notes = []
+                self._me_load_ghost()
+                if self.me_ghost_notes:
+                    # "shown", not "plays" -- the ghost is drawn faded and is
+                    # never synthesized during playback.
+                    self.me_status_var.set(
+                        f"◪  {difficulty} chart loaded — the original is shown behind it "
+                        f"as the ghost overlay")
+                else:
+                    self.me_status_var.set(
+                        f"◪  {difficulty} chart loaded — ghost overlay could not be loaded")
+            else:
+                self.me_status_var.set(
+                    f"◪  Saved {difficulty} chart: {os.path.basename(saved)} "
+                    # Note COUNT, not a delta. With retargeting the saved chart
+                    # can be LARGER than the open one (saving Hard while the
+                    # open chart sits at Medium), so "N removed" would print a
+                    # negative. The absolute count is true either way.
+                    f"({len(reduced_notes)} notes) — open chart untouched")
+            self.root.after(4000, lambda: self.me_status_var.set(
+                self.ME_DEFAULT_STATUS))
+            top.destroy()
+
+        ttk.Button(btn_row, text="Reduce", command=_apply).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_row, text="Cancel", command=top.destroy).pack(side=tk.LEFT)
+        top.bind("<Escape>", lambda e: top.destroy())
+        top.protocol("WM_DELETE_WINDOW", top.destroy)
+        top.grab_set()
+
     def _me_repeat_pattern(self):
         """Repeat the selected notes, tiling them once after their last note."""
         if not self._me_selected_notes:
@@ -27718,7 +28339,7 @@ demucs.separate.main()
             pass
         return _bounded
 
-    def _a2m_ensure_4stem(self, audio_path, out_root):
+    def _a2m_ensure_4stem(self, audio_path, out_root, model=None):
         """v4.9.0 — separate ``audio_path`` into the 4 htdemucs stems (drums / bass /
         vocals / other) under ``out_root`` and return
         ``{"drums":p, "bass":p, "vocals":p, "other":p}`` of .wav paths, or ``None`` on
@@ -27756,10 +28377,20 @@ demucs.separate.main()
             _demucs_cache_dir = self._stem_exe_relative_cache()
             os.makedirs(_demucs_cache_dir, exist_ok=True)
             os.environ["TORCH_HOME"] = _demucs_cache_dir
-            # 4-stem htdemucs => drums/bass/vocals/other (NO --two-stems, name htdemucs).
-            args_list = ["--name", "htdemucs", "--device", device,
+            # 4-stem => drums/bass/vocals/other (NO --two-stems).
+            # SANDBOX: the model is now a parameter defaulting to the OWNER'S
+            # Stem Splitter choice, instead of hardcoded "htdemucs". Shipped
+            # behaviour silently used plain htdemucs even for a user who had
+            # selected htdemucs_ft for every manual split, so the app's internal
+            # separation did not match the one they would have produced
+            # themselves (owner-reported 2026-07-27). The model is logged now so
+            # this can never again be invisible.
+            _mdl = model or self._a2m_stem_model_pref()
+            if _mdl not in ("htdemucs", "htdemucs_ft"):
+                _mdl = "htdemucs"
+            args_list = ["--name", _mdl, "--device", device,
                          "--out", out_root, audio_path]
-            self._a2m_log("Cross-stem bleed:  separating 4 stems (htdemucs)"
+            self._a2m_log(f"Cross-stem bleed:  separating 4 stems ({_mdl})"
                           + (" — GPU" if device == "cuda" else " — CPU, may take a moment")
                           + "...")
             # v4.9.1 — progress heartbeat so a long CPU separation is not a silent wait.
@@ -27999,8 +28630,18 @@ demucs.separate.main()
             try:
                 if do_bleed:
                     import tempfile as _tf
-                    _bleed_tmp = _tf.mkdtemp(prefix="pk_bleed_")
-                    _stems = self._a2m_ensure_4stem(audio_path, _bleed_tmp)
+                    # Reuse the pre-split stems when the htdemucs-first routing
+                    # already separated this song. Pre-4.9.x behaviour separated
+                    # the SAME song twice on a full-mix conversion (once for the
+                    # drum separator's input, once here) -- pure duplicated work,
+                    # and with htdemucs_ft that is 4x the cost of the wasted pass.
+                    _stems = getattr(self, "_a2m_presplit_stems", None)
+                    if _stems and _stems.get("drums") and os.path.isfile(_stems["drums"]):
+                        self._a2m_log("Cross-stem bleed:  reusing the stems from "
+                                      "the pre-split (no second separation).")
+                    else:
+                        _bleed_tmp = _tf.mkdtemp(prefix="pk_bleed_")
+                        _stems = self._a2m_ensure_4stem(audio_path, _bleed_tmp)
                     if _stems and _stems.get("drums") and os.path.isfile(_stems["drums"]):
                         _bleed_stems_dir = os.path.dirname(_stems["drums"])
                     else:
@@ -28014,6 +28655,15 @@ demucs.separate.main()
                 if _bleed_tmp:
                     import shutil as _sh
                     _sh.rmtree(_bleed_tmp, ignore_errors=True)
+                # SANDBOX: the pre-split dir is ours to clean too. It holds four
+                # full-length wavs (hundreds of MB), so leaking it once per
+                # conversion would fill the temp drive over a batch.
+                _pre_tmp_done = getattr(self, "_a2m_presplit_tmp", None)
+                if _pre_tmp_done:
+                    import shutil as _sh2
+                    _sh2.rmtree(_pre_tmp_done, ignore_errors=True)
+                self._a2m_presplit_tmp = None
+                self._a2m_presplit_stems = None
             # ── PAST THIS LINE THE CHART IS ALREADY REWRITTEN. ────────────────────────
             # Everything below is bookkeeping/logging, and none of it may report "skipped".
             # v4.7.18 put fallible work (summary.get + int()) inside the same try as the
@@ -36447,6 +37097,45 @@ demucs.separate.main()
                  "If you're unsure whether you need this, you don't. Leave it at 0.\n"
                  "Click the '▾ Advanced: Trigger Align' button in Advanced/Debug to reveal it.")
         divider(s)
+        entry(s, "Remove cross-stem bleed kicks  (Advanced/Debug — EXPERIMENTAL)\n"
+                 "A second phantom-kick check, independent of the phantom-kick remover "
+                 "in the cleanup pass. Some 'kicks' the detector finds are really the "
+                 "bass guitar leaking into the drums track. This option splits the song "
+                 "into drums / bass / vocals / other and, for every detected kick, "
+                 "compares how much non-drum energy sits at that exact moment. A kick "
+                 "sitting on far more bass than drum is treated as a phantom.\n\n"
+                 "Because it looks for a different mistake than the remover above it, it "
+                 "catches phantoms that pass the other check.\n\n"
+                 "It is deliberately cautious. Only the clearest cases are deleted; "
+                 "everything borderline is highlighted in the MIDI Editor for you to "
+                 "judge. On a well-prepared conversion that is a short review list, not "
+                 "a wall of marks.\n\n"
+                 "⚠ It needs the FULL MIX. It works by comparing the drums against the "
+                 "bass and vocals, so if you convert from a drums-only stem there is "
+                 "nothing to compare against and it finds nothing — while still spending "
+                 "the extra time on the separation. This is easy to miss, because the "
+                 "option lives on the Audio → MIDI tab, which normally comes after "
+                 "splitting.\n\n"
+                 "Needing the full mix used to be a bad trade on its own: a full-mix "
+                 "conversion produced a noticeably worse chart, so cleaning up kicks "
+                 "this way could leave you worse off overall. That is fixed. With "
+                 "Neural Stem Isolation switched on, a full mix is now recognized "
+                 "automatically and split before detection runs, so the kick lane lands "
+                 "close to a drums-stem result instead of roughly double it — and this "
+                 "check reuses those same stems rather than separating the song a second "
+                 "time, so on a full-mix conversion it no longer costs an extra pass. "
+                 "With the separator switched off there is no automatic split, and a "
+                 "full mix still produces the poor chart it always did.\n\n"
+                 "⚠ It is still marked experimental, and a properly separated drums stem "
+                 "from the Stem Splitter is still the better input and the recommended "
+                 "workflow — the automatic split gets close to it, not equal to it. Turn "
+                 "this on when you are converting a full mix anyway and want a second "
+                 "opinion on bass-bleed kicks, and are willing to review the marks it "
+                 "leaves.\n\n"
+                 "Kick lane only. It never adds or moves notes. Defaults off. On a "
+                 "drums-only conversion it still adds a separation, so it costs time "
+                 "without finding anything.")
+        divider(s)
         entry(s,
               "🤖  Detection Engine  (v4.0)\n\n"
               "Selects how drum hits are found in the audio. Three modes:\n\n"
@@ -37378,9 +38067,15 @@ demucs.separate.main()
               "    stem). Greyed out if those stems aren't on disk.\n"
               "  • Full Mix — one file that already contains the whole song.\n"
               "  If a song's 'backing' is really a full mix that already has drums in\n"
-              "  it, picking Backing + Drums would play the drums twice. ParaKit detects\n"
-              "  that, marks the button '(not recommended)', and explains why just below\n"
-              "  it — you can still choose it if you know better.\n"
+              "  it, playing it alongside the drum stem would play the drums twice.\n"
+              "  ParaKit detects that and renames the button to 'Full Mix + Drums (not\n"
+              "  recommended — doubles them)' so it says what it would actually play,\n"
+              "  and explains why just below it — you can still choose it if you know\n"
+              "  better.\n"
+              "  That case also cannot support 'You drum' / Mute-on-Miss: both work by\n"
+              "  muting the drum stem, which cannot remove drums already baked into a\n"
+              "  full mix. A song only supports Mute-on-Miss if it links a DRUMLESS\n"
+              "  backing alongside its drum stem; the panel tells you before you play.\n"
               "  'Linked audio ▸' expands to show exactly which files are linked, so a\n"
               "  missing or wrong stem is easy to spot.\n\n"
               "Built-in drum synth:\n"
@@ -37939,7 +38634,7 @@ demucs.separate.main()
                 "The troubleshooter reads your actual detection numbers and gives you specific "
                 "settings to try — not generic advice.\n\n"
                 "Workflow tip: use the Troubleshooter when detection quality is wrong (too many or too few hits) — "
-                "adjust settings here, then Re-run ML in the MIDI Editor. "
+                "adjust settings here, then convert the song again on the Audio → MIDI tab. "
                 "Once detection looks right, use Review Issues (MIDI Editor toolbar) to clean up "
                 "the resulting file: remove duplicates, reclassify wrong lanes, filter quiet phantom hits.")
 
@@ -42983,7 +43678,8 @@ demucs.separate.main()
                      state="readonly").pack(side=tk.LEFT)
 
         ttk.Label(diff_frame,
-                  text="  Match these to your Single Song Creator settings for accurate density analysis.",
+                  text="  Simulates a reduced chart for density analysis only — it does not "
+                       "change any file. Reduce charts for real in the MIDI Editor (◪ Difficulty).",
                   style="Sub.TLabel").pack(side=tk.LEFT, padx=(10, 0))
 
         # ── Run button ────────────────────────────────────────────────────────
@@ -44381,11 +45077,12 @@ demucs.separate.main()
         ttk.Label(dc_row, text="Complexity:").pack(side=tk.LEFT, padx=(0,5))
         ttk.Combobox(dc_row, textvariable=slot["comp_var"], width=5,
                      values=[1,2,3,4,5], state="readonly").pack(side=tk.LEFT, padx=(0,18))
-        ttk.Checkbutton(dc_row, text="Enable note reduction",
-                        variable=slot["reduce_var"]).pack(side=tk.LEFT)
+        # Note reduction moved to the MIDI Editor (◪ Difficulty button) — the
+        # slot's reduce_var stays (permanently False) so the batch conversion
+        # paths that read it keep working and simply never reduce at build time.
         ttk.Label(dc_row,
-                  text="(off = difficulty label only, no MIDI changes)",
-                  style="Sub.TLabel").pack(side=tk.LEFT, padx=(6, 0))
+                  text="(difficulty is a label only — reduce notes in the MIDI Editor)",
+                  style="Sub.TLabel").pack(side=tk.LEFT)
 
         bpm_row = ttk.Frame(frame)
         bpm_row.grid(row=9, column=0, columnspan=3, sticky="w", pady=2)
@@ -45798,7 +46495,20 @@ demucs.separate.main()
             tw = tk.Toplevel(widget)
             tw.wm_overrideredirect(True)
             tw.configure(bg="#2a2a2a")
-            lbl = tk.Label(tw, text=text, justify=tk.LEFT,
+            # v4.9.6 — WRAP. Without a wraplength a tooltip whose text has no
+            # embedded newlines renders as ONE unbounded line and runs off the
+            # screen; the owner hit this on the MIDI Editor's Difficulty
+            # button, where the tip ran past the right edge of the display.
+            # Most tips in this file hand-wrap with "\n" and so never showed
+            # it, which is exactly why it survived: the bug only appears when
+            # someone writes a tip as a single long string.
+            # _position_popup_with_bounds CANNOT rescue this -- it repositions
+            # a popup, and a popup wider than the monitor has nowhere to go.
+            # Wrapping is therefore the fix, not clamping.
+            # Explicit "\n" still wins: wraplength only breaks lines that
+            # exceed it, so every hand-formatted tooltip renders unchanged.
+            _wrap = max(320, min(560, widget.winfo_screenwidth() - 80))
+            lbl = tk.Label(tw, text=text, justify=tk.LEFT, wraplength=_wrap,
                            background="#2a2a2a", foreground="#ffcc00",
                            font=("Segoe UI", 9), relief="solid", borderwidth=1,
                            padx=8, pady=6)
@@ -45816,12 +46526,6 @@ demucs.separate.main()
 
         widget.bind("<Enter>", on_enter)
         widget.bind("<Leave>", on_leave)
-
-    def _toggle_difficulty_reduction(self):
-        if self.reduce_difficulty_var.get():
-            self.difficulty_warning_label.grid(row=6, column=0, columnspan=3, sticky="w", pady=(2, 2))
-        else:
-            self.difficulty_warning_label.grid_forget()
 
     def _enable_drop(self, widget, var, multi=False, config_key=None):
         """Enable drag-and-drop onto a widget, setting var to the dropped path."""

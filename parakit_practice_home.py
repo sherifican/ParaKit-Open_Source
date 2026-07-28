@@ -2047,7 +2047,8 @@ class PracticeHomeScreen(ttk.Frame):
             artist=entry["artist"], difficulty=state["difficulty"],
             speed_pct=state["speed_pct"], you_drum=state["you_drum"],
             kit_choice=state["kit_choice"], audio_paths=audio_paths,
-            audio_source=source_status["mode"])
+            audio_source=source_status["mode"],
+            mom_supported=bool(source_status.get("mom_active")))
         self._mark_played(key)          # record recency for 'Sort: Recent'
         self._emit("on_play_request", config)
 
@@ -2201,7 +2202,8 @@ class PracticeHomeScreen(ttk.Frame):
                               key: Optional[str], title: str, artist: str,
                               difficulty: str, speed_pct: int, you_drum: bool,
                               kit_choice: str, audio_paths: dict,
-                              audio_source: str = "auto") -> dict:
+                              audio_source: str = "auto",
+                              mom_supported: Optional[bool] = None) -> dict:
         layout = self._resolve_kit_layout(kit_choice)
         resolved = resolve_routing(chart, layout, None)
         lane_notes = build_lane_notes(chart, resolved)
@@ -2223,6 +2225,13 @@ class PracticeHomeScreen(ttk.Frame):
             "duration_s": duration,
             "audio_paths": audio_paths,
             "audio_source": audio_source,
+            # Can "You drum" / Mute-on-Miss do anything this session? The
+            # pre-play panel already worked this out (it needs a DRUMLESS
+            # backing, not just any drum stem), so carry the answer into the
+            # session rather than making PlayScreen re-derive it. None = the
+            # launch path did not compute it; PlayScreen then falls back to its
+            # own runtime check and must not claim either way.
+            "mom_supported": mom_supported,
             "window_mode": prefs.get("windowMode", "standard"),
             "auto_kick": bool(prefs.get("autoKick", False)),
             "input_latency_ms": prefs.get("inputLatencyMs", 0),

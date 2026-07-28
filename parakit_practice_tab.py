@@ -1091,10 +1091,20 @@ class _LiveDock(tk.Frame):
         else:
             self._on_toggle(row_id)
 
-    def set_state(self, prefs, speed):
+    def set_state(self, prefs, speed, mom_supported=True):
         for key, _c, _l in _DOCK_TOGGLES:
             on = bool(prefs.get(key))
             lbl = self._states[key]
+            # "You Drum (Mute on Miss)" mutes the recorded DRUM STEM, so it can
+            # only do anything when the other linked audio is a DRUMLESS backing
+            # -- muting a stem cannot remove drums baked into a full mix, and a
+            # song with no drum stem has nothing routed to mute. On those songs
+            # the row used to read a confident ON/OFF while doing nothing, which
+            # is the same lie the pre-play panel stopped telling in v4.9.5; this
+            # closes the other half (owner-reported 2026-07-28).
+            if key == "youDrum" and not mom_supported:
+                lbl.configure(text="N/A", foreground=AMBER)
+                continue
             lbl.configure(text="ON" if on else "OFF",
                           foreground=GREEN if on else MUTED)
         self._states["speed-"].configure(text=f"{round(speed * 100)}%",
@@ -1508,8 +1518,31 @@ class PlayScreen(tk.Frame):
         self.update_dock()
         self._note(f"Speed {round(s * 100)}% (pitch shifts with speed)")
 
+    def _mom_supported(self) -> bool:
+        """Can Mute-on-Miss actually mute anything this session?
+
+        Two independent ways it cannot, and this covers both so every launch
+        path (library / demo / single) is handled:
+          * the pre-play panel already decided NO -- it knows the linked
+            "backing" is really a full mix with the drums baked in, which
+            muting the drum stem can never remove. Carried in on the config.
+          * there is no drums bus at all -- nothing is routed to mute.
+        A config value of None means the launch path did not work it out, so we
+        fall back to the runtime check rather than guessing either way.
+        """
+        cur = self._current or {}
+        if cur.get("mom_supported") is False:
+            return False
+        try:
+            return bool(self._engine is not None
+                        and self._engine.has_bus("drums"))
+        except Exception:
+            return True     # unknown -> do not put a scary N/A on the row
+
     def update_dock(self) -> None:
-        self.dock.set_state(self._prefs, float(self._prefs.get("speed", 1.0) or 1.0))
+        self.dock.set_state(self._prefs,
+                            float(self._prefs.get("speed", 1.0) or 1.0),
+                            mom_supported=self._mom_supported())
 
     def set_perf_hud(self, on) -> None:
         if on:
@@ -4167,6 +4200,7 @@ class PracticeTab(ttk.Frame):
                 "title": config.get("title", ""), "artist": config.get("artist", ""),
                 "key": config.get("key"), "end_time": duration,
                 "stems": config.get("audio_paths"), "audio_source": source_mode,
+                "mom_supported": config.get("mom_supported"),
                 "entry": {"key": config.get("key"), "title": config.get("title", ""),
                           "artist": config.get("artist", "")}}
 
