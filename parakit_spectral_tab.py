@@ -2808,7 +2808,11 @@ class SpectralTab(ttk.Frame):
                                      "their physical band.")
         self.notes_chip = Chip(row, "Notes", on=True, command=changed,
                                tooltip="The chart's notes as lane-coloured "
-                                       "diamonds.")
+                                       "diamonds (or bars — see the Bars "
+                                       "toggle in the toolbar).\n\n"
+                                       "Locked on while Edit is enabled: you "
+                                       "cannot click notes you cannot see. "
+                                       "Turn Edit off to hide them.")
         self.flash_chip = Chip(row, "Flash", on=True, command=changed,
                                tooltip="Notes flash white as the playhead "
                                        "passes (timing check).")
@@ -3568,8 +3572,17 @@ class SpectralTab(ttk.Frame):
 
     # ----- options ------------------------------------------------------------------------
     def _chips_changed(self, _on=None):
-        if self.edit_chip.get() and not self.notes_chip.get():
+        # Edit mode needs the notes on screen to click them, so it PINS Notes
+        # on. v4.9.5 — pin it VISIBLY. Previously the chip stayed lit, enabled
+        # and hand-cursored while every click was silently reverted here, which
+        # reads as a dead button: the owner reported Notes "disabled / stuck"
+        # and pinned it on the Bars button, which is unrelated (Bars only shares
+        # this handler). Greying it out and swapping the cursor makes the lock
+        # obvious, and its tooltip says which control to release.
+        editing = bool(self.edit_chip.get())
+        if editing and not self.notes_chip.get():
             self.notes_chip.set(True)
+        self.notes_chip.set_enabled(not editing)
         self._apply_lane_options()
         self._apply_gram_options()
 

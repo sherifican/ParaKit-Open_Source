@@ -1648,7 +1648,7 @@ class PracticeHomeScreen(ttk.Frame):
 
         source = self._audio_source_status(entry, state["difficulty"], state)
         notes_text, stems_text, youdrum_hint = self._preplay_readout(
-            entry, state["difficulty"])
+            entry, state["difficulty"], doubled=bool(source["doubled"]))
         tk.Label(song_col, text=notes_text, background=PANEL, foreground=TEXT,
                 font=F_SMALL, anchor=tk.W).pack(fill=tk.X)
         tk.Label(song_col, text=stems_text, background=PANEL, foreground=MUTED,
@@ -1657,9 +1657,13 @@ class PracticeHomeScreen(ttk.Frame):
 
         source_row = tk.Frame(song_col, background=PANEL)
         source_row.pack(fill=tk.X, pady=(7, 0))
-        backing_label = "Backing + Drums"
+        # When the "backing" is really a full mix, calling this button "Backing +
+        # Drums" asserts a drumless backing the song does not have. Name what it
+        # would actually play, so the choice reads as the mistake it is.
         if source["doubled"]:
-            backing_label += "  (not recommended)"
+            backing_label = "Full Mix + Drums  (not recommended — doubles them)"
+        else:
+            backing_label = "Backing + Drums"
         self._audio_source_button(
             source_row, backing_label,
             selected=source["effective"] == "stems",
@@ -1866,8 +1870,10 @@ class PracticeHomeScreen(ttk.Frame):
             note = ("Auto: this backing already contains the drums, so Full "
                     "Mix is selected to avoid doubling.")
         elif doubled and mode == "stems":
-            note = ("Override: Backing + Drums will layer the detected full "
-                    "mix with its drum stem and may double the drums.")
+            note = ("Override: this backing is a full mix, so playing it with "
+                    "the drum stem layers the drums on top of themselves — it "
+                    "doubles them and sounds worse, and it does NOT give you "
+                    "Mute-on-Miss (see below).")
             warning = True
         elif not drum_paths:
             note = ("Only Full Mix is available because no linked drum stem "
@@ -1881,11 +1887,45 @@ class PracticeHomeScreen(ttk.Frame):
                     "is selected.")
             warning = True
 
+        # Can "You drum" / Mute-on-Miss actually DO anything for this chart?
+        # Both work by zeroing the DRUMS bus, so they only produce silence-where-
+        # the-drums-were when the SONG bus carries a DRUMLESS backing. Two shapes
+        # make that impossible, and until 4.9.5 the UI advertised the toggle
+        # identically in all three (owner-reported 2026-07-27 on a ParaDB pack):
+        #   * no drum stem at all      -> nothing is routed to the drums bus
+        #   * backing is a full mix    -> its baked-in drums stay audible on the
+        #                                 song bus no matter what the drums bus does
+        # Measured on the owner's 158-pack ParaDB library: only 43 packs have a
+        # genuine drumless backing + drum stem. 85 are full-mix-only and 16 more
+        # have a full mix sitting in songTracks, so Mute-on-Miss is inert on ~73%
+        # of the library and used to give no sign of it.
+        mom_supported = bool(song_paths and drum_paths) and not doubled
+        mom_active = mom_supported and effective == "stems"
+        # Say it plainly whenever the toggle is inert, and say WHY -- the two
+        # causes have different answers for the user (one is fixable by picking
+        # the other source, the other needs a drumless backing that this song
+        # simply does not ship).
+        if song_paths and not mom_active:
+            if not drum_paths:
+                mom_note = ("“You drum” / Mute-on-Miss cannot work here: this "
+                            "chart links no separate drum stem, so there are no "
+                            "recorded drums to mute — you always hear the mix.")
+            elif doubled:
+                mom_note = ("“You drum” / Mute-on-Miss cannot work here: muting "
+                            "the drum stem still leaves the drums that are baked "
+                            "into this full mix. It needs a DRUMLESS backing, "
+                            "which this song does not ship.")
+            else:
+                mom_note = ("“You drum” / Mute-on-Miss needs Backing + Drums — "
+                            "on Full Mix there is no separate drum track to mute.")
+            note = f"{note}\n{mom_note}" if note else mom_note
+            warning = True
         return {"linked": linked, "song_paths": song_paths,
                 "drum_paths": drum_paths, "fullmix_available": fullmix_available,
                 "stems_available": stems_available, "doubled": doubled,
                 "mode": mode, "effective": effective, "note": note,
-                "warning": warning}
+                "warning": warning, "mom_supported": mom_supported,
+                "mom_active": mom_active}
 
     @staticmethod
     def _audio_source_button(parent, text: str, *, selected: bool,
@@ -1903,8 +1943,8 @@ class PracticeHomeScreen(ttk.Frame):
             enabled=enabled, filled=selected,
             fill_bg=PURPLE, fill_fg=TEXT_BRIGHT, fill_hover=PURPLE_EDGE)
 
-    def _preplay_readout(self, entry: dict,
-                         difficulty: str) -> Tuple[str, str, str]:
+    def _preplay_readout(self, entry: dict, difficulty: str,
+                         doubled: bool = False) -> Tuple[str, str, str]:
         info = entry["diffs"].get(difficulty)
         if info is None:
             return "", "", "(your hits make the drum sounds)"
@@ -1917,17 +1957,27 @@ class PracticeHomeScreen(ttk.Frame):
                 "(this chart links no drum stems — your hits ARE the drums)"
         nd = len(drum_t)
         missing = sum(not i["exists"] for i in song_t + drum_t)
-        text = (f"Audio: {len(song_t)} linked backing + {nd} linked "
+        # Call the song bus what it actually is. `doubled` means the linked
+        # "backing" was measured to already contain the drums, so labelling it
+        # "backing" reads as a drumless stem that does not exist.
+        song_word = "full mix" if doubled else "backing"
+        text = (f"Audio: {len(song_t)} linked {song_word} + {nd} linked "
                 f"stem{'s' if nd != 1 else ''} ({nd} drums)")
         if missing:
             text += f" · {missing} missing on disk"
         on_disk_drums = sum(i["exists"] for i in drum_t)
-        if on_disk_drums:
+        if not on_disk_drums:
+            hint = "(no linked drum stem is available — your hits ARE the drums)"
+        elif doubled:
+            # The drums bus exists, but muting it cannot silence drums that are
+            # baked into the song bus — so do not offer "off to hear them".
+            text += ("\nThe drums are baked into this mix, so muting the drum "
+                     "stem cannot remove them.")
+            hint = "(this song has no drumless backing — the drums always play)"
+        else:
             text += ("\nStems route to the drums bus — turn “You drum” OFF "
                      "to hear the full backing drums.")
             hint = "(on = you play the drums · off = hear the backing drums)"
-        else:
-            hint = "(no linked drum stem is available — your hits ARE the drums)"
         return notes_text, text, hint
 
     def _on_linked_audio_toggle(self, key: str) -> None:

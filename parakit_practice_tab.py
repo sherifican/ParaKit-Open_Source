@@ -3344,6 +3344,20 @@ class _KeyboardTestPopup(tk.Toplevel):
     # ----- teardown -----
     def destroy_clean(self) -> None:
         if self._closed:
+            # Idempotent: cleanup already ran, but still ensure the window is
+            # gone (and grab released) if a prior partial path left it up.
+            try:
+                if self.winfo_exists():
+                    try:
+                        self.grab_release()
+                    except Exception:
+                        pass
+                    try:
+                        self.destroy()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             return
         self._closed = True
         if self._testing:
@@ -3386,6 +3400,11 @@ class _KeyboardTestPopup(tk.Toplevel):
 
     def _on_destroy(self, _event=None) -> None:
         # WM destroy path (Alt-F4 etc.) — still clean MIDI / callback ref.
+        # <Destroy> bound on a Toplevel also fires for every descendant that is
+        # destroyed (bubbles). Ignore those — otherwise _rebuild_rows() poisoning
+        # _closed makes destroy_clean early-return and the window never closes.
+        if _event is not None and getattr(_event, "widget", None) is not self:
+            return
         if not self._closed:
             self._closed = True
             self._testing = False
@@ -3397,6 +3416,10 @@ class _KeyboardTestPopup(tk.Toplevel):
                     cb()
                 except Exception:
                     pass
+            try:
+                self.grab_release()
+            except Exception:
+                pass
 
 
 class SettingsOverlay(_Overlay):

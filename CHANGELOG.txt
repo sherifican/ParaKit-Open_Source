@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.3  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.5  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,112 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.5   --   2026-07-27
+------------------------------------------------------------------------------
+  Practice's audio panel now tells the truth about "You drum" / Mute-on-Miss.
+
+  The problem: both features work by muting the recorded drum stem, so they can
+  only do anything when the other linked file is a DRUMLESS backing. Plenty of
+  charts instead link a full mix plus a drum stem -- and muting the drum stem
+  cannot remove drums that are already baked into the full mix. Practice showed
+  the same "You drum (Mute on Miss)" switch either way, so on those songs the
+  toggle looked available, did nothing audible, and gave no clue why. Picking
+  "Backing + Drums" on one of those songs also layered the drum stem on top of a
+  mix that already had drums, which doubles them and sounds bad.
+
+  What changed:
+  - Practice now states plainly, before you press play, when "You drum" and
+    Mute-on-Miss cannot work for a song -- and which of the two reasons applies:
+    no drum stem is linked at all, or the linked backing is really a full mix
+    with the drums baked in.
+  - The source button is named for what it would actually play. On a chart whose
+    backing is really a full mix it now reads "Full Mix + Drums (not recommended
+    -- doubles them)" instead of "Backing + Drums", which claimed a drumless
+    backing the song does not have.
+  - The audio readout says "1 linked full mix" rather than "1 linked backing"
+    for those charts, and no longer offers to turn "You drum" off "to hear the
+    full backing drums" when those drums cannot be muted.
+
+  Nothing about playback or audio routing changed -- Auto already picked Full Mix
+  on these songs to avoid the doubling. This release is about the app no longer
+  presenting a control that cannot do anything, and naming each linked file
+  correctly.
+
+  Also in this release: "Remove cross-stem bleed kicks" is now marked
+  EXPERIMENTAL.
+  - That option only finds anything when the conversion input is a FULL MIX, and
+    converting from a full mix currently produces a clearly worse chart than
+    converting from an already-split drums stem -- noticeably more phantom kicks.
+    So switching it on to clean up kicks can leave the chart worse overall than
+    leaving it off.
+  - The option now says so: an EXPERIMENTAL tag on the checkbox, a visible note
+    under it, and an expanded tooltip. It is still useful in some cases for
+    spotting ghost kicks for review, but it is not a way to get a better chart.
+  - The recommended workflow is unchanged and is now stated on-screen: split the
+    song first, convert the drums stem, and leave this off.
+  - The option itself is untouched and still defaults to off; only its labelling
+    changed.
+
+  Also fixed: in the Spectral tab, the per-lane "Notes" toggle did nothing
+  while Edit mode was on.
+  - Edit mode needs the notes on screen to click them, so it deliberately keeps
+    Notes turned on. But it did that silently: the button stayed lit and
+    clickable and simply ignored you. It now greys out while Edit is on, so it
+    is clear the toggle is locked rather than broken, and its tooltip says to
+    turn Edit off to hide the notes.
+  - The Bars toggle was never involved, despite appearances -- Notes works
+    normally with Bars on or off.
+
+  Also fixed: songs downloaded from a YouTube playlist no longer arrive with
+  " - Topic" stuck on the artist.
+  - YouTube auto-creates a channel per artist named literally "<Artist> -
+    Topic", and a playlist download reports that channel as the artist. The
+    suffix is now removed as the download is filed.
+  - Only that exact suffix is removed. An artist genuinely called Topic still
+    works, "Off Topic" is left alone, and names containing hyphens such as
+    Blink-182 are untouched.
+  - This applies to new downloads. Songs already in the library keep whatever
+    artist they were filed with.
+
+  Note for chart makers: a song only supports Mute-on-Miss if it ships a drumless
+  backing alongside its drum stem. A full mix plus a drum stem cannot support it,
+  however the two are combined.
+
+
+------------------------------------------------------------------------------
+  v4.9.4   --   2026-07-27
+------------------------------------------------------------------------------
+  A small fix release: two problems where the app did something (or refused to
+  do something) without explaining itself.
+
+  Fixed: the Keyboard test window would not close once a test was started.
+  - In Preview/Practice, opening "Keyboard / MIDI test...", pressing Start test
+    and then pressing Stop test left the window stuck on screen -- neither the
+    Close button nor the window's X would dismiss it. Because that window takes
+    over keyboard and mouse input while it is open, a stuck window left the rest
+    of the app unresponsive until ParaKit was force-quit.
+  - Opening the tester and closing it again without starting a test always
+    worked, which is why this went unnoticed: only pressing Start test triggered
+    it.
+
+  Clearer: the Audio -> MIDI "Remove cross-stem bleed kicks" option now says
+  what it needs and reports what it did.
+  - This pass works by separating the song and checking each detected kick
+    against the bass, vocals and other parts, so it only has something to
+    compare against when the conversion input is a FULL MIX. Converting from a
+    drums-only stem left it with nothing to check, so it found nothing -- while
+    still spending the time on the separation. The checkbox and its tooltip now
+    say this plainly.
+  - The pass also reports its result either way. It now logs when zero kicks
+    were flagged (previously that case was silent, so "found nothing" and
+    "flagged some" differed only by the absence of a line), and it warns
+    directly when the separated backing stems come out silent, which means a
+    drums-only file was used as the input.
+  - Detection is unchanged. This option only flags suspect kicks for review in
+    the MIDI Editor; it does not alter how notes are detected.
+
 
 ------------------------------------------------------------------------------
   v4.9.3   --   2026-07-23

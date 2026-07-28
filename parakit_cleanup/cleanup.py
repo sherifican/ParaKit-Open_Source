@@ -54,7 +54,8 @@ def _resolve_model_dir(model_dir):
 def clean_a2m_midi(midi_path, audio_path, do_cymbal=True, do_kick=True,
                    allow_ride=True,
                    model_dir=None,
-                   cymbal_gate=None, kick_gate=KICK_RECOMMENDED_GATE):
+                   cymbal_gate=None, kick_gate=KICK_RECOMMENDED_GATE,
+                   stems=None, do_bleed=False, bleed_gate=None, bleed_review_gate=None):
     """Clean an Audio->MIDI drum MIDI in place using the audio.
 
     Parameters
@@ -112,8 +113,28 @@ def clean_a2m_midi(midi_path, audio_path, do_cymbal=True, do_kick=True,
         cleaned = passes.remove_phantoms(y, sr, cleaned, npz_path=npz, gate=kick_gate)
         cleaned = {lane: list(v) for lane, v in cleaned.items()}
 
-    # Rewrite the MIDI preserving velocities/timing.
-    new_notes = midi_io.apply_cleanup(notes, cleaned, do_cymbal=do_cymbal, do_kick=do_kick)
+    # Cross-stem bleed kick pass (F12) — opt-in, orthogonal to the decay RF above.
+    # Needs the 4 demucs stems; caller passes `stems` (a dict of arrays, or a
+    # demucs output dir). Default OFF => this block is skipped and the output is
+    # byte-identical to the pre-bleed cleanup.
+    n_bleed_removed = 0
+    bleed_review_flags = []
+    if do_bleed and stems is not None:
+        if isinstance(stems, (str, os.PathLike)):
+            from . import bleed as _cb
+            stems = _cb.load_stems(stems, sr)
+        _rgate = bleed_gate if bleed_gate is not None else passes.BLEED_REMOVE_GATE
+        _vgate = bleed_review_gate if bleed_review_gate is not None else passes.BLEED_REVIEW_GATE
+        _kicks_before = len(cleaned.get("kick", []))
+        cleaned, bleed_review_flags = passes.bleed_kick_pass(
+            stems, sr, cleaned, remove_gate=_rgate, review_gate=_vgate)
+        cleaned = {lane: list(v) for lane, v in cleaned.items()}
+        n_bleed_removed = max(0, _kicks_before - len(cleaned.get("kick", [])))
+
+    # Rewrite the MIDI preserving velocities/timing. Bleed removals are kick-lane
+    # edits, so honor them even when the decay kick pass (do_kick) is off.
+    new_notes = midi_io.apply_cleanup(notes, cleaned, do_cymbal=do_cymbal,
+                                      do_kick=(do_kick or n_bleed_removed > 0))
     mid = midi_io.mido.MidiFile(midi_path)
     tpb = mid.ticks_per_beat or midi_io.DEFAULT_TPB
     tempo = _first_tempo(mid)
@@ -128,6 +149,8 @@ def clean_a2m_midi(midi_path, audio_path, do_cymbal=True, do_kick=True,
         "n_notes_before": n_before,
         "n_notes_after": len(new_notes),
         "n_kicks_removed": n_kicks_removed,
+        "n_bleed_kicks_removed": n_bleed_removed,
+        "bleed_review_flags": bleed_review_flags,
         "cymbal_relabeled": cym_relabeled,
     }
 

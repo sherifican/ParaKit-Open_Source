@@ -61,7 +61,7 @@ def parse_rlrr(rlrr_path: Path):
     get a clean message rather than a raw traceback.
     """
     text = None
-    for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
+    for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1"):
         try:
             text = rlrr_path.read_text(encoding=enc)
             break

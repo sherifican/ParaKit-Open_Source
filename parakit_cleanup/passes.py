@@ -31,6 +31,7 @@ import json
 import numpy as np
 
 from . import features as cf
+from . import bleed as cb
 from .numpy_rf import NumpyRF
 
 # ---- cymbal post-pass constants (mirror cymbal_postpass.py) -----------------
@@ -43,6 +44,24 @@ RECOMMENDED_ASYM_QUALITY = {"gate_to_ride": 0.3, "gate_swap": 0.7}
 # ---- kick post-pass constants (mirror kick_postpass.py) ---------------------
 KICK_PHANTOM_LABEL = 0
 KICK_RECOMMENDED_GATE = 0.9
+
+# ---- cross-stem bleed kick pass (F12), two-tier -----------------------------
+# A kick is a bleed-phantom candidate iff a non-drum stem dominates the drums
+# stem at its onset (ratio = max(vocals,bass,other)/drums). ORTHOGONAL to the
+# decay/timbre kick RF above (validated 2026-07-20: corr +0.08 among phantoms;
+# stacked coverage ~doubles). F12 alone cannot reach high precision (real kicks
+# often coincide with bass), so we split it in two, honoring recall>precision:
+#   * ratio >= BLEED_REMOVE_GATE  -> AUTO-REMOVE (very conservative; only the
+#     extreme-ratio phantoms, where real-kick loss is minimal).
+#   * BLEED_REVIEW_GATE <= ratio < BLEED_REMOVE_GATE -> FLAG-FOR-REVIEW (never
+#     removed; surfaced to the user, zero real-kick cost).
+# Gates tuned on the ParaDB harness (13 sync-clean songs, 2026-07-20). Either
+# gate = None disables that tier. remove_gate=20 adds only +0.44pp real-kick loss
+# beyond the shipped decay RF (6.5:1 phantom:real, vs the RF's own ~2:1) while
+# lifting phantom removal 25%->33%; the review band [3,20) surfaces another ~16%
+# of phantoms for the user to remove by hand at zero automatic cost.
+BLEED_REMOVE_GATE = 20.0
+BLEED_REVIEW_GATE = 3.0
 
 
 # ---- model loading (NumpyRF + class-name list from the .npz.json sidecar) ----
@@ -226,4 +245,43 @@ def remove_phantoms(y, sr, est_by_class, model=None, phantom_label=None,
             F = cf.add_decay_features(kicks, F)
         kicks = filter_kicks(kicks, F, model, phantom_label=phantom_label, gate=gate)
     est["kick"] = kicks
+    return est
+
+
+def bleed_kick_pass(stems, sr, est_by_class,
+                    remove_gate=BLEED_REMOVE_GATE, review_gate=BLEED_REVIEW_GATE):
+    """Two-tier cross-stem BLEED kick pass (F12) — orthogonal to remove_phantoms.
+
+    For each kick, ``ratio = bleed.bleed_ratios`` (non-drum vs drums energy at
+    the onset). Returns ``(est, review_flags)``:
+      * kicks with ``ratio >= remove_gate`` are REMOVED from est (kick lane only;
+        NO onsets ever created — same invariant as remove_phantoms).
+      * kicks with ``review_gate <= ratio < remove_gate`` are returned in
+        ``review_flags`` (sorted onset seconds) — NOT removed; the caller surfaces
+        them for user review.
+    ``remove_gate=None`` disables removal; ``review_gate=None`` disables flagging.
+    A missing/None drums stem or empty stems => passthrough (est unchanged, no
+    flags). ``stems`` = dict {drums,vocals,bass,other -> mono np.array at ``sr``}."""
+    est = {k: (list(v) if not isinstance(v, list) else list(v)) for k, v in est_by_class.items()}
+    kicks = np.sort(np.asarray(est.get("kick", []), dtype=float))
+    review_flags = []
+    if kicks.size and stems and stems.get("drums") is not None and (remove_gate is not None or review_gate is not None):
+        ratios = np.asarray(cb.bleed_ratios(stems, sr, kicks.tolist()), dtype=float)
+        remove_mask = (ratios >= remove_gate) if remove_gate is not None else np.zeros(len(kicks), bool)
+        kept = kicks[~remove_mask]
+        if review_gate is not None:
+            lo = review_gate
+            hi = remove_gate if remove_gate is not None else np.inf
+            flag_mask = (ratios >= lo) & (ratios < hi)
+            review_flags = sorted(float(t) for t in kicks[flag_mask])
+        kicks = np.sort(kept)
+    est["kick"] = kicks
+    return est, review_flags
+
+
+def remove_bleed_phantoms(stems, sr, est_by_class, gate_ratio=BLEED_REMOVE_GATE):
+    """Removal-only convenience wrapper around ``bleed_kick_pass`` (no review tier).
+    Returns the est dict (kicks with ratio >= gate_ratio removed)."""
+    est, _flags = bleed_kick_pass(stems, sr, est_by_class,
+                                  remove_gate=gate_ratio, review_gate=None)
     return est

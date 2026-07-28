@@ -121,8 +121,13 @@ if __name__ == "__main__":
     import os, sys
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import loaders
-    track = r"C:\Users\micah\PROJECTS & SIDE HUSSTLES\ParaKit\samples_for_det_imp\drums only audio\paradb_corpus\all_i_want_-_a_day_to_remember\drums.flac"
-    gtmid = r"C:\Users\micah\PROJECTS & SIDE HUSSTLES\ParaKit\samples_for_det_imp\curated\paradb_corpus\all_i_want_-_a_day_to_remember\ground_truth.mid"
+    # env-driven so no absolute owner path ships in this public file (2026-07-23)
+    track = os.environ.get("PARAKIT_DEMO_DRUMS", "")
+    gtmid = os.environ.get("PARAKIT_DEMO_GT", "")
+    if not (track and gtmid and os.path.isfile(track) and os.path.isfile(gtmid)):
+        print("Set PARAKIT_DEMO_DRUMS + PARAKIT_DEMO_GT to a drums.flac + a "
+              "ground_truth.mid to run this feature-separation demo.")
+        sys.exit(0)
     y, sr = load_audio(track)
     gt = loaders.load_midi(gtmid)
     ci = {n: FEATURE_NAMES.index(n) for n in ("cent_mean", "decay_slope", "hf_ratio")}

@@ -1654,6 +1654,34 @@ def batch_template_validate(template):
     return issues
 
 
+_YT_TOPIC_SUFFIX = " - Topic"
+
+
+def strip_yt_topic_suffix(name):
+    """Drop YouTube's auto-generated ' - Topic' artist-channel suffix.
+
+    YouTube creates an automatic channel per artist named literally
+    ``<Artist> - Topic`` ("All Time Low - Topic", "mgk - Topic"), and playlist
+    downloads report that channel as the author -- so the artist field arrived
+    with the suffix attached (owner-reported 2026-07-28).
+
+    Deliberately narrow. It strips ONLY an exact trailing ``" - Topic"``:
+      * an artist genuinely called Topic survives -- the DJ's own channel is
+        "Topic - Topic", which correctly yields "Topic";
+      * a lone "Topic" with no " - " before it is left alone;
+      * hyphens elsewhere are untouched, so "Blink-182" and "Emerson, Lake
+        - Palmer" are unaffected;
+      * it never returns an empty string, so a pathological "- Topic" is kept
+        rather than blanking the field.
+    Case-sensitive on purpose: YouTube's convention is always capital-T
+    "Topic", and matching loosely risks eating a real name.
+    """
+    s = (name or "").strip()
+    if s.endswith(_YT_TOPIC_SUFFIX) and len(s) > len(_YT_TOPIC_SUFFIX):
+        return s[:-len(_YT_TOPIC_SUFFIX)].strip() or s
+    return s
+
+
 def batch_audio_metadata_lookup(audio_path):
     """Pre-fill {title, artist, album, year} from an audio file's tags.
 
@@ -5763,7 +5791,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.3"
+    VERSION = "4.9.5"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -15446,17 +15474,47 @@ demucs.separate.main()
             value=load_config().get("a2m_cleanup_bleed", False))
         cleanup_bleed_cb = ttk.Checkbutton(
             adv_frame,
-            text="      •  Remove cross-stem bleed kicks  (slower — separates stems)",
+            text="      •  Remove cross-stem bleed kicks   ⚠ EXPERIMENTAL — needs the FULL MIX",
             variable=self.a2m_cleanup_bleed_var)
         cleanup_bleed_cb.pack(anchor="w")
+        # v4.9.5 — EXPERIMENTAL disclaimer (owner-directed 2026-07-27). The pass
+        # itself behaves correctly; the problem is what turning it ON forces you
+        # into. It only finds anything when the conversion input is a FULL MIX,
+        # and converting from a full mix currently yields a clearly worse chart
+        # than converting from a drums stem. So the honest framing is not "this
+        # pass is broken" but "the workflow it requires is worse than the normal
+        # one" -- which is what a user needs to know before enabling it.
+        ttk.Label(adv_frame,
+                  text=("⚠ EXPERIMENTAL / in development — still flawed, but useful in "
+                        "some cases for spotting ghost kicks. Using it means converting "
+                        "from the FULL MIX, and full-mix conversions currently produce a "
+                        "noticeably worse chart than converting from a drums stem with "
+                        "the normal pipeline. For the best chart, split the song first "
+                        "and convert the drums stem with this OFF."),
+                  style="Sub.TLabel", foreground="#c8a24a",
+                  wraplength=560, justify="left").pack(anchor="w", pady=(0, 6))
         self._add_tooltip(
             cleanup_bleed_cb,
+            "⚠ EXPERIMENTAL — in development, still flawed. Useful in some cases as a\n"
+            "ghost-kick overlay for review, NOT as a way to get a better chart.\n\n"
             "A second phantom-kick check that catches false kicks the remover above\n"
             "misses: it splits the song into drums / bass / vocals / other and removes\n"
             "kicks where another instrument (usually bass) bled into the drums track.\n\n"
-            "This runs an extra stem separation, so it adds time to each conversion —\n"
-            "leave OFF unless you want the extra pass. Kicks that are only borderline\n"
-            "are highlighted for review in the MIDI Editor rather than removed.\n"
+            "⚠ CONVERT FROM THE FULL MIX to use this. It runs its OWN stem separation\n"
+            "and works by comparing the drums against the bass / vocals / other parts —\n"
+            "so if you convert from a drums-only stem there is nothing to compare\n"
+            "against, and the pass finds nothing (it still costs the separation time).\n"
+            "This is easy to miss because the option lives on the Audio → MIDI tab,\n"
+            "which normally comes AFTER splitting.\n\n"
+            "⚠ That requirement is the catch. Converting from a full mix currently\n"
+            "gives a clearly worse chart than converting from an already-split drums\n"
+            "stem — noticeably more phantom kicks — so switching this ON to clean up\n"
+            "kicks can leave you worse off overall than leaving it OFF and converting\n"
+            "the drums stem. The recommended workflow is still: split the song, then\n"
+            "convert the drums stem with this OFF.\n\n"
+            "This runs an extra stem separation, so it adds time to each conversion.\n"
+            "Kicks that are only borderline are highlighted for review in the MIDI\n"
+            "Editor rather than removed.\n"
             "Kick lane only; never adds or moves notes. Needs the source audio present.")
 
         self.a2m_remove_flams_var = tk.BooleanVar(
@@ -27784,6 +27842,30 @@ demucs.separate.main()
                               f"{', '.join(missing)} — skipping the pass.")
                 return None
             self._a2m_log(f"Cross-stem bleed:  4 stems ready ({device.upper()}).")
+            # v4.9.4 — DRUMS-ONLY INPUT WARNING. This pass asks "does this kick carry
+            # energy from the NON-DRUM stems?" Given a drums-only stem as input, demucs
+            # returns near-silent bass/vocals/other, so no kick can ever be attributed to
+            # bleed: the pass burns a full separation and then correctly finds nothing.
+            # That is indistinguishable in the log from "ran fine, chart was clean", which
+            # cost a diagnosis session. Measure the non-drum stems and say so plainly.
+            try:
+                import soundfile as _sf
+                import numpy as _np
+                _peaks = []
+                for _n in ("bass", "vocals", "other"):
+                    try:
+                        _y, _ = _sf.read(stems[_n], dtype="float32", always_2d=True)
+                        _peaks.append(float(_np.abs(_y).max()) if _y.size else 0.0)
+                    except Exception:
+                        _peaks.append(-1.0)          # unreadable -> don't claim anything
+                if _peaks and all(0.0 <= p < 0.005 for p in _peaks):
+                    self._a2m_log(
+                        "Cross-stem bleed:  ⚠ the non-drum stems came out silent — this "
+                        "input looks like a DRUMS-ONLY stem, so cross-stem bleed cannot "
+                        "be assessed and nothing will be flagged. Convert from the FULL "
+                        "MIX to use this option.")
+            except Exception:
+                pass
             return stems
         except Exception as _e:
             try:
@@ -27996,6 +28078,16 @@ demucs.separate.main()
             else:
                 # No flags this run — clear any stale set from a previous conversion.
                 self._a2m_bleed_review_flags = None
+                # v4.9.4 — SAY SO. Previously this branch was silent, so "the pass ran and
+                # found nothing" and "the pass ran and flagged some" were distinguishable
+                # in the log only by the ABSENCE of a line — you had to know the line
+                # existed to notice it was missing. Log the zero explicitly.
+                if do_bleed:
+                    try:
+                        self._a2m_log(
+                            "  ℹ  0 kick(s) flagged for review (no cross-stem bleed found).")
+                    except Exception:
+                        pass
         except Exception as _e:
             try:
                 # v4.7.19 — "skipped" is a factual claim about the chart on disk, so it may
@@ -31351,7 +31443,11 @@ demucs.separate.main()
                 meta = self._yt_lib_oembed_meta(vid)
                 if meta:
                     title = meta.get("title") or title
-                    artist = meta.get("author", "") or ""
+                    # oEmbed's author is the CHANNEL name, and YouTube's
+                    # auto-generated artist channels are literally
+                    # "<Artist> - Topic" -- so playlist downloads used to land
+                    # in the library with the suffix stuck on the artist.
+                    artist = strip_yt_topic_suffix(meta.get("author", "") or "")
             # Art: embedded cover first (always available on FLAC downloads),
             # then the YouTube thumbnail by id — so art shows even without vid.
             art = self._yt_fetch_art_cache(p, vid)
