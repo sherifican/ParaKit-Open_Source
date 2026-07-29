@@ -2567,7 +2567,7 @@ class SpectralTab(ttk.Frame):
             tooltip="Optional. The full mix (all instruments). When loaded, the "
                     "Play-source toggle lets you hear it, and an Analyze toggle "
                     "lets you view the Full Mix for masking context. The graph "
-                    "still analyses the drums stem by default.")
+                    "still analyzes the drums stem by default.")
         self.stem_field.grid(row=2, column=1, sticky=tk.EW, pady=(0, 8))
         self.stem_load_btn = OutlineButton(
             box, "Load mix", accent=PURPLE_EDGE, command=self._on_stem_browse,
@@ -2589,7 +2589,7 @@ class SpectralTab(ttk.Frame):
                                       command=lambda _i: self._on_analyze_toggle())
         self._analyze_seg.pack(side=tk.LEFT)
         Tooltip(self._analyze_seg,
-                "Which audio the spectrogram + energy + flags analyse. Drums "
+                "Which audio the spectrogram + energy + flags analyze. Drums "
                 "(the isolated stem) reads far cleaner than the full mix and "
                 "gives more accurate flags; Full Mix shows everything for "
                 "masking context. This is independent of the Play source.")
@@ -2654,7 +2654,7 @@ class SpectralTab(ttk.Frame):
         Tooltip(self._stem_seg, "Which audio Play uses: the Drums stem or the "
                                 "loaded Full Mix. Independent of the Analyze "
                                 "toggle — you can play the Full Mix while the "
-                                "view analyses the Drums.")
+                                "view analyzes the Drums.")
 
         self._sep(inner).pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=2)
         self.view_seg = Segmented(inner, ("Per-Lane", "Spectrogram"),
@@ -2807,7 +2807,7 @@ class SpectralTab(ttk.Frame):
                                      "slice. OFF: cymbal/tom lanes share "
                                      "their physical band.")
         self.notes_chip = Chip(row, "Notes", on=True, command=changed,
-                               tooltip="The chart's notes as lane-coloured "
+                               tooltip="The chart's notes as lane-colored "
                                        "diamonds (or bars — see the Bars "
                                        "toggle in the toolbar).\n\n"
                                        "Locked on while Edit is enabled: you "
@@ -2866,7 +2866,7 @@ class SpectralTab(ttk.Frame):
                                  tooltip="Notes flash white as the playhead "
                                          "crosses them.")
         self.g_colors_chip = Chip(row, "Chart colors", on=True, command=changed,
-                                  tooltip="Colour note markers by LANE (on) "
+                                  tooltip="Color note markers by LANE (on) "
                                           "or by drum BAND (off).")
         self.g_flags_chip = Chip(row, "Flag issues", on=True, command=changed,
                                  tooltip="The disagreements: green + MISS / "
@@ -3195,7 +3195,7 @@ class SpectralTab(ttk.Frame):
             # info line BEFORE the rebuild (breaker R3E-3a): a failed rebuild's
             # AMBER warning must survive; cfg_set stays last (R2B2-5).
             self._status("Full mix loaded (optional) — now playing the mix; "
-                         "the graph still analyses the drums.")
+                         "the graph still analyzes the drums.")
             self._rebuild_if_source_changed(_prev_src)
             self._cfg_set("spec_last_stem", path)
 
@@ -3700,7 +3700,7 @@ class SpectralTab(ttk.Frame):
 
     def _on_zoom_fit(self):
         if self._model is None:
-            self._status("Run Compare first -- Fit zooms the analysed song.")
+            self._status("Run Compare first -- Fit zooms the analyzed song.")
             return
         view = self.gram_view if self.view_seg.get() == 1 else self.lane_view
         vw = max(100, view.canvas.winfo_width() - 4)

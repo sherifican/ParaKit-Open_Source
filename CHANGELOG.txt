@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.6  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.7  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,34 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.7   --   2026-07-29
+------------------------------------------------------------------------------
+  Two MIDI Editor changes: picking a chart now opens it, and the notes that
+  light up during playback keep their lane color instead of flashing white.
+
+  PICKING A CHART OPENS IT
+  Choosing a MIDI file in the MIDI Editor filled in the path but drew nothing
+  until "Load MIDI" was pressed, so on a cold start the editor sat empty and
+  looked broken. Picking a file now opens it straight away -- by Browse, by
+  drag-and-drop, or from the recents menu.
+
+  This only happens when the editor is empty. With a chart already open,
+  nothing loads until "Load MIDI" or "Reload" is pressed, so unsaved edits are
+  never swapped out from underneath you. "Load MIDI" is now only needed to
+  REPLACE an open chart, and its tooltip says so.
+
+  REACTIVE NOTES: A NEW GLOW STYLE
+  Reactive Notes used to blank each note solid white as the playhead crossed
+  it, which meant losing track of which drum it was at exactly the moment it
+  mattered. Notes now flare to a brighter version of their OWN lane color and
+  throw a soft halo that fades out behind them, so a note stays identifiable
+  while it lights up.
+
+  The original white flash is unchanged and still available -- it is now
+  called "Flash Notes (Classic Style)" in a Style dropdown under the Reactive
+  Notes checkbox. The new glow is the default.
 
 ------------------------------------------------------------------------------
   v4.9.6   --   2026-07-28

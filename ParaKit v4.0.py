@@ -5791,7 +5791,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.6"
+    VERSION = "4.9.7"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -7313,6 +7313,15 @@ class MidiToRlrrApp:
         # (3) re-enable GC BEFORE destroy so the teardown churn collects
         # incrementally. No inline gc.collect() — that forced sweep is the very
         # stall we're avoiding (see _pp_mix_stop's comment).
+        # A MIDI-Editor autoload can be 250 ms out when the window closes; let it fire
+        # into a half-destroyed app and it can raise a dialog against dead widgets.
+        try:
+            _al = getattr(self, "_me_autoload_after", None)
+            if _al is not None:
+                self.root.after_cancel(_al)
+                self._me_autoload_after = None
+        except Exception:
+            pass
         try:
             _job = getattr(self, "_pp_gc_job", None)
             if _job is not None:
@@ -17896,7 +17905,7 @@ demucs.separate.main()
                         else:
                             self._a2m_log("  Pre-split FAILED — falling back to "
                                           "the original input (unchanged "
-                                          "behaviour).")
+                                          "behavior).")
                     _t0 = _sep_time.time()
                     _stem_paths = _sep_active.separate(
                         _sep_input, _sep_workdir)
@@ -19753,6 +19762,11 @@ demucs.separate.main()
 
         # Load MIDI
         self.me_midi_var = tk.StringVar()
+        # v4.9.7 — auto-load the chart when the editor is EMPTY. Browse, drag-and-drop and
+        # the recents menu all write this one variable, so a single trace covers all three
+        # without touching any of their handlers. Picking a file and then still having to
+        # press "Load MIDI" reads as the app being broken on a cold start.
+        self.me_midi_var.trace_add("write", self._me_schedule_autoload)
         ttk.Label(ctrl_frame, text="MIDI File:").pack(side=tk.LEFT, padx=(0, 5))
         me_entry = ttk.Entry(ctrl_frame, textvariable=self.me_midi_var,
                              width=(28 if compact else 40))
@@ -19793,9 +19807,18 @@ demucs.separate.main()
                    command=lambda: self.me_rlrr_override_var.set("")
                    ).pack(side=tk.LEFT, padx=(4, 0))
 
-        ttk.Button(ctrl_frame, text="Load MIDI",
-                   style="Convert.TButton",
-                   command=self._me_load).pack(side=tk.LEFT, padx=(0, 16))
+        _me_load_btn = ttk.Button(ctrl_frame, text="Load MIDI",
+                                  style="Convert.TButton",
+                                  command=self._me_load)
+        _me_load_btn.pack(side=tk.LEFT, padx=(0, 16))
+        self._add_tooltip(
+            _me_load_btn,
+            "Loads the chosen MIDI File into the editor.\n\n"
+            "When the editor is empty the chart loads on its own as soon as you\n"
+            "pick a file — by Browse, drag-and-drop, or the recents list — so you\n"
+            "only need this button to REPLACE a chart that is already open.\n\n"
+            "That is deliberate: with a chart on screen nothing loads without you\n"
+            "pressing this, so unsaved edits are never swapped out from under you.")
 
         # Save MIDI
         ttk.Button(ctrl_frame, text="💾  Save MIDI",
@@ -20469,19 +20492,60 @@ demucs.separate.main()
                         variable=self.me_conf_shade_var,
                         command=self._me_redraw).pack(anchor="w", pady=(0, 3))
 
-        # Reactive notes toggle — notes flash white as playhead passes over them
+        # Reactive notes toggle — notes light up as the playhead passes over them.
+        # Two styles since 4.9.7: the default glow (note flares in its OWN lane color
+        # with a soft halo) and the original white flash, kept as "Classic Style".
         self.me_reactive_notes_var = tk.BooleanVar(value=True)
         _react_cb = ttk.Checkbutton(snap_outer,
-                        text="⚡  Reactive notes  (flash white on playhead)",
+                        text="⚡  Reactive notes  (light up on playhead)",
                         variable=self.me_reactive_notes_var,
-                        command=self._me_redraw)
+                        command=self._me_on_reactive_toggle)
         _react_cb.pack(anchor="w", pady=(0, 3))
         self._add_tooltip(
             _react_cb,
-            "When on, notes turn solid white as the playhead passes over them.\n"
+            "When on, notes light up as the playhead passes over them.\n"
             "Works during playback, scrubbing, and while paused.\n\n"
             "Useful for checking whether notes land exactly where you expect\n"
-            "them in a tricky section — watch for the white flash at the beat.")
+            "them in a tricky section — watch for the hit right on the beat.\n\n"
+            "Pick the look with the style dropdown underneath.")
+
+        _react_row = ttk.Frame(snap_outer)
+        _react_row.pack(anchor="w", fill="x", padx=(22, 0), pady=(0, 3))
+        ttk.Label(_react_row, text="Style:").pack(side="left", padx=(0, 6))
+        self.ME_REACTIVE_STYLES = [
+            ("glow",    "Reactive Notes"),
+            ("classic", "Flash Notes (Classic Style)"),
+        ]
+        self._me_reactive_style_labels = [lbl for _k, lbl in self.ME_REACTIVE_STYLES]
+        self.me_reactive_style_var = tk.StringVar(value="glow")
+        self._me_reactive_style_label_var = tk.StringVar(
+            value=self._me_reactive_style_labels[0])
+        _react_cmb = ttk.Combobox(_react_row, state="readonly", width=26,
+                                  values=self._me_reactive_style_labels,
+                                  textvariable=self._me_reactive_style_label_var)
+        _react_cmb.pack(side="left")
+        # Held on self so the checkbox handler can gray it out. A live dropdown whose
+        # selection does nothing is the same defect this release line already fixed on
+        # the Spectral tab's per-lane Notes toggle.
+        self._me_react_cmb = _react_cmb
+        self._me_sync_reactive_style_state()
+
+        def _on_react_style(_evt=None):
+            _lbl = self._me_reactive_style_label_var.get()
+            for _k, _l in self.ME_REACTIVE_STYLES:
+                if _l == _lbl:
+                    self.me_reactive_style_var.set(_k)
+                    break
+            self._me_redraw()
+        _react_cmb.bind("<<ComboboxSelected>>", _on_react_style)
+        self._add_tooltip(
+            _react_cmb,
+            "Reactive Notes — the note flares to a brighter version of its own\n"
+            "lane color and throws a soft glow, fading out as the playhead moves\n"
+            "past. Keeps each drum readable by color while it lights up.\n\n"
+            "Flash Notes (Classic Style) — the original behavior: the note turns\n"
+            "solid white for an instant. Higher contrast, but every lane flashes\n"
+            "the same color so you lose the drum it belongs to.")
 
         # v4.4.28 / v4.4.29 — Waveform display style selector. (v4.5.2-1 added a
         # 4th mode, "stereo_color", and made it the default — see below.)
@@ -22428,6 +22492,85 @@ demucs.separate.main()
                 "Unsaved MIDI changes",
                 f"The MIDI Editor has unsaved changes.\nDiscard them and {action}?")
         return True
+
+    _ME_AUTOLOAD_DELAY_MS = 250
+
+    def _me_schedule_autoload(self, *_a):
+        """Queue an auto-load after me_midi_var changes (see the trace in the tab build).
+
+        Debounced for two reasons: the trace fires once per keystroke while a path is being
+        typed into the Entry, and the delay lets an explicit programmatic load win — the
+        hand-offs from other tabs set this variable and then call _me_load themselves, so by
+        the time this fires me_notes is populated and it correctly no-ops instead of loading
+        the same file twice.
+        """
+        # ⚠ self.root.after, NOT self.after. MidiToRlrrApp is a plain class -- it holds the
+        # Tk root as a member and inherits nothing from tk.Misc, so `self.after` raises
+        # AttributeError. Shipped that way in the first cut of this feature: the bare except
+        # below swallowed it, _me_autoload_fire was never scheduled, and the whole autoload
+        # was a silent no-op while its unit guards passed 11/11 (they tested the callback,
+        # never the wiring). The 231 other timers in this class all use self.root.after.
+        #
+        # The bound method is resolved OUTSIDE the try on purpose: a missing scheduler is a
+        # wiring bug and must fail loudly, while a genuine Tk failure (scheduling during
+        # teardown) is still swallowed. Catching both is what hid this for a full release.
+        _cancel = self.root.after_cancel
+        _after = self.root.after
+        try:
+            if getattr(self, "_me_autoload_after", None):
+                _cancel(self._me_autoload_after)
+        except Exception:
+            pass
+        self._me_autoload_after = None
+        try:
+            self._me_autoload_after = _after(self._ME_AUTOLOAD_DELAY_MS,
+                                             self._me_autoload_fire)
+        except Exception:
+            self._me_autoload_after = None
+
+    def _me_autoload_fire(self):
+        """Load the selected chart ONLY when the editor has nothing to lose.
+
+        That condition is the whole safety story: with a chart open — or with an empty
+        chart whose notes are still recoverable through undo — the user has to press
+        Load MIDI / Reload, so an in-progress edit can never be silently replaced by a
+        stray path change, including the save path, which rewrites me_midi_var while
+        notes are on screen.
+        """
+        self._me_autoload_after = None
+        # "Empty" has to mean the same thing here as it does at the discard prompt.
+        # _me_confirm_discard deliberately counts the undo/redo stacks as something to
+        # lose: after a mass-delete me_notes is [] but the whole chart is still one
+        # Ctrl+Z away, and a load clears those stacks. Guarding on me_notes alone let
+        # this fire after delete-all-then-save (which sets me_edit_started False, so the
+        # discard prompt stays silent too) and drop the undo history with no warning.
+        if (getattr(self, "me_notes", None)
+                or getattr(self, "me_undo_stack", None)
+                or getattr(self, "me_redo_stack", None)):
+            return                                   # chart open → explicit load only
+        path = (self.me_midi_var.get() or "").strip().strip('"')
+        if not path or not path.lower().endswith((".mid", ".midi")):
+            return
+        if not os.path.isfile(path):
+            return                                   # half-typed path in the Entry
+        # Callers that load FIRST and set the path second (the extractor hand-off,
+        # _me_open_chart, the reducer's save-and-compare) rely on me_notes being
+        # populated by the time this fires -- which fails for a chart that legitimately
+        # parses to zero notes, re-loading it a second time. In the reducer's case the
+        # re-entry would drop exact_midi=True and let the .rlrr sibling matcher swap the
+        # unreduced chart back in, undoing the very fix that flag exists for.
+        _open = (getattr(self, "_me_last_midi", "") or "")
+        if _open and os.path.normcase(os.path.abspath(path)) == os.path.normcase(
+                os.path.abspath(_open)):
+            return                                   # already the open chart
+        try:
+            # Pass the sanitized path -- _me_load re-reads me_midi_var with .strip() but
+            # NOT .strip('"'), so a quoted path (Explorer's "Copy as path") passed the
+            # check here and then failed os.path.exists there, raising File Not Found on
+            # a file that exists.
+            self._me_load(path)
+        except Exception:
+            pass                                     # _me_load reports its own errors
 
     def _me_load(self, path=None, exact_midi=False):
         """Load a MIDI file (or paired .rlrr) into the editor.
@@ -25907,6 +26050,20 @@ demucs.separate.main()
         top.bind("<Escape>", lambda e: top.destroy())
         top.protocol("WM_DELETE_WINDOW", top.destroy)
         top.grab_set()
+        # grab_set routes EVENTS here but does not move keyboard FOCUS, so a modal that
+        # only grabs can sit without focus. Standard practice for a modal, and harmless.
+        #
+        # ⚠ This is NOT a verified fix for the harness's A3 "Escape does not close"
+        # failure. Investigated 2026-07-29: the <Escape> binding IS present on this
+        # toplevel, and the same bind+grab_set pattern closes the window correctly in an
+        # isolated Tk probe. Under gui_harness_difficulty.py focus stays on the root
+        # window even after focus_force(), and neither focus_set() nor focus_force()
+        # here changes the harness result (22/24 either way) -- and it fails identically
+        # on the shipped 4.9.6, so it is not a 4.9.x regression. The harness's own
+        # comment documents A3 as focus-dependent and self-describes a run where it
+        # failed then passed with no code change. Treat A3 as an environment artifact
+        # until someone reproduces it by hand in the real app.
+        top.focus_set()
 
     def _me_repeat_pattern(self):
         """Repeat the selected notes, tiling them once after their last note."""
@@ -27874,6 +28031,11 @@ demucs.separate.main()
             self._me_speed_audio = None
         try:
             self.me_canvas.delete("playhead")
+            # Stop also clears the last frame's lit notes. Nothing repaints them until
+            # the next redraw or seek, so they used to hang on the canvas after the
+            # music stopped — one white bar under Classic, five rectangles per note
+            # (including opaque halos) under the glow.
+            self.me_canvas.delete("reactive_note")
         except Exception:
             pass
         if finalize_midi_recording:
@@ -28013,8 +28175,55 @@ demucs.separate.main()
 
         self._me_tick_id = self.root.after(25, self._me_tick)
 
+    ME_REACTIVE_BG = "#0d0d1a"       # roll canvas bg — glow halos blend toward this
+    # (grow px, color mix at full strength) — widest/faintest first. Kept tight at 4px:
+    # Tk canvas can only draw rectangles, so a large halo reads as a stepped border rather
+    # than a glow. The outermost ring is also faintest so the edge softens into the lane
+    # background instead of terminating on a hard line.
+    ME_GLOW_RINGS = ((4, 0.08), (3, 0.15), (2, 0.26), (1, 0.42))
+
+    @staticmethod
+    def _me_mix_hex(a, b, t):
+        """Blend two #rrggbb colors; t=0 -> a, t=1 -> b. Tk canvas has no alpha, so
+        every 'transparent' glow ring is really an opaque pre-blended color."""
+        t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+        ar, ag, ab = int(a[1:3], 16), int(a[3:5], 16), int(a[5:7], 16)
+        br, bg, bb = int(b[1:3], 16), int(b[3:5], 16), int(b[5:7], 16)
+        return "#%02x%02x%02x" % (int(ar + (br - ar) * t),
+                                  int(ag + (bg - ag) * t),
+                                  int(ab + (bb - ab) * t))
+
+    def _me_note_lane_color(self, note):
+        """The note's own lane color, or a neutral fallback if the lane index is odd."""
+        try:
+            return self.MIDI_EDITOR_LANES[note["lane_idx"]]["color"]
+        except Exception:
+            return "#cccccc"
+
+    def _me_sync_reactive_style_state(self):
+        """Gray the Style dropdown out while Reactive Notes is off — with the feature
+        disabled _me_update_reactive_notes returns before reading the style, so leaving
+        the control live would let a user change a setting that does nothing."""
+        try:
+            self._me_react_cmb.configure(
+                state="readonly" if self.me_reactive_notes_var.get() else "disabled")
+        except Exception:
+            pass
+
+    def _me_on_reactive_toggle(self):
+        """Reactive Notes checkbox: keep the Style dropdown's enabled state in sync,
+        then redraw as the checkbox always did."""
+        self._me_sync_reactive_style_state()
+        self._me_redraw()
+
     def _me_update_reactive_notes(self, pos_secs):
-        """Overlay solid-white fills on notes whose center is under the playhead.
+        """Highlight notes the playhead is passing.
+
+        Two styles (owner 2026-07-28):
+          * "glow"    — the note flares to a brighter version of ITS OWN lane color and
+                        throws a soft halo, both fading over the trailing window. Reads as
+                        the note lighting up rather than being blanked out.
+          * "classic" — the original solid-white flash, unchanged.
 
         Operates on already-drawn canvas items (tagged note_<ni>) so no full
         redraw is needed.  Called from the tick, seek, and post-redraw paths.
@@ -28024,6 +28233,8 @@ demucs.separate.main()
         if not (getattr(self, 'me_reactive_notes_var', None)
                 and self.me_reactive_notes_var.get()):
             return
+        _sv = getattr(self, 'me_reactive_style_var', None)
+        style = _sv.get() if _sv else "glow"
         window = self.REACTIVE_NOTE_WINDOW_S
         # Crossing detection: catch notes the playhead just passed even if no tick
         # landed inside the post-window. Guards against tick aliasing at slower
@@ -28041,7 +28252,9 @@ demucs.separate.main()
                 playback_advanced_normally
                 and last_pos < note_t <= pos_secs
             )
-            if still_in_window or just_crossed:
+            if not (still_in_window or just_crossed):
+                continue
+            if style == "classic":
                 for item in c.find_withtag(f"note_{ni}"):
                     bbox = c.bbox(item)
                     if bbox:
@@ -28050,6 +28263,56 @@ demucs.separate.main()
                             x1, y1, x2, y2,
                             fill="#ffffff", outline="",
                             tags="reactive_note")
+                continue
+            # --- glow style -------------------------------------------------
+            # strength decays across the trailing window so the note flares on the
+            # hit and settles back, instead of popping on and off at full brightness.
+            # A just-crossed note flares at full: that was the original intent, but the
+            # condition was written `just_crossed and delta < 0.0`, and just_crossed
+            # requires note_t <= pos_secs, so delta is never negative and the branch
+            # was dead. With a tick gap wider than the window the fallback then scored
+            # it 0.0 -- an invisible "flash" drawn as opaque lane-colored boxes.
+            strength = 1.0 if just_crossed else \
+                max(0.0, min(1.0, 1.0 - (delta / window if window else 0.0)))
+            if strength <= 0.0:
+                continue        # a fully-decayed halo is just an opaque box over the grid
+            base = self._me_note_lane_color(note)
+            core = self._me_mix_hex(base, "#ffffff", 0.30 + 0.40 * strength)
+            # Blend toward the row this note actually sits on. Lane backgrounds
+            # alternate (see the lane-background loop), so blending everything toward
+            # one constant left the outermost ring a visibly darker rectangle -- a hard
+            # edge on every other lane, which is the exact artifact the halo exists to
+            # avoid. ME_REACTIVE_BG stays as the fallback for an unknown lane.
+            try:
+                row_bg = "#111122" if int(note["lane_idx"]) % 2 == 0 else "#0d0d1a"
+            except Exception:
+                row_bg = self.ME_REACTIVE_BG
+            # Only the note BODY, not every item sharing the note_<ni> tag: the
+            # low-confidence stripes carry it too, so an unfiltered scan emitted five
+            # rectangles per stripe -- ~50 canvas items per note per tick against
+            # classic's ~10, on the hot playback path.
+            for item in c.find_withtag(f"note_{ni}"):
+                if "note" not in c.gettags(item):
+                    continue
+                bbox = c.bbox(item)
+                if not bbox:
+                    continue
+                x1, y1, x2, y2 = bbox
+                # halo rings, widest/faintest first
+                for grow, mix in self.ME_GLOW_RINGS:
+                    c.create_rectangle(
+                        x1 - grow, max(self.ME_HEADER_H, y1 - grow), x2 + grow, y2 + grow,
+                        fill=self._me_mix_hex(row_bg, base, mix * strength),
+                        outline="", tags=("reactive_note", "reactive_glow"))
+                c.create_rectangle(x1, y1, x2, y2, fill=core, outline="",
+                                   tags="reactive_note")
+        # Keep every halo behind every note. Lowering against one note inside the loop
+        # only put the halos under the LAST flashing note, so they covered the bodies --
+        # and the selection/flag rings -- of every note drawn before it.
+        try:
+            c.tag_lower("reactive_glow", "note")
+        except Exception:
+            pass
 
     def _me_draw_playhead(self, pos_secs):
         """Draw or update the vertical playhead line and loop markers."""
@@ -37830,13 +38093,19 @@ demucs.separate.main()
               "    excluded so the view stays readable. These are the hits most likely to be false positives.\n"
               "    Use the 🔍 Review Issues button to jump directly to low-confidence\n"
               "    notes for fast review. Toggle off to see the chart normally.\n\n"
-              "  ⚡  Reactive notes  (flash white on playhead):\n"
-              "    Notes turn solid white as the playhead passes over their center.\n"
+              "  ⚡  Reactive notes  (light up on playhead):\n"
+              "    Notes light up as the playhead passes over their center. Two styles,\n"
+              "    picked from the Style dropdown under the checkbox:\n"
+              "      • Reactive Notes — the note flares to a brighter version of its own\n"
+              "        lane color and throws a soft glow, fading as the playhead moves\n"
+              "        past. Each drum stays identifiable by color while it lights up.\n"
+              "      • Flash Notes (Classic Style) — the original look: the note turns\n"
+              "        solid white for an instant. Higher contrast, but every lane\n"
+              "        flashes the same color.\n"
               "    Works during playback, while scrubbing (dragging the playhead), and\n"
               "    while paused — click anywhere on the timeline to see which notes\n"
-              "    are at that position. The flash window is ±40 ms around the note's\n"
-              "    exact time, so the visual feedback is tied to the note center, not\n"
-              "    the note's drawn width.\n\n"
+              "    are at that position. The window is tied to the note's exact time,\n"
+              "    not the note's drawn width.\n\n"
               "    Use this when filling in a difficult section and you want to confirm\n"
               "    at a glance that your notes land on the beat as the track plays through.")
         divider(s)
@@ -38003,7 +38272,7 @@ demucs.separate.main()
               "    stem reads cleanest. It is the important file here.\n"
               "  • Chart (required)  →  the detected .mid (.json / .rlrr also work)\n"
               "  • Full mix (optional)  →  the full mix, for playback / masking\n"
-              "    context only. The graph still analyses the drums by default.\n\n"
+              "    context only. The graph still analyzes the drums by default.\n\n"
               "Workflow:\n"
               "  1.  Load the drums stem + the chart, then Compare — flags appear\n"
               "      on the lanes and counts show in the header\n"
@@ -38012,7 +38281,7 @@ demucs.separate.main()
               "      toolbar), then Overwrite MIDI or Export MIDI\n\n"
               "Toggles (appear once a full mix is also loaded):\n"
               "  • Play source (Drums | Full Mix)  →  which audio you HEAR\n"
-              "  • Analyze (Drums | Full Mix)  →  which audio the graph ANALYSES\n"
+              "  • Analyze (Drums | Full Mix)  →  which audio the graph ANALYZES\n"
               "    (default Drums; switch to Full Mix for masking context)\n\n"
               "Shortcut: the 📊 Spectral button on the MIDI Editor, Audio → MIDI,\n"
               "Song Tester and Preview tabs sends that song's drums + chart here.\n\n"
@@ -38064,7 +38333,7 @@ demucs.separate.main()
               "Choosing the audio before you play:\n"
               "  The pre-play panel offers two audio sources per song:\n"
               "  • Backing + Drums — the linked stems (backing track plus the drum\n"
-              "    stem). Greyed out if those stems aren't on disk.\n"
+              "    stem). Grayed out if those stems aren't on disk.\n"
               "  • Full Mix — one file that already contains the whole song.\n"
               "  If a song's 'backing' is really a full mix that already has drums in\n"
               "  it, playing it alongside the drum stem would play the drums twice.\n"

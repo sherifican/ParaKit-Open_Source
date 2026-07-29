@@ -4,7 +4,7 @@
   with Clone Hero (.chart) support.
 ==============================================================================
 
-  Version in this release: 4.9.6
+  Version in this release: 4.9.7
   Runtime:                 Python 3.12 (required)
 
   This is the plain-text companion to README.md. It has the same information
@@ -13,7 +13,7 @@
 
   ParaKit is actively developed and supported. v4.x is the current, actively-
   developed line -- it is not in maintenance mode and is not waiting on
-  anything. New features land here (this release adds three new tabs), and it
+  anything. New features land here (recent releases added three new tabs), and it
   will keep getting regular updates.
 
   The v5 rebuild (PySide6/Qt) is still in development and no longer has a
