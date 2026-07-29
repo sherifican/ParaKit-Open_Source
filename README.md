@@ -202,8 +202,8 @@ YouTube ---> FLAC
 
 ---
 
-Note: Both the Practice and Preview mode updates that are currently HTMLs will be folded into ParaKit propper in a future update,
-but for now the HTML/web versions function fine as a quick and easy substitute until then.
+Note: Practice and Preview are now built-in tabs (added in v4.9.3). The standalone HTML/web
+editions are still included and still work — use whichever you prefer.
 
 Take a song, isolate the drums, turn them into a playable drum chart, refine it in a
 visual MIDI editor, practice it with falling notes, and export it, use iTunes/MusicBrainz to find Album Art & Meta Data,

@@ -25,7 +25,7 @@
   Paradiddle:  https://www.paradiddleapp.com/
 
 ------------------------------------------------------------------------------
-  NEW IN v4.7.24 -- IF YOU USE SPECTRAL, TRY HYBRID
+  IF YOU USE SPECTRAL, TRY HYBRID
 ------------------------------------------------------------------------------
 
   Hybrid is now the default detection engine on a fresh install, and it is
@@ -130,9 +130,9 @@
   GPLv3 license, so anyone can run it from source, learn from it, fix it, or
   build their own version.
 
-  Note: the Practice and Preview modes that are currently HTML/web editions
-  will be folded into ParaKit proper in a future update. For now the web
-  versions work fine as a quick and easy substitute.
+  Note: Practice and Preview are now built-in tabs (added in v4.9.3). The
+  standalone HTML/web editions are still included and still work -- use
+  whichever you prefer.
 
 ------------------------------------------------------------------------------
   WHICH PARAKIT IS THIS?
