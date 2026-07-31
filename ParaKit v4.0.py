@@ -3651,6 +3651,18 @@ def _a2m_filter_hybrid_ml_candidates(class_name, spec_times, ml_times, ml_confs,
         "rejected_spacing": 0,
         "min_conf": min_conf,
         "min_gap": min_gap,
+        # Diagnostic retention (2026-07-30). The counters above say HOW MANY
+        # candidates each gate dropped; they never said WHICH. Across the whole
+        # kick path only F12's review band let a rejected candidate's identity
+        # survive its own evaluation, and even there the measurement was dropped —
+        # so "which kick did we remove, and on what evidence" was unanswerable at
+        # every stage. These lists carry (time, confidence) for each rejection.
+        # Purely additive: `stats` is already a dict and every existing reader
+        # (_log_hybrid_gate) indexes named keys, so nothing downstream changes.
+        # Bounded by the candidate count, and dropped with `stats` at the end of
+        # the run — nothing is persisted and no behaviour is altered.
+        "rejected_low_conf_times": [],
+        "rejected_spacing_times": [],
     }
 
     for t, c in zip(ml, conf):
@@ -3672,9 +3684,16 @@ def _a2m_filter_hybrid_ml_candidates(class_name, spec_times, ml_times, ml_confs,
 
         if float(c) < min_conf:
             stats["rejected_low_conf"] += 1
+            stats["rejected_low_conf_times"].append((float(t), float(c)))
             continue
         if kept and float(t) - kept[-1] < min_gap:
             stats["rejected_spacing"] += 1
+            # The gap that caused it, too — `kept[-1]` is the last kept of ANY
+            # type, so a confirmed hit can suppress an ML-only hit that is well
+            # clear of the previous ML-only one. Without the gap you cannot tell
+            # those two situations apart after the fact.
+            stats["rejected_spacing_times"].append(
+                (float(t), float(c), float(t) - kept[-1]))
             continue
         kept.append(float(t))
         kept_conf.append(float(c))
@@ -5791,7 +5810,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.7"
+    VERSION = "4.9.8"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -17464,7 +17483,7 @@ demucs.separate.main()
                     # not advance to the mirror (the progress callback only
                     # runs while bytes flow).
                     if cancel_flag["cancelled"]:
-                        last_err = "Cancelled by user"
+                        last_err = "Canceled by user"
                         break
                     if idx > 0:
                         self.root.after(0, lambda: prog_status_var.set(
@@ -17493,7 +17512,7 @@ demucs.separate.main()
                                 os.remove(_part)
                         except OSError:
                             pass
-                        last_err = "Cancelled by user"
+                        last_err = "Canceled by user"
                         break
                     except Exception as e:
                         last_err = f"Unexpected error: {e}"
@@ -20495,7 +20514,15 @@ demucs.separate.main()
         # Reactive notes toggle — notes light up as the playhead passes over them.
         # Two styles since 4.9.7: the default glow (note flares in its OWN lane color
         # with a soft halo) and the original white flash, kept as "Classic Style".
-        self.me_reactive_notes_var = tk.BooleanVar(value=True)
+        # Both settings PERSIST (F-UX-007 pattern, mirroring the waveform-style toggle
+        # below): 4.9.7 flipped the default to glow, so anyone who prefers the white flash
+        # had to re-pick Classic on every launch. A default change is exactly when a
+        # setting has to start remembering itself.
+        self.me_reactive_notes_var = tk.BooleanVar(
+            value=bool(load_config().get("me_reactive_notes", True)))
+        self.me_reactive_notes_var.trace_add(
+            "write", lambda *_a: save_config(
+                {"me_reactive_notes": bool(self.me_reactive_notes_var.get())}))
         _react_cb = ttk.Checkbutton(snap_outer,
                         text="⚡  Reactive notes  (light up on playhead)",
                         variable=self.me_reactive_notes_var,
@@ -20517,9 +20544,22 @@ demucs.separate.main()
             ("classic", "Flash Notes (Classic Style)"),
         ]
         self._me_reactive_style_labels = [lbl for _k, lbl in self.ME_REACTIVE_STYLES]
-        self.me_reactive_style_var = tk.StringVar(value="glow")
+        # A saved style is honored only if it is still a REAL style key — an unknown or
+        # garbled config value falls back to the current default rather than leaving the
+        # dropdown showing a style the renderer does not implement.
+        _saved_style = str(load_config().get("me_reactive_style", "glow") or "glow")
+        _style_keys = [_k for _k, _l in self.ME_REACTIVE_STYLES]
+        if _saved_style not in _style_keys:
+            _saved_style = "glow"
+        self.me_reactive_style_var = tk.StringVar(value=_saved_style)
+        self.me_reactive_style_var.trace_add(
+            "write", lambda *_a: save_config(
+                {"me_reactive_style": self.me_reactive_style_var.get()}))
+        # The combobox displays LABELS while the renderer reads KEYS, so the label var has
+        # to be seeded from the saved key — not from labels[0], which would show "Reactive
+        # Notes" while the chart actually rendered the classic flash.
         self._me_reactive_style_label_var = tk.StringVar(
-            value=self._me_reactive_style_labels[0])
+            value=dict(self.ME_REACTIVE_STYLES)[_saved_style])
         _react_cmb = ttk.Combobox(_react_row, state="readonly", width=26,
                                   values=self._me_reactive_style_labels,
                                   textvariable=self._me_reactive_style_label_var)
@@ -24998,6 +25038,15 @@ demucs.separate.main()
         except Exception:
             self._me_waveform_data = None
             self._me_waveform_stereo = None
+        # A NEW audio source invalidates the draw cache. Without this the cache
+        # key's only "which audio is this" discriminator was id(amps) — and _ds()
+        # normalizes every load to exactly `target` float32 while the previous
+        # array is dropped one line earlier, so CPython hands back the same
+        # address routinely. The stale key then matched, the fast path repainted
+        # only the playhead, and the editor kept drawing the PREVIOUS song's
+        # waveform under the new stem's label. The waveform is what notes get
+        # aligned against, so that is silent wrong output with no error.
+        self._me_waveform_cache_key = None
         self._me_waveform_draw()
 
     def _me_waveform_draw(self, pos=None):
@@ -25043,7 +25092,13 @@ demucs.separate.main()
             _style_now = _style_var.get() if _style_var is not None else "bars"
         except Exception:
             _style_now = "bars"
+        # audio_dur is in the key on purpose: id(amps) alone cannot tell two
+        # different audios apart (see the invalidation note in _me_waveform_load),
+        # and me_duration is the CHART's length, not the audio's. Belt and braces —
+        # the invalidation above is the real fix, this stops a same-length address
+        # collision from mattering if some future path forgets to invalidate.
         cache_key = (secs_start, secs_end, w, h, _style_now, id(amps),
+                     round(float(audio_dur or 0.0), 6),
                      bool(getattr(self, 'me_notes', None)),
                      getattr(self, 'me_duration', 0.0))
         prev_key = getattr(self, '_me_waveform_cache_key', None)
@@ -26016,6 +26071,24 @@ demucs.separate.main()
                     top.destroy()
                     return
                 self.me_midi_var.set(saved)
+                # Re-install the retarget base across the compare load. Without
+                # this, save-and-compare reproduced the exact D1 bug the base
+                # exists to prevent: _me_diff_base was only ever written in the
+                # "apply" branch, and the load above replaces me_notes with
+                # freshly-parsed dicts, so the id()-keyed signature no longer
+                # matched and the next tier reduced FROM THE REDUCED CHART.
+                # Medium -> save+compare -> Hard gave 103 notes against a direct
+                # Hard's 172 -- sparser than Medium's own 107 -- and the status
+                # line called it a legitimate Hard chart. The compare flow is
+                # precisely how someone auditions tiers, so it was the likeliest
+                # way to hit the bug the release announced as fixed.
+                #
+                # `_base` is the ORIGINAL unreduced list (unchanged by the load);
+                # the signature is taken from what is actually on screen NOW, so
+                # any later edit still invalidates it exactly as before. The
+                # stale-base danger the gate was written for is unaffected.
+                self._me_diff_base = _base
+                self._me_diff_base_sig = _sig(self.me_notes)
                 self.me_ghost_var.set(original_path)
                 # _me_load_ghost returns None on EVERY path (success, missing
                 # file, and the except branch alike), so its return value
@@ -26053,16 +26126,15 @@ demucs.separate.main()
         # grab_set routes EVENTS here but does not move keyboard FOCUS, so a modal that
         # only grabs can sit without focus. Standard practice for a modal, and harmless.
         #
-        # ⚠ This is NOT a verified fix for the harness's A3 "Escape does not close"
-        # failure. Investigated 2026-07-29: the <Escape> binding IS present on this
-        # toplevel, and the same bind+grab_set pattern closes the window correctly in an
-        # isolated Tk probe. Under gui_harness_difficulty.py focus stays on the root
-        # window even after focus_force(), and neither focus_set() nor focus_force()
-        # here changes the harness result (22/24 either way) -- and it fails identically
-        # on the shipped 4.9.6, so it is not a 4.9.x regression. The harness's own
-        # comment documents A3 as focus-dependent and self-describes a run where it
-        # failed then passed with no code change. Treat A3 as an environment artifact
-        # until someone reproduces it by hand in the real app.
+        # Escape on this popup WORKS — confirmed by hand in the real app 2026-07-29.
+        # It was investigated as a suspected bug because gui_harness_difficulty.py
+        # reported "A3 Escape destroys the popup" as failing on every run. That was a
+        # FALSE FAILURE in the harness, not a defect here: under the harness keyboard
+        # focus never leaves the root window (root.focus_get() stays "." even after
+        # focus_force), so its synthetic key was never delivered. It failed identically
+        # on the shipped 4.9.6 and with either focus_set() or focus_force() here. The
+        # harness check has since been rewritten to test the binding + its effect
+        # deterministically instead of depending on which window the desktop focused.
         top.focus_set()
 
     def _me_repeat_pattern(self):
@@ -27911,6 +27983,10 @@ demucs.separate.main()
             # buffer that was enough to underrun SDL's callback (crunchy static).
             # Re-enabled in _me_pause and _me_stop — the only playback-halt paths
             # (the _me_tick loop-restart re-enters _me_play, which re-disables).
+            #
+            # Fresh run — re-arm the tick's one-shot draw-failure notice so a failure
+            # in an earlier session cannot suppress the warning in this one.
+            self._me_tick_draw_failed = False
             try:
                 gc.disable()
             except Exception:
@@ -28146,32 +28222,63 @@ demucs.separate.main()
         s = pos % 60
         self.me_playhead_var.set(f"▶  {m:02d}:{s:06.3f}")
 
-        # Draw playhead line and reactive note highlights
-        self._me_draw_playhead(pos)
-        self._me_waveform_draw(pos=pos)
-        self._me_update_reactive_notes(pos)
-
-        # Auto-scroll canvas to keep playhead visible
-        x = self._me_secs_to_x(pos)
-        canvas_w = self.me_canvas.winfo_width()
-        scroll_x = self.me_canvas.xview()
-        bpm = getattr(self, 'me_bpm', 120.0) or 120.0
+        # Drawing + auto-scroll are GUARDED and the re-arm below is UNCONDITIONAL.
+        #
+        # These ran bare on the Tk timer with the re-arm as the last statement, so a
+        # single exception killed the loop for the rest of the session — and the damage
+        # went far past a frozen playhead:
+        #   * audio kept playing while the view stopped moving;
+        #   * the `if not busy: self._me_stop()` check above never ran again, so
+        #     _me_playing stayed True and the mixer handle was never unloaded;
+        #   * _me_play's gc.disable() was never undone, and the stranded
+        #     _me_playing=True then made _gc_playback_enable's owner guard refuse
+        #     EVERY OTHER TAB's release too — cyclic GC off app-wide, RSS climbing,
+        #     everything progressively laggier with no visible cause.
+        # In the frozen .exe sys.stderr is an io.StringIO nobody reads and there is no
+        # report_callback_exception override, so none of that produced a single
+        # user-visible symptom pointing at the cause.
+        #
+        # A draw failure is cosmetic; stranding the app is not. So: keep the loop
+        # alive, let the end-of-song stop fire normally, and release GC on schedule.
         try:
-            raw = self._me_tempo_rows[0][1].get().strip()
-            if raw:
-                bpm = max(1.0, float(raw))
-        except Exception:
-            pass
-        pad_secs = max((4 * 60.0 / bpm) * 2, 2.0)
-        total_w = max(self._me_secs_to_x(self.me_duration + pad_secs), 800)
-        if total_w > 0:
-            view_start = scroll_x[0] * total_w
-            view_end   = scroll_x[1] * total_w
-            margin = canvas_w * 0.15
-            if x > view_end - margin:
-                new_pos = (x - canvas_w * 0.3) / total_w
-                self.me_canvas.xview_moveto(max(0, new_pos))
-                self._me_schedule_redraw()
+            self._me_draw_playhead(pos)
+            self._me_waveform_draw(pos=pos)
+            self._me_update_reactive_notes(pos)
+
+            # Auto-scroll canvas to keep playhead visible
+            x = self._me_secs_to_x(pos)
+            canvas_w = self.me_canvas.winfo_width()
+            scroll_x = self.me_canvas.xview()
+            bpm = getattr(self, 'me_bpm', 120.0) or 120.0
+            try:
+                raw = self._me_tempo_rows[0][1].get().strip()
+                if raw:
+                    bpm = max(1.0, float(raw))
+            except Exception:
+                pass
+            pad_secs = max((4 * 60.0 / bpm) * 2, 2.0)
+            total_w = max(self._me_secs_to_x(self.me_duration + pad_secs), 800)
+            if total_w > 0:
+                view_start = scroll_x[0] * total_w
+                view_end   = scroll_x[1] * total_w
+                margin = canvas_w * 0.15
+                if x > view_end - margin:
+                    new_pos = (x - canvas_w * 0.3) / total_w
+                    self.me_canvas.xview_moveto(max(0, new_pos))
+                    self._me_schedule_redraw()
+        except Exception as _tick_draw_e:
+            # Surfaced ONCE per playback run — at 40 ticks/sec a per-frame message
+            # would be its own bug, and silently swallowing it forever is exactly the
+            # habit that hid the original. The flag resets in _me_play.
+            if not getattr(self, "_me_tick_draw_failed", False):
+                self._me_tick_draw_failed = True
+                try:
+                    self.me_status_var.set(
+                        "⚠  Playhead drawing error (%s) — playback continues; "
+                        "reload the chart if the view looks wrong"
+                        % type(_tick_draw_e).__name__)
+                except Exception:
+                    pass
 
         self._me_tick_id = self.root.after(25, self._me_tick)
 
@@ -34170,7 +34277,7 @@ demucs.separate.main()
                 log(f"  yt-dlp update skipped: {e}")
 
         if self._yt_cancel_event.is_set():
-            log("Cancelled.")
+            log("Canceled.")
             done()
             return
 
@@ -34234,8 +34341,8 @@ demucs.separate.main()
             for line in proc.stdout:
                 if self._yt_cancel_event.is_set():
                     proc.terminate()
-                    log("\nCancelled by user.")
-                    prog("Cancelled.")
+                    log("\nCanceled by user.")
+                    prog("Canceled.")
                     done()
                     return
                 line = line.rstrip()
@@ -39108,7 +39215,12 @@ demucs.separate.main()
                     messagebox.showinfo("No MIDI File",
                         "Open a MIDI file in the MIDI Editor first.", parent=self.root)
                     return
-                WINDOW = 20  # ms — same-lane duplicates
+                # SECONDS, not ms. note["time"] comes from ticks_to_secs, so the
+                # old `WINDOW = 20  # ms` was a 20-SECOND window — 160 sixteenths at
+                # 120bpm — and flagged every note that had any same-lane sibling.
+                # It also removed the only bound on the inner loop, making this
+                # quadratic over the whole chart.
+                WINDOW = 0.020  # seconds — same-lane duplicates
                 sorted_notes = sorted(self.me_notes, key=lambda n: n["time"])
                 flagged_times = set()
                 for i, n in enumerate(sorted_notes):
@@ -39137,7 +39249,12 @@ demucs.separate.main()
                     messagebox.showinfo("No MIDI File",
                         "Open a MIDI file in the MIDI Editor first.", parent=self.root)
                     return
-                WINDOW  = 500  # ms
+                # SECONDS, not ms — same unit error as the duplicate scan above.
+                # `500 # ms` against seconds meant a 500-SECOND window, so the
+                # break never fired on any real song and count >= DENSITY was true
+                # at essentially every index: the whole chart got flagged, twice
+                # quadratically.
+                WINDOW  = 0.500  # seconds
                 DENSITY = 8
                 sorted_notes = sorted(self.me_notes, key=lambda n: n["time"])
                 flagged_times = set()
@@ -43358,6 +43475,14 @@ demucs.separate.main()
         except Exception:
             pass
 
+        # NOT guarded like _me_tick, deliberately: this tick is UNREACHABLE. Its only
+        # entry points live in `_build_visualizer_tab` (the pre-v4.9.0 combined
+        # Preview/Practice builder), which is never called — `:6200` mounts
+        # `_build_preview_tab` instead. A breaker pass flagged this as a latent twin of
+        # the _me_tick trap; it is actually dead code, so guarding it would add churn to
+        # a path that cannot run. If this builder is ever remounted, apply the _me_tick
+        # guard here first — the gc.disable() + _mixer_music_owner claim in _viz_play
+        # means a dead tick here would strand GC app-wide exactly as it did there.
         self._viz_flash_phase = (self._viz_flash_phase + 0.15) % (2 * 3.14159)
         self._viz_draw_frame(pos)
         self._viz_draw_practice_frame(pos, update_misses=True)

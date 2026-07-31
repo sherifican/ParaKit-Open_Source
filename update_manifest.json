@@ -1,10 +1,10 @@
 {
-  "version": "4.9.7",
+  "version": "4.9.8",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "9ad24d90e24524f1ea9cbb4a88a38d6d2dcafbd1d28098ced9821a95c1070ffa"
+      "sha256": "ee1d76d9177215d2da8ac7d6b65b8040509c9f3ba18982e3bd24ee159ad9a232"
     },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
@@ -52,11 +52,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "3cbe859abaa75e4b10db94f4f5a611142cc95343cdd1c65b7749275f33d29fb2"
+      "sha256": "5c4a4b66ddb126fc64227a87aca9a1169a7cb9a1d8244819470621d6128c8ff3"
     },
     {
       "path": "README.txt",
-      "sha256": "c637c04b600b6ae6583588c2470b26d7f68c181305831a7a72857dd3b661c484"
+      "sha256": "720cea1faf71b43b25963c76e1aaf6d1d17fe50bb43da3318f4b05a38ec9abc6"
     },
     {
       "path": "Run ParaKit v4.0.bat",
@@ -148,7 +148,7 @@
     },
     {
       "path": "parakit_cleanup/passes.py",
-      "sha256": "8cc0b7b900f40996c3edd40efcb541ce01aca75a7b609e1c413bd8b0d1503fd9"
+      "sha256": "1ccc1827d40cbd1be40b917586a71302b6f9bcd3f602e3a74fa1d05fe50e9ae9"
     },
     {
       "path": "parakit_drum_model.onnx",
@@ -192,7 +192,7 @@
     },
     {
       "path": "parakit_preview_tab.py",
-      "sha256": "5de271d3b86be5ef4536d6af95b5770da68bd4ec7631e8b37e3c0c2131592c13"
+      "sha256": "211168411f4e318597a2adb50c5320bf2a0622e68473e1b8a13d835e1514fe9d"
     },
     {
       "path": "parakit_separators/__init__.py",
@@ -216,7 +216,7 @@
     },
     {
       "path": "parakit_spectral_tab.py",
-      "sha256": "64224ae5491f95486328ff99cb6f29691249900f6e72599ed9aa842f4bc561f3"
+      "sha256": "308ef4dd9a9791b4b81da5204da664e38deadb0b7bf6799fe59c0cd0342b94eb"
     },
     {
       "path": "parakit_synth_voices.py",

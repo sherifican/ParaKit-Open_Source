@@ -201,16 +201,32 @@ def phantom_proba(F, model, phantom_label=KICK_PHANTOM_LABEL):
 
 
 def filter_kicks(times, F, model, phantom_label=KICK_PHANTOM_LABEL,
-                 gate=KICK_RECOMMENDED_GATE):
+                 gate=KICK_RECOMMENDED_GATE, scores_out=None):
     """Core removal step — verbatim from kick_postpass.filter_kicks. ``times`` =
     detected kick onset seconds, ``F`` = features in the SAME order. Returns the
     KEPT onsets (sorted) — a kick is DROPPED iff P(phantom) >= gate. gate=None =>
-    keep all. NEVER creates onsets."""
+    keep all. NEVER creates onsets.
+
+    ``scores_out`` (2026-07-30, diagnostic retention): pass a list and it is
+    filled with one ``(time, p_phantom, dropped)`` tuple per input onset, in
+    input order. P(phantom) is the single most diagnostic number in the kick
+    path — it was computed here on every run and discarded on the next line, so
+    "which kick did we remove, and how sure were we" had no answer anywhere.
+    Default None keeps the old behaviour EXACTLY: same return, same type, no
+    extra work, nothing allocated. Opt-in only, and the caller owns the list."""
     times = np.asarray(times, dtype=float)
     if times.size == 0 or gate is None:
+        if scores_out is not None:
+            # gate=None keeps everything; report it as such rather than leaving
+            # the caller's list empty and ambiguous.
+            scores_out.extend((float(t), None, False) for t in times)
         return np.sort(times)
     pph = phantom_proba(F, model, phantom_label)
     keep = pph < gate
+    if scores_out is not None:
+        scores_out.extend(
+            (float(t), float(p), bool(not k))
+            for t, p, k in zip(times, pph, keep))
     return np.sort(times[keep])
 
 
@@ -249,7 +265,8 @@ def remove_phantoms(y, sr, est_by_class, model=None, phantom_label=None,
 
 
 def bleed_kick_pass(stems, sr, est_by_class,
-                    remove_gate=BLEED_REMOVE_GATE, review_gate=BLEED_REVIEW_GATE):
+                    remove_gate=BLEED_REMOVE_GATE, review_gate=BLEED_REVIEW_GATE,
+                    ratios_out=None):
     """Two-tier cross-stem BLEED kick pass (F12) — orthogonal to remove_phantoms.
 
     For each kick, ``ratio = bleed.bleed_ratios`` (non-drum vs drums energy at
@@ -261,7 +278,16 @@ def bleed_kick_pass(stems, sr, est_by_class,
         them for user review.
     ``remove_gate=None`` disables removal; ``review_gate=None`` disables flagging.
     A missing/None drums stem or empty stems => passthrough (est unchanged, no
-    flags). ``stems`` = dict {drums,vocals,bass,other -> mono np.array at ``sr``}."""
+    flags). ``stems`` = dict {drums,vocals,bass,other -> mono np.array at ``sr``}.
+
+    ``ratios_out`` (2026-07-30, diagnostic retention): pass a list and it is
+    filled with one ``(time, ratio, verdict)`` tuple per kick, in ascending time
+    order, where verdict is "removed" / "review" / "kept". The ratio is what
+    decided each kick's fate and it was discarded on the next line — so a flagged
+    kick reached the user with no severity attached, and a REMOVED one left no
+    trace at all. Callers could not sort a review queue, tune a gate against real
+    data, or answer "how bleed-y was it". Default None keeps the old behaviour
+    EXACTLY (same 2-tuple return, no extra work). Opt-in; caller owns the list."""
     est = {k: (list(v) if not isinstance(v, list) else list(v)) for k, v in est_by_class.items()}
     kicks = np.sort(np.asarray(est.get("kick", []), dtype=float))
     review_flags = []
@@ -274,6 +300,14 @@ def bleed_kick_pass(stems, sr, est_by_class,
             hi = remove_gate if remove_gate is not None else np.inf
             flag_mask = (ratios >= lo) & (ratios < hi)
             review_flags = sorted(float(t) for t in kicks[flag_mask])
+        if ratios_out is not None:
+            _rev = (ratios >= review_gate) if review_gate is not None \
+                else np.zeros(len(kicks), bool)
+            _rev = _rev & ~remove_mask
+            ratios_out.extend(
+                (float(t), float(r),
+                 "removed" if rm else ("review" if rv else "kept"))
+                for t, r, rm, rv in zip(kicks, ratios, remove_mask, _rev))
         kicks = np.sort(kept)
     est["kick"] = kicks
     return est, review_flags

@@ -3042,7 +3042,7 @@ class PreviewTab(ttk.Frame):
         self.canvas.set_countin_text("")
         self._rec_state = "idle"
         self._set_record_look("● Record", rec=False)
-        self._status("Count-in cancelled.")
+        self._status("Count-in canceled.")
 
     def _on_countin_tick(self):
         if self._rec_state != "countin":

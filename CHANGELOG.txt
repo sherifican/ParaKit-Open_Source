@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.7  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.8  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,60 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.8   --   2026-07-31
+------------------------------------------------------------------------------
+  Four bugs in the MIDI Editor and the Chart Troubleshooter, and a setting
+  that now remembers itself. All four bugs were present in every 4.9.x build.
+
+  DIFFICULTY TIERS NO LONGER STACK ON TOP OF EACH OTHER
+  Reducing a chart to Medium, saving it, comparing, and then reducing to Hard
+  produced a Hard chart SPARSER than the Medium it came from -- 103 notes
+  where reducing straight to Hard gives 172, against Medium's own 107. The
+  status line reported it as a normal Hard chart.
+
+  The cause: compare mode finishes by loading the reduced chart as the working
+  chart, and that load cleared the record of what the ORIGINAL chart was. The
+  next reduction then measured against the already-reduced chart instead. The
+  original is now restored as the baseline after a compare, so every tier is
+  cut from the full chart no matter how many you audition first.
+
+  This is the same stacking problem the v4.9.6 fix addressed, reached through
+  a different route -- the save-and-compare flow, which is the normal way to
+  try tiers out.
+
+  THE WAVEFORM COULD BELONG TO THE PREVIOUS SONG
+  Loading a new stem into the MIDI Editor could leave the OLD song's waveform
+  drawn underneath the new song's name. Notes are aligned against that
+  waveform, so the picture used for lining up a chart could quietly be the
+  wrong song's. The cached waveform is now cleared whenever audio is loaded.
+
+  CHART TROUBLESHOOTER: DUPLICATE AND BREAK CHECKS WERE MEASURING IN SECONDS
+  The duplicate-note check was meant to look within 20 milliseconds and the
+  long-break check within 500 milliseconds. Both were reading those numbers as
+  SECONDS. At 120 BPM a 20-second window spans about 160 sixteenth notes, so
+  practically every note that shared a lane with any neighbour was reported as
+  a duplicate, and the 500-second break check never fired at all. Long charts
+  also scanned much more slowly than they should have. Both windows now use
+  the units they were written for.
+
+  ONE DRAWING ERROR NO LONGER ENDS PLAYBACK FOR THE SESSION
+  If anything went wrong while drawing a frame during MIDI Editor playback,
+  the view stopped updating for the rest of the session while the audio kept
+  playing, the editor never noticed the song had ended, and a playback
+  optimisation was left switched on that no other tab could clear. Drawing
+  errors are now contained: playback keeps running, the view recovers on the
+  next frame, and a one-time notice appears in the status line.
+
+  REACTIVE NOTES REMEMBERS YOUR CHOICE
+  The Reactive Notes checkbox and its Style dropdown now persist between
+  launches. v4.9.7 made the new glow the default, so anyone who preferred
+  "Flash Notes (Classic Style)" had to pick it again on every start.
+
+  ALSO
+  "Cancelled" is now spelled "canceled" in eight status and log messages, for
+  consistency with the rest of the app.
 
 ------------------------------------------------------------------------------
   v4.9.7   --   2026-07-29

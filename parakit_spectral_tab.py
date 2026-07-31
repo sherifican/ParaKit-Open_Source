@@ -4125,7 +4125,7 @@ class SpectralTab(ttk.Frame):
                 "Replace\n%s\nwith the current %d notes?"
                 % (target, len(self._model.notes)),
                 parent=self):
-            self._status("Overwrite cancelled.")
+            self._status("Overwrite canceled.")
             return
         self._write_midi(target)
 
@@ -4146,7 +4146,7 @@ class SpectralTab(ttk.Frame):
             filetypes=(("MIDI files", "*.mid"), ("All files", "*.*")),
             initialfile="chart.mid")
         if not path:
-            self._status("Export cancelled.")
+            self._status("Export canceled.")
             return
         self._write_midi(path)
 
