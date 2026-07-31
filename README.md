@@ -141,6 +141,21 @@ in Firefox before I had fixed the MIDI config, see below for details, although C
 
 *Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
 
+**v4.9.8**<br>2026-07-31
+
+MIDI Editor — sharper chart, note selection, reactive notes and new toolbar buttons
+
+<img src="screenshots/app-06-midi-editor.png?v=20260731" width="900" alt="MIDI Editor — reactive notes, seconds on the ruler, Difficulty and MIDI Input buttons">
+
++ **Reactive Notes, rebuilt.** Notes used to blank solid white as the playhead crossed them, so you lost track of which drum it was at the moment it mattered. A note now flares to a brighter version of its **own lane color** and throws a soft halo that fades out behind it. The original flash is still there as **Flash Notes (Classic Style)** in the new Style dropdown — and as of this release both the toggle and the style are remembered between launches.
++ **Sharper chart sprites.** Notes are drawn as a single clean high-resolution ring instead of the old softer shape, flagged notes get thinner and tidier outlines, and the toolbar buttons wear the v5 outline style. The dot at the top of the green playhead is now an enlarged grab-handle, so it is obvious where to click to drag it.
++ **Seconds on the ruler as you zoom in.** The ruler labels time in seconds ("12s") alongside the bar numbers, in a slightly different color so the two kinds of label never blur together — much easier to line a chart up against a specific moment in the audio.
++ **Note selection.** **Shift+drag** rubber-bands a group, **Ctrl+click** toggles one note in or out, and **Delete** removes the selection. Select a run of hi-hats and right-click one of them to set **Closed / Open / Pedal** across all of them at once.
++ **Two new toolbar buttons.** **Difficulty** reduces the open chart in place, saves a reduced copy separately, or saves-and-compares with the original behind it as a ghost overlay — and re-targets from the original each time, so auditioning tiers never thins an already-thinned chart. **MIDI Input (BETA)** records drum hits straight into the editor from a USB kit.
++ **It opens ready to work.** Picking a MIDI now loads it immediately — by Browse, drag-and-drop or the recents menu — and the lanes, beat grid and ruler are drawn the moment you open the tab instead of after a click on the empty canvas. With a chart already open nothing loads until **Load MIDI** or **Reload**, so unsaved edits are never swapped out from underneath you.
+
+---
+
 **v4.7.8.9**<br>2026-07-13
 
 Audio → MIDI — tab polish
@@ -347,7 +362,7 @@ with hands-on testing on real songs, **with sources listed**, and the experiment
 <img src="screenshots/app-05-audio-to-midi.png?v=20260713" width="900" alt="Audio to MIDI">
 
 ### 6 · MIDI Editor
-<img src="screenshots/app-06-midi-editor.png?v=20260620" width="900" alt="MIDI Editor">
+<img src="screenshots/app-06-midi-editor.png?v=20260731" width="900" alt="MIDI Editor">
 
 ### 7 · Spectral Comparison
 Did the detector chart it right? The chart is overlaid on the audio's energy and the disagreements are
