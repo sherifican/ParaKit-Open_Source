@@ -297,12 +297,14 @@
     4.  Stem Splitter
     5.  Audio -> MIDI
     6.  MIDI Editor
-    7.  Sheet Music -> MIDI
-    8.  YouTube -> FLAC
-    9.  Asset Manager
-    10. Song Tester
-    11. Preview / Practice Track
-    12. Quick Start & FAQ
+    7.  Spectral Comparison
+    8.  Sheet Music -> MIDI
+    9.  YouTube -> FLAC
+    10. Asset Manager
+    11. Song Tester
+    12. Preview
+    13. Practice
+    14. Quick Start & FAQ
 
 ------------------------------------------------------------------------------
   REQUIREMENTS

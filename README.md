@@ -21,7 +21,9 @@
 
 ## ⬇️ Download & run ParaKit (copy-paste setup)
 
-New to GitHub? Press the green "Code" button for the clone command — the easiest way to get ParaKit, with every file placed correctly, is a few copy-paste commands in your terminal (**Command Prompt**, **PowerShell**, or **Terminal**). You only need two free things installed first: **[Git](https://git-scm.com/downloads)** and **[Python 3.12](https://www.python.org/downloads/)** (3.12 is required).
+New to GitHub? The easiest way to get ParaKit, with every file placed correctly, is a few copy-paste commands in your terminal (**Command Prompt**, **PowerShell**, or **Terminal**). You need two free things installed first: **[Git](https://git-scm.com/downloads)** and **[Python 3.12](https://www.python.org/downloads/)** (3.12 is required).
+
+> **Don't have Git, or don't want it?** You don't need it. Click the green **`<> Code`** button near the top of this page → **Download ZIP**, unzip it wherever you like, and skip straight to **step 3**. ParaKit itself never uses Git — the only difference is that you'll update with the in-app **Download update now** button instead of `git pull`, which works exactly the same either way. **Python 3.12 is the only real requirement.**
 
 **1 — Download everything.** Open **Command Prompt** or **PowerShell** and run the command below. It creates a `ParaKit-Open_Source` folder **inside whatever folder your terminal is currently in** — a fresh window opens in your user folder, so by default you'll get it at **`C:\Users\YourName\ParaKit-Open_Source`** (an easy place to find it again):
 
@@ -58,8 +60,6 @@ py -3.12 "ParaKit v4.0.py"
 
 That's it. To **update** to the latest version later, just run `git pull` inside the folder (or use the in-app **Download update now** button).
 
-> **Don't have Git?** Either install it from the link above (recommended — then updating is one `git pull`), or click the green **`<> Code`** button near the top of this page → **Download ZIP**, unzip it, and start from step 3.
->
 > **A few features need one more download:** the **Stem Splitter**, **YouTube → FLAC**, and some tools use a separate ~174 MB **Requirements bundle** (FFmpeg / yt-dlp / ADB) plus an optional AI stem-isolation model — see the full **[Requirements](#requirements)** section further down. The core charting workflow (Audio → MIDI, MIDI Editor, Song Creator, Song Tester) runs without them.
 
 ---
@@ -373,11 +373,13 @@ or exported. Detection itself is untouched — the tab only reads audio and char
 ### 11 · Song Tester
 <img src="screenshots/app-10-song-tester.png" width="900" alt="Song Tester">
 
-### 12 · Preview / Practice Track
-<img src="screenshots/app-11a-preview.png?v=20260725" width="900" alt="Preview subtab"><br><br>
-<img src="screenshots/app-11b-practice.png?v=20260725" width="900" alt="Practice subtab">
+### 12 · Preview
+<img src="screenshots/app-11a-preview.png?v=20260725" width="900" alt="Preview tab">
 
-### 13 · Quick Start & FAQ
+### 13 · Practice
+<img src="screenshots/app-11b-practice.png?v=20260725" width="900" alt="Practice tab">
+
+### 14 · Quick Start & FAQ
 <img src="screenshots/app-12-quick-start-faq.png" width="900" alt="Quick Start & FAQ">
 
 </details>
