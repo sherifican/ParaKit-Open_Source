@@ -14,7 +14,10 @@ a path as argv[1]):
                                  separator lines)
   5. "version"                  in update_manifest.json
 
-Exit 0 = all agree (prints the version). Exit 1 = mismatch (prints a table).
+  6. no ParaKit memory store has uncommitted work (discovered, not hardcoded;
+     skipped cleanly when no store exists)
+
+Exit 0 = all checks pass. Exit 1 = a mismatch or a dirty memory store.
 Run it after gen_update_manifest.py, before `git push`.
 """
 import json
@@ -75,6 +78,70 @@ def collect(root):
     return out
 
 
+
+def check_memory_stores():
+    """Warn-then-FAIL if a ParaKit memory store has uncommitted work.
+
+    Added 2026-07-31 after the auto-memory store was found **35 files behind** — real
+    rules, all valid, all already referenced in MEMORY.md, none ever committed. They
+    were live and load-bearing and one accidental delete from being gone with no
+    history. Nothing was watching that store because it rides no repo's normal flow:
+    repo `memory/` gets committed with ParaKit, the auto store only when someone
+    remembers. Release is the natural moment to flush it — clearing this is one commit.
+
+    DISCOVERED, never hardcoded: globs `~/.claude/projects/*ParaKit*/memory` plus the
+    dev repo's own `memory/`. No username is embedded, so this file stays safe in the
+    public repo, and a machine with no such store SKIPS cleanly rather than failing —
+    which is why it can live in a tool other people can run.
+    """
+    import subprocess
+    from pathlib import Path
+
+    # NOTE: deliberately NOT wrapped in a broad try/except. A check that swallows its
+    # own breakage and returns 0 is a green light wired to nothing — the exact failure
+    # INV49 shipped with earlier today. If this crashes, the gate should crash.
+    stores = sorted(Path.home().glob("*.claude/projects/*ParaKit*/memory"))
+    dev_mem = Path(__file__).resolve().parent.parent / "memory"
+    if dev_mem.is_dir():
+        stores.append(dev_mem)
+
+    checked, dirty = 0, []
+    for st in stores:
+        try:
+            top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=st,
+                                 capture_output=True, text=True)
+            if top.returncode:
+                continue                      # not version-controlled; not our business
+            # `-- .` scopes the status to THIS directory. Without it, a store that is a
+            # subdirectory of a bigger repo (the dev tree's own memory/) reports the
+            # WHOLE repo's status — which read as "726 uncommitted files" on the first
+            # run and would have failed every release for reasons nothing to do with
+            # memory. The question is "is anything under this store uncommitted", not
+            # "is the repo containing it clean".
+            r = subprocess.run(["git", "status", "--porcelain", "--", "."], cwd=st,
+                               capture_output=True, text=True)
+            if r.returncode:
+                continue
+            checked += 1
+            n = len([l for l in r.stdout.splitlines() if l.strip()])
+            if n:
+                dirty.append((st, n))
+        except OSError:
+            continue
+
+    if not checked:
+        print("  - memory stores            (none found — skipped)")
+        return 0
+    if dirty:
+        for st, n in dirty:
+            print(f"  ! memory store DIRTY       {n} uncommitted file(s)  {st}")
+        print("GATE FAIL — commit the memory store(s) above before pushing. "
+              "An unversioned rule is one delete from gone.")
+        return 1
+    print(f"  - memory stores            {checked} checked, all clean")
+    return 0
+
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROOT
     surfaces = collect(root)
@@ -85,11 +152,17 @@ def main():
     for k, v in surfaces.items():
         mark = " " if ok or v == max(versions, key=list(surfaces.values()).count) else "!"
         print(f"  {mark} {k:<{width}}  {v}")
-    if ok:
-        print(f"GATE PASS — all surfaces agree on {versions.pop()}")
-        return 0
-    print("GATE FAIL — surfaces disagree; fix before pushing.")
-    return 1
+    if not ok:
+        print("GATE FAIL — surfaces disagree; fix before pushing.")
+        return 1
+    print(f"  version agreement          all surfaces on {versions.pop()}")
+    # Version agreement is necessary, not sufficient. Run every remaining check and
+    # report them all rather than short-circuiting on the first pass.
+    rc = check_memory_stores()
+    if rc:
+        return rc
+    print("GATE PASS")
+    return 0
 
 
 if __name__ == "__main__":
