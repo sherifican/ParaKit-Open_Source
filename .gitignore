@@ -24,3 +24,63 @@ drums.wav
 no_drums.wav
 drums_composite.wav
 *.tmp
+
+# ── DEVELOPMENT-ONLY — never ships to the public repo ────────────────────────
+# These are absent here because nobody ever added them, not because anything
+# stopped them. A `git add -A` during a release would sweep in the breaker
+# suite, the internal changelog and the brain files — which between them name
+# every fleet agent, the second box, and absolute paths on the dev machine.
+# Added 2026-08-03, before the 4.9.10 push, precisely because the guard should
+# exist BEFORE someone reaches for a shortcut under release pressure.
+
+# Agent / tooling configuration (dev box only)
+.claude/
+.codex/
+.kimi/
+.agents/
+.superpowers/
+.kilo/
+.hermes_skills_staging/
+.skill_builder_staging/
+
+# The invariant + mutation suite (dev-only; not part of what users run)
+_breaker/
+
+# Internal brain files, memory store and coordination state
+memory/
+CLAUDE.md
+PARAKIT_CODEX_README.md
+AGENT_ONBOARDING.md
+CHANGES_PENDING.md
+VERSION_HISTORY.md
+FOLLOWUPS_PARKED.md
+Brain.md
+MIDI_EDITOR_ATLAS.md
+PRACTICE_V2_CHANGELOG.md
+.parakit_driver_lock*
+.parakit_halt_monitor_state.json
+
+# Working documents — briefs, dispatches, audits, hand-offs, correspondence
+ACTION_PLAN_*.md
+ANSWER_*.md
+AUDIT_*.md
+BRAINSTORM_*.md
+BRIEF_*.md
+CLARIFICATION_*.md
+CLOSED_*.md
+CONSENSUS_*.md
+CORRECTION_*.md
+DISPATCH_*.md
+DRAFT_*.md
+FOR_MOCHA_*.md
+HANDOFF_*.md
+PASSBACK_*.md
+PLAN_*.md
+REPLY_*.md
+REPORT_*.md
+REQUEST_*.md
+SESSION_*.md
+SHIP_*.md
+
+# Dev-side source tree that ships here under a different name (extractor/)
+Extractor Mini App/
