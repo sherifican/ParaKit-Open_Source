@@ -1,0 +1,412 @@
+<title>ParaKit System Chart</title>
+
+<style>
+  :root {
+    --bg:#f7f6f4; --panel:#ffffff; --sink:#eeedea;
+    --line:#dcdbd7; --line-soft:#e8e7e3;
+    --ink:#14171a; --mid:#4b5258; --soft:#727a81;
+
+    /* ParaKit's own drum-lane palette, taken from the app's note icons.
+       Used as the organizing color system, not as decoration. */
+    --kick:#d1367a; --snare:#c62431; --hat:#0d7f8c; --ride:#9a7400;
+    --tom1:#2f6ad1; --tom2:#17794a; --tom3:#7a3fd1; --crash:#b35c00;
+
+    --mono:"Cascadia Mono","Cascadia Code",Consolas,ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+    --sp: clamp(1rem, 3.5vw, 2.25rem);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0b0e11; --panel:#131820; --sink:#080a0d;
+      --line:#242c36; --line-soft:#1a2029;
+      --ink:#e9edf1; --mid:#a6b0ba; --soft:#7a848e;
+      --kick:#ff5fa2; --snare:#ff5d68; --hat:#35d6e8; --ride:#ffd93d;
+      --tom1:#5d97ff; --tom2:#3ddc84; --tom3:#a970ff; --crash:#ff9f2e;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b0e11; --panel:#131820; --sink:#080a0d;
+    --line:#242c36; --line-soft:#1a2029;
+    --ink:#e9edf1; --mid:#a6b0ba; --soft:#7a848e;
+    --kick:#ff5fa2; --snare:#ff5d68; --hat:#35d6e8; --ride:#ffd93d;
+    --tom1:#5d97ff; --tom2:#3ddc84; --tom3:#a970ff; --crash:#ff9f2e;
+  }
+  :root[data-theme="light"]{
+    --bg:#f7f6f4; --panel:#ffffff; --sink:#eeedea;
+    --line:#dcdbd7; --line-soft:#e8e7e3;
+    --ink:#14171a; --mid:#4b5258; --soft:#727a81;
+    --kick:#d1367a; --snare:#c62431; --hat:#0d7f8c; --ride:#9a7400;
+    --tom1:#2f6ad1; --tom2:#17794a; --tom3:#7a3fd1; --crash:#b35c00;
+  }
+
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:15.5px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:70rem;margin:0 auto;padding:var(--sp) var(--sp) 4rem}
+
+  .mast{margin-bottom:2.25rem}
+  .kick-line{height:4px;background:linear-gradient(90deg,var(--kick),var(--snare),var(--crash),var(--ride),var(--tom2),var(--hat),var(--tom1),var(--tom3));margin-bottom:1.5rem}
+  h1{font-size:clamp(2.1rem,6.5vw,3.6rem);font-weight:800;letter-spacing:-.04em;line-height:1;text-wrap:balance;margin-bottom:.6rem}
+  .dek{color:var(--mid);max-width:46rem;font-size:1.02rem}
+  .stamp{display:flex;flex-wrap:wrap;gap:.4rem 1.3rem;margin-top:1.2rem;font-family:var(--mono);font-size:.75rem;color:var(--soft)}
+  .stamp b{color:var(--ink);font-weight:600}
+
+  /* contents */
+  .toc{display:grid;grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin-bottom:2.75rem}
+  .toc a{background:var(--panel);padding:.55rem .8rem;text-decoration:none;color:var(--ink);font-size:.83rem;display:flex;gap:.55rem;align-items:baseline}
+  .toc a:hover{background:var(--sink)}
+  .toc .i{font-family:var(--mono);font-size:.68rem;color:var(--soft);flex:none}
+
+  .panel{margin-bottom:2.75rem;scroll-margin-top:1rem}
+  .ph{display:flex;gap:.8rem;align-items:baseline;margin-bottom:1rem;padding-bottom:.5rem;border-bottom:1px solid var(--line)}
+  .pn{font-family:var(--mono);font-size:.75rem;font-weight:700;color:var(--soft);flex:none;padding-top:.15rem}
+  h2{font-size:clamp(1.15rem,2.8vw,1.45rem);font-weight:700;letter-spacing:-.02em;flex:1;text-wrap:balance}
+  .psub{font-size:.87rem;color:var(--soft);margin-bottom:1rem;max-width:52rem}
+
+  .pipe{display:grid;grid-template-columns:repeat(auto-fit,minmax(10.5rem,1fr));gap:.6rem;margin-bottom:.9rem}
+  .stg{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--c);padding:.8rem .9rem}
+  .stg .sn{font-family:var(--mono);font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:var(--c);font-weight:700}
+  .stg .st{font-weight:700;font-size:1rem;margin:.25rem 0 .3rem;letter-spacing:-.01em}
+  .stg .sd{font-size:.79rem;color:var(--mid);line-height:1.45}
+
+  .tabs{display:grid;grid-template-columns:repeat(auto-fill,minmax(13.5rem,1fr));gap:.5rem;margin-bottom:.9rem}
+  .tb{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--c);padding:.6rem .8rem}
+  .tb .tn{font-weight:650;font-size:.9rem;display:flex;gap:.45rem;align-items:baseline}
+  .tb .ti{font-family:var(--mono);font-size:.68rem;color:var(--soft);font-variant-numeric:tabular-nums}
+  .tb .td{font-size:.76rem;color:var(--soft);margin-top:.2rem;line-height:1.4}
+
+  .leg{display:flex;flex-wrap:wrap;gap:.4rem .9rem;font-family:var(--mono);font-size:.68rem;color:var(--soft);margin-top:.7rem}
+  .leg span{display:inline-flex;align-items:center;gap:.32rem}
+  .sw{width:.62rem;height:.62rem;flex:none;border-radius:1px}
+
+  .struct{display:grid;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr));gap:1px;background:var(--line);border:1px solid var(--line)}
+  .struct>div{background:var(--panel);padding:.9rem 1rem}
+  .struct .v{font-family:var(--mono);font-size:1.55rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;color:var(--c)}
+  .struct .k{font-family:var(--mono);font-size:.65rem;letter-spacing:.09em;text-transform:uppercase;color:var(--soft);margin-top:.45rem}
+  .struct .n{font-size:.78rem;color:var(--mid);margin-top:.3rem;line-height:1.4}
+
+  .wf{display:grid;grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr));gap:.5rem}
+  .wfs{background:var(--panel);border:1px solid var(--line);padding:.7rem .8rem}
+  .wfs .num{font-family:var(--mono);font-size:1.3rem;font-weight:700;color:var(--c);line-height:1}
+  .wfs .t{font-weight:650;font-size:.87rem;margin:.3rem 0 .2rem}
+  .wfs .d{font-size:.76rem;color:var(--mid);line-height:1.42}
+
+  .scroll{overflow-x:auto;border:1px solid var(--line);margin-bottom:.9rem}
+  table{border-collapse:collapse;width:100%;font-size:.85rem;min-width:33rem}
+  th{text-align:left;font-family:var(--mono);font-size:.65rem;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);font-weight:600;padding:.62rem .8rem;background:var(--sink);border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:.58rem .8rem;border-bottom:1px solid var(--line-soft);vertical-align:top;background:var(--panel)}
+  tr:last-child td{border-bottom:0}
+  td.mono{font-family:var(--mono);font-size:.79rem;white-space:nowrap}
+  code{font-family:var(--mono);font-size:.87em;background:var(--sink);padding:.08em .32em;border:1px solid var(--line-soft);border-radius:2px}
+  pre{font-family:var(--mono);font-size:.78rem;background:var(--sink);border:1px solid var(--line-soft);padding:.7rem .85rem;overflow-x:auto;margin:.5rem 0 .9rem;line-height:1.5}
+  pre code{background:none;border:0;padding:0}
+
+  .pill{font-family:var(--mono);font-size:.62rem;font-weight:700;letter-spacing:.05em;padding:.1rem .38rem;border:1px solid var(--c);color:var(--c);border-radius:2px;white-space:nowrap}
+
+  .tx{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:.5rem;margin-bottom:.6rem}
+  .txs{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--c);padding:.7rem .85rem}
+  .txs .n{font-family:var(--mono);font-size:.63rem;letter-spacing:.1em;text-transform:uppercase;color:var(--c);font-weight:700}
+  .txs .t{font-family:var(--mono);font-weight:700;font-size:.86rem;margin:.28rem 0 .25rem;letter-spacing:-.01em}
+  .txs .d{font-size:.76rem;color:var(--mid);line-height:1.42}
+
+  .tier{display:flex;gap:.7rem;align-items:flex-start;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--c);padding:.75rem .9rem;margin-bottom:.45rem}
+  .tier .lv{font-family:var(--mono);font-size:.63rem;letter-spacing:.09em;text-transform:uppercase;font-weight:700;color:var(--c);flex:none;width:6.8rem;padding-top:.15rem}
+  .tier .bd{flex:1}
+  .tier .bt{font-weight:650;font-size:.88rem;margin-bottom:.18rem}
+  .tier .bx{font-size:.79rem;color:var(--mid);line-height:1.45}
+
+  .note{background:var(--sink);border:1px solid var(--line);padding:.8rem 1rem;font-size:.83rem;color:var(--mid);margin-top:.9rem}
+  .note b{color:var(--ink)}
+  .note:first-child{margin-top:0}
+  ul{margin:.3rem 0 .9rem 1.15rem}
+  li{margin-bottom:.35rem;font-size:.86rem;color:var(--mid)}
+  li b{color:var(--ink);font-weight:650}
+  li::marker{color:var(--soft)}
+  a{color:var(--tom1)}
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <div class="kick-line"></div>
+    <h1>ParaKit System Chart</h1>
+    <p class="dek">
+      A quick technical reference: what ParaKit contains, how work moves through it, what it needs
+      installed, and — if you want to modify it — how it is put together and which parts are risky to
+      touch.
+    </p>
+    <div class="stamp">
+      <span>measured against <b>4.9.10</b></span>
+      <span>runtime <b>Python 3.12</b> (required)</span>
+      <span>updated <b>2026-08-03</b></span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <a href="#p1"><span class="i">01</span>The pipeline</a>
+    <a href="#p2"><span class="i">02</span>The 14 tabs</a>
+    <a href="#p3"><span class="i">03</span>Menus &amp; buttons</a>
+    <a href="#p4"><span class="i">04</span>Charting a song</a>
+    <a href="#p5"><span class="i">05</span>What it needs</a>
+    <a href="#p6"><span class="i">06</span>What it downloads</a>
+    <a href="#p7"><span class="i">07</span>How updates work</a>
+    <a href="#p8"><span class="i">08</span>How it's built</a>
+    <a href="#p9"><span class="i">09</span>Running from source</a>
+    <a href="#p10"><span class="i">10</span>What's risky to change</a>
+  </nav>
+
+  <!-- 1 -->
+  <div class="panel" id="p1">
+    <div class="ph"><span class="pn">01</span><h2>The pipeline</h2></div>
+    <p class="psub">Five stages. These colors carry through the tab list below, so every tab is placed by the stage it serves.</p>
+    <div class="pipe">
+      <div class="stg" style="--c:var(--kick)"><div class="sn">Input</div><div class="st">Get audio</div>
+        <div class="sd">Local files, a YouTube rip, or a split you already own.</div></div>
+      <div class="stg" style="--c:var(--snare)"><div class="sn">Detect</div><div class="st">Audio → MIDI</div>
+        <div class="sd">Hybrid detection, then the cleanup pass and quantize.</div></div>
+      <div class="stg" style="--c:var(--tom1)"><div class="sn">Edit</div><div class="st">Shape the chart</div>
+        <div class="sd">Notes, tempo map, dynamics, difficulty tiers.</div></div>
+      <div class="stg" style="--c:var(--tom2)"><div class="sn">Test</div><div class="st">Hear and play it</div>
+        <div class="sd">Three separate surfaces — validate, watch, play along.</div></div>
+      <div class="stg" style="--c:var(--tom3)"><div class="sn">Export</div><div class="st">Ship the song</div>
+        <div class="sd">Paradiddle, Clone Hero, MIDI, or straight to a Quest.</div></div>
+    </div>
+  </div>
+
+  <!-- 2 -->
+  <div class="panel" id="p2">
+    <div class="ph"><span class="pn">02</span><h2>The 14 tabs</h2></div>
+    <p class="psub">In the order they appear along the top of the window.</p>
+    <div class="tabs">
+      <div class="tb" style="--c:var(--tom3)"><div class="tn"><span class="ti">01</span>🎵 Single Song Creator</div><div class="td">Assemble one song and export it.</div></div>
+      <div class="tb" style="--c:var(--tom3)"><div class="tn"><span class="ti">02</span>🎶 Create Multiple Songs</div><div class="td">The batch equivalent.</div></div>
+      <div class="tb" style="--c:var(--kick)"><div class="tn"><span class="ti">03</span>🔄 Audio to .ogg Converter</div><div class="td">Format conversion and trimming.</div></div>
+      <div class="tb" style="--c:var(--kick)"><div class="tn"><span class="ti">04</span>🥁 Stem Splitter</div><div class="td">Demucs separation, plus the stem library.</div></div>
+      <div class="tb" style="--c:var(--snare)"><div class="tn"><span class="ti">05</span>🎹 Audio → MIDI</div><div class="td">The detection tab. Also hosts the MIDI Extractor.</div></div>
+      <div class="tb" style="--c:var(--tom1)"><div class="tn"><span class="ti">06</span>🎼 MIDI Editor</div><div class="td">Piano roll, waveform, tempo, difficulty reduction.</div></div>
+      <div class="tb" style="--c:var(--snare)"><div class="tn"><span class="ti">07</span>📊 Spectral Comparison</div><div class="td">Compare a chart against the audio it came from.</div></div>
+      <div class="tb" style="--c:var(--kick)"><div class="tn"><span class="ti">08</span>🎼 Sheet Music → MIDI</div><div class="td">MusicXML in, MIDI out.</div></div>
+      <div class="tb" style="--c:var(--kick)"><div class="tn"><span class="ti">09</span>▶ YouTube → FLAC</div><div class="td">Download and convert source audio.</div></div>
+      <div class="tb" style="--c:var(--tom3)"><div class="tn"><span class="ti">10</span>🎨 Asset Manager</div><div class="td">Album art and song assets.</div></div>
+      <div class="tb" style="--c:var(--tom2)"><div class="tn"><span class="ti">11</span>🔬 Song Tester</div><div class="td">Validate a chart before shipping it.</div></div>
+      <div class="tb" style="--c:var(--tom2)"><div class="tn"><span class="ti">12</span>▶ Preview</div><div class="td">Watch the chart play back.</div></div>
+      <div class="tb" style="--c:var(--tom2)"><div class="tn"><span class="ti">13</span>🥁 Practice</div><div class="td">Play along with speed control and loops.</div></div>
+      <div class="tb" style="--c:var(--ride)"><div class="tn"><span class="ti">14</span>📖 Quick Start &amp; FAQ</div><div class="td">Help, What's New, Detection Troubleshooter.</div></div>
+    </div>
+    <div class="leg">
+      <span><i class="sw" style="background:var(--kick)"></i>Input</span>
+      <span><i class="sw" style="background:var(--snare)"></i>Detect</span>
+      <span><i class="sw" style="background:var(--tom1)"></i>Edit</span>
+      <span><i class="sw" style="background:var(--tom2)"></i>Test</span>
+      <span><i class="sw" style="background:var(--tom3)"></i>Export &amp; assets</span>
+      <span><i class="sw" style="background:var(--ride)"></i>Help</span>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <div class="panel" id="p3">
+    <div class="ph"><span class="pn">03</span><h2>Menus and buttons — where the rest lives</h2></div>
+    <p class="psub">Not everything is a tab. If you cannot find a feature along the top, it is probably here.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Looking for</th><th>Where it is</th><th>How to open it</th></tr></thead>
+        <tbody>
+          <tr><td>Clone Hero <code>.chart</code> export</td><td>Batch converter window</td><td class="mono">Tools → Paradiddle → Clone Hero Batch Converter</td></tr>
+          <tr><td>Turn a <code>.rlrr</code> back into MIDI</td><td>MIDI Extractor — opens inside the Audio → MIDI tab and can hand the result to the MIDI Editor</td><td class="mono">Tools menu, or the Audio to MIDI menu</td></tr>
+          <tr><td>Send a song to a headset</td><td>Push to Quest, over ADB</td><td class="mono">button in the Song Creator</td></tr>
+          <tr><td>Why did detection miss that?</td><td>Detection Troubleshooter</td><td class="mono">Tools → Detection Troubleshooter</td></tr>
+          <tr><td>Everything is cramped / too spread out</td><td>Compact / Roomy / Auto override</td><td class="mono">Tools → Layout Mode (1080p / 1440p)</td></tr>
+          <tr><td>Paradiddle <code>.rlrr</code> export</td><td>Built into the Song Creator tabs — there is no separate export tab</td><td class="mono">Single Song / Create Multiple Songs</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="psub">The Tools menu also has jump links to Stem Splitter, Asset Manager, Song Tester, Preview and Practice. Those just switch tabs — same features, quicker to reach.</p>
+  </div>
+
+  <!-- 4 -->
+  <div class="panel" id="p4">
+    <div class="ph"><span class="pn">04</span><h2>Charting a song, start to finish</h2></div>
+    <div class="wf">
+      <div class="wfs" style="--c:var(--kick)"><div class="num">1</div><div class="t">Get the audio</div><div class="d">A local file, or pull it with YouTube → FLAC.</div></div>
+      <div class="wfs" style="--c:var(--kick)"><div class="num">2</div><div class="t">Split the stems</div><div class="d">Stem Splitter. Charting from a drums stem beats charting from a full mix.</div></div>
+      <div class="wfs" style="--c:var(--snare)"><div class="num">3</div><div class="t">Detect</div><div class="d">Audio → MIDI produces a drum MIDI, cleaned and quantized.</div></div>
+      <div class="wfs" style="--c:var(--tom1)"><div class="num">4</div><div class="t">Edit</div><div class="d">MIDI Editor: fix notes, set tempo, pick a difficulty.</div></div>
+      <div class="wfs" style="--c:var(--tom2)"><div class="num">5</div><div class="t">Test</div><div class="d">Song Tester to validate, Preview or Practice to hear it.</div></div>
+      <div class="wfs" style="--c:var(--tom3)"><div class="num">6</div><div class="t">Export</div><div class="d">Song Creator writes the <code>.rlrr</code>; Tools converts to <code>.chart</code>.</div></div>
+    </div>
+    <div class="note"><b>Full mix or drums stem?</b> Since v4.9.6 ParaKit recognizes a full mix and splits it first, so feeding it a whole song is no longer a trap. Step 2 still gives the better chart — a drums stem is what the detector is happiest with.</div>
+  </div>
+
+  <!-- 5 -->
+  <div class="panel" id="p5">
+    <div class="ph"><span class="pn">05</span><h2>What ParaKit needs installed</h2></div>
+    <p class="psub">Python 3.12 and the packages below are the whole requirement for the core charting workflow. Everything else is optional and only matters for specific tabs.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>How it arrives</th><th>What</th><th>Needed for</th></tr></thead>
+        <tbody>
+          <tr><td><span class="pill" style="--c:var(--tom2)">pip</span></td><td class="mono">librosa · scipy · numpy · soundfile · pydub</td><td>Audio loading, analysis, conversion.</td></tr>
+          <tr><td><span class="pill" style="--c:var(--tom2)">pip</span></td><td class="mono">mido · python-rtmidi · music21</td><td>MIDI read/write, live drum-kit input, MusicXML → MIDI.</td></tr>
+          <tr><td><span class="pill" style="--c:var(--tom2)">pip</span></td><td class="mono">ttkbootstrap · tkinterdnd2 · Pillow · pygame</td><td>Theme, drag-and-drop, images, falling-note renderer.</td></tr>
+          <tr><td><span class="pill" style="--c:var(--tom2)">pip</span></td><td class="mono">onnxruntime · demucs · mutagen</td><td>Detection, stem separation, audio tags.</td></tr>
+          <tr><td><span class="pill" style="--c:var(--crash)">comes with demucs</span></td><td class="mono">torch · torchaudio</td><td>A large download (~2–3 GB). Skippable if you will not split stems.</td></tr>
+          <tr><td><span class="pill" style="--c:var(--tom1)">on your PATH</span></td><td class="mono">FFmpeg · FFprobe</td><td>Audio conversion. <code>pydub</code> will not work without it.</td></tr>
+          <tr><td><span class="pill" style="--c:var(--tom1)">on your PATH</span></td><td class="mono">Node <em>or</em> Deno</td><td>Solving YouTube's signature challenge. Auto-detected at launch; either one works.</td></tr>
+          <tr><td><span class="pill" style="--c:var(--tom1)">on your PATH</span></td><td class="mono">yt-dlp · adb</td><td>YouTube downloads; Push to Quest.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">
+      <b>Two things worth knowing.</b> The package is <code>pygame</code>, not <code>pygame-ce</code> — installing the wrong one gives you an app that starts and then fails in Preview and Practice.
+      And <strong>PyTorch is not listed in <code>requirements.txt</code></strong>: it arrives as a dependency of <code>demucs</code>, so pinning or repairing a Torch build means going through Demucs rather than editing a line in the requirements file.
+    </div>
+  </div>
+
+  <!-- 6 -->
+  <div class="panel" id="p6">
+    <div class="ph"><span class="pn">06</span><h2>What ParaKit downloads for you</h2></div>
+    <p class="psub">Models and tools are fetched on demand rather than bundled, so a fresh install stays small. Each one is version-checked and hash-verified before it is written.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Button</th><th>Fetches</th><th>Safeguard</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">Download update now</td><td>The main <code>.py</code> plus every runtime file a release needs</td><td>Version binding, SHA-256, staged download, atomic replace, rollback</td></tr>
+          <tr><td class="mono">Download &amp; fix now</td><td>Repairs a partial or failed file sync</td><td>Same machinery as a normal update</td></tr>
+          <tr><td class="mono">Download Model</td><td>Demucs weights — <em>Stem Splitter</em></td><td>Size and hash check</td></tr>
+          <tr><td class="mono">Download Model</td><td><code>parakit_drum_model.onnx</code> — <em>Audio → MIDI</em></td><td>Size and hash check, status refresh</td></tr>
+          <tr><td class="mono">Download Model</td><td>Jarredou MDX23C — <em>Neural Stem Isolation</em></td><td>Confirmation, expected size, cancel/retry, fallback mirror</td></tr>
+          <tr><td class="mono">Get Deno</td><td>Deno for Windows, unpacked to <code>deno.exe</code></td><td>Archive member check, executable sanity check</td></tr>
+          <tr><td class="mono">Download CHANGELOG.txt</td><td>The changelog, if the local copy goes missing</td><td>Content sanity check before write</td></tr>
+          <tr><td class="mono">Download &amp; Convert</td><td>YouTube audio → FLAC / MP3</td><td>Safe filenames, background worker, resume and retry</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 7 -->
+  <div class="panel" id="p7">
+    <div class="ph"><span class="pn">07</span><h2>How updating works</h2></div>
+    <p class="psub">
+      <strong>Git is not involved.</strong> The updater reads a manifest of every file a release needs and
+      pulls each one over plain HTTPS, so it works the same whether you cloned the repo or unzipped it.
+      Files already present whose contents match are skipped.
+    </p>
+    <div class="tx">
+      <div class="txs" style="--c:var(--hat)"><div class="n">1 · Check</div><div class="t">read manifest</div><div class="d">Compare versions and decide what actually changed.</div></div>
+      <div class="txs" style="--c:var(--tom1)"><div class="n">2 · Stage</div><div class="t">file.dl.tmp</div><div class="d">Each changed file downloads and verifies its hash beside the original before anything is touched.</div></div>
+      <div class="txs" style="--c:var(--ride)"><div class="n">3 · Back up</div><div class="t">file.prev</div><div class="d">Your existing copy is kept alongside. <strong>This is what you restore from by hand</strong> if you ever need to.</div></div>
+      <div class="txs" style="--c:var(--tom2)"><div class="n">4 · Commit</div><div class="t">atomic swap</div><div class="d">One file at a time. The main <code>.py</code> is written last, so a half-finished update never leaves a mismatched app.</div></div>
+      <div class="txs" style="--c:var(--snare)"><div class="n">If it fails</div><div class="t">roll back</div><div class="d">Anything already swapped is restored from its <code>.prev</code> and the temporary files are cleaned up.</div></div>
+    </div>
+    <div class="note"><b>Building tooling against the manifest?</b> Its hashes are computed with text files normalized to LF line endings, matching what GitHub serves. A Windows working copy is CRLF and will not match — compare against the served bytes, not your local file, or you will chase mismatches that are not real.</div>
+  </div>
+
+  <!-- 8 -->
+  <div class="panel" id="p8">
+    <div class="ph"><span class="pn">08</span><h2>How the app is put together</h2></div>
+    <p class="psub">Useful if you plan to read or modify the source. ParaKit is one very large Tkinter class plus a set of sidecar modules extracted for the newer tabs.</p>
+    <div class="struct">
+      <div style="--c:var(--hat)"><div class="v">49,705</div><div class="k">lines</div><div class="n">One file — <code>ParaKit v4.0.py</code>.</div></div>
+      <div style="--c:var(--kick)"><div class="v">659</div><div class="k">methods</div><div class="n">On <code>MidiToRlrrApp</code> — effectively the whole app.</div></div>
+      <div style="--c:var(--tom1)"><div class="v">7</div><div class="k">helper classes</div><div class="n">Progress bars, converter window, extractor panel, validation issue.</div></div>
+      <div style="--c:var(--tom2)"><div class="v">63</div><div class="k">module functions</div><div class="n">Chart building, config, tempo, difficulty.</div></div>
+      <div style="--c:var(--tom3)"><div class="v">11</div><div class="k">sidecar modules</div><div class="n">Spectral, Preview, Practice, synth voices.</div></div>
+      <div style="--c:var(--crash)"><div class="v">4</div><div class="k">packages</div><div class="n"><code>parakit_cleanup</code>, <code>parakit_separators</code>, <code>practice_v2</code>, <code>practice_minigame</code>.</div></div>
+    </div>
+    <div class="note">
+      <b>Where the seams are.</b> The sidecar modules are the clean boundary — they import independently and most carry their own <code>--selftest</code>, so they are the easiest place to start reading or changing things.
+      The older tabs live inside the single class and share state through it, which means a change in one can reach another. Expect that when editing anything that predates the sidecars.
+    </div>
+    <div class="note">
+      <b>What else ships in the repo.</b> Not everything in ParaKit is Python. Six directories
+      sit alongside the app and none of them are reachable from the tab list:
+      <ul>
+        <li><code>docs/</code> &mdash; <code>TROUBLESHOOTING.md</code> when something will not run,
+            <code>BUILDING.md</code> for packaging, <code>ROADMAP.md</code> for what is planned.
+            Start here before filing anything.</li>
+        <li><b>Detection Research Notes &mdash; Web Edition</b> &mdash; a standalone page documenting
+            how detection was built and measured, including the negative results. Open
+            <code>parakit-detection-research.html</code> in a browser; nothing to install.</li>
+        <li><b>Practice Window v2 / v3</b> and <b>Preview Track v2</b> &mdash; browser versions of the
+            Practice and Preview surfaces, self-contained HTML. Useful for trying the idea
+            without launching the app, and for reading how the renderers work.</li>
+      </ul>
+      They are plain files with no build step, and the updater keeps them in sync like any
+      other shipped content.
+    </div>
+
+    <div class="note">
+      <b>Revision history.</b> Newest first. The structural counts above are measured at a
+      particular build and drift with every release &mdash; treat them as a sense of scale, not
+      as current figures, and re-measure before relying on one.
+      <ul>
+        <li><b>2026-08-03</b> &mdash; re-reviewed against 4.9.10. Corrected the line and method
+            counts; corrected the line-endings note, which had the direction backwards; added
+            the section above, covering six shipped directories the chart had never mentioned.</li>
+        <li><b>2026-07-31</b> &mdash; first version, written against 4.9.8.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 9 -->
+  <div class="panel" id="p9">
+    <div class="ph"><span class="pn">09</span><h2>Running and poking at it from source</h2></div>
+
+    <p class="psub">Launch it:</p>
+<pre><code>py -3.12 "ParaKit v4.0.py"</code></pre>
+    <p class="psub">…or double-click <code>Run ParaKit v4.0.bat</code>, which does the same thing.</p>
+
+    <p class="psub">Exercise a sidecar on its own, without starting the app — the quickest way to check a change did not break anything:</p>
+<pre><code>py -3.12 parakit_spectral_engine.py --selftest
+py -3.12 parakit_preview_engine.py  --selftest
+py -3.12 parakit_practice_sprites.py --selftest</code></pre>
+    <p class="psub"><code>parakit_practice_widgets</code>, <code>parakit_preview_sprites</code>, <code>parakit_preview_tab</code>, <code>parakit_spectral_tab</code> and <code>parakit_synth_voices</code> take the same flag.</p>
+
+    <ul>
+      <li><b>Settings</b> live in <code>~/.songmaker_config.json</code>. Writes go through a temp file and swap in, and a save merges rather than overwrites, so an interrupted write cannot wipe unrelated keys. To reset to defaults you must delete <strong>both</strong> that file <em>and</em> its <code>.bak</code> sibling — if the primary is missing or unreadable, the backup is loaded instead, which is exactly what stops a transient antivirus lock from resetting every tab's recent-files list.</li>
+      <li><b>The changelog is data, not code.</b> <code>CHANGELOG.txt</code> is parsed at runtime to build the in-app What's New — it must sit next to the main <code>.py</code>.</li>
+      <li><b>Line endings matter — and not in the direction you might guess.</b> The main <code>.py</code> is <b>LF</b>, and several sidecars are too. The hazard is a tool that rewrites a file <i>in place</i> through a text round-trip — Python's <code>read_text</code>/<code>write_text</code> on Windows is the common one — because reading collapses line endings and writing re-expands them to the platform default, converting an LF file to CRLF in every line it did not mean to touch. What makes this expensive is that <code>git diff --stat</code> keeps reporting only your intended change: with <code>core.autocrlf=true</code> the comparison is normalized, so the damage is invisible in exactly the place you would look for it. Check with a byte count, not a diff.</li>
+    </ul>
+  </div>
+
+  <!-- 10 -->
+  <div class="panel" id="p10">
+    <div class="ph"><span class="pn">10</span><h2>What's risky to change</h2></div>
+    <p class="psub">If you are modifying ParaKit, this is the map of what a change costs. Risk rises toward the top.</p>
+
+    <div class="tier" style="--c:var(--snare)">
+      <div class="lv">Highest risk</div>
+      <div class="bd">
+        <div class="bt">Five functions the whole chart depends on — back up the file first</div>
+        <div class="bx">
+          <code>detect_bpm_and_offset</code>, <code>build_rlrr</code> and
+          <code>reduce_notes_for_difficulty</code> sit at module level;
+          <code>_a2m_do_convert</code> is a method; and <code>detect_onsets</code> is defined
+          <strong>inside <code>_a2m_do_convert</code></strong> — so it cannot be imported or tested on its
+          own, and touching it means touching the conversion path itself. A subtle change here does not
+          crash; it quietly produces worse charts, which is much harder to notice.
+        </div>
+      </div>
+    </div>
+    <div class="tier" style="--c:var(--crash)">
+      <div class="lv">Careful</div>
+      <div class="bd">
+        <div class="bt">What gets passed <em>into</em> the conversion path</div>
+        <div class="bx">Wrappers and call sites can leave the protected code untouched while completely changing what it receives — which audio file the cleanup pass analyzes, for instance. The blast radius is the same as editing the function; only the diff looks smaller.</div>
+      </div>
+    </div>
+    <div class="tier" style="--c:var(--ride)">
+      <div class="lv">Measurable</div>
+      <div class="bd">
+        <div class="bt">Detection thresholds and presets</div>
+        <div class="bx">Tuning constants — confidence gates, tom sensitivity presets, dedup windows. Safe to experiment with, and the intended place to do it, but every change moves chart output. Compare results before and after on the same song rather than judging by ear once.</div>
+      </div>
+    </div>
+    <div class="tier" style="--c:var(--tom2)">
+      <div class="lv">Low risk</div>
+      <div class="bd">
+        <div class="bt">Interface, file handling, documentation</div>
+        <div class="bx">Labels, tooltips, layout, colors, help text, and the sidecar tabs. This is the comfortable place to start — the sidecars in particular are self-contained and testable.</div>
+      </div>
+    </div>
+  </div>
+
+</div>

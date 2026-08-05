@@ -522,6 +522,32 @@ PRESET_FOLDS: Dict[str, Dict[str, str]] = {
     "Starter 4": {"cr": "t2", "t1": "t2", "t3": "t2", "rd": "t2"},
 }
 
+
+def folds_for_order(order: Optional[List[str]]) -> Dict[str, str]:
+    """The fold table for a lane order that matches a built-in preset.
+
+    PRESET_FOLDS existed and was imported by both UI modules, but every
+    resolve_routing() call passed routing=None, so it was never consulted. Without
+    it, a note whose lane is absent from the preset's order hits the
+    "folded-to-hidden safety" in resolve_routing and lands on active_order[0] --
+    the hi-hat. Measured: Compact 6 sent Tom-2 and Ride to hh (should be t1/cr),
+    and Starter 4 sent crash, Tom-1, Tom-3 and Ride to hh while its t2 lane, the
+    one actually labelled "Toms+Cym", received none of them.
+
+    Matched on the ORDER rather than a preset NAME on purpose: it works at every
+    call site without threading the kit choice through the session config, and it
+    stops applying by itself once a user edits the kit away from the preset shape,
+    at which point the preset's fold TARGETS may no longer exist as lanes.
+    """
+    key = list(order or [])
+    if not key:
+        return {}
+    for _name, _folds in PRESET_FOLDS.items():
+        _make = BUILTIN_PRESETS.get(_name)
+        if _make and list(_make()["order"]) == key:
+            return dict(_folds)
+    return {}
+
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 

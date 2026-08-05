@@ -113,7 +113,7 @@
     <h1>How ParaKit's Drum Detection Works — Research Notes</h1>
     <p>Background notes on how ParaKit turns audio into drum charts, and the research behind its detection
     cleanup. Each report pairs published drum-transcription literature with hands-on testing on real songs.
-    Shared for anyone curious how the app works, or wanting to build on it for their own project. Point-in-time through July 2026 (app v4.9.3).</p>
+    Shared for anyone curious how the app works, or wanting to build on it for their own project. Point-in-time through July 2026.</p>
   </div>
 </header>
 
@@ -148,7 +148,7 @@
           <div class="tag">Findings &amp; Results</div>
           <h3>Detection Cleanup &amp; Results</h3>
           <p>How ParaKit cleans up the raw detector's output — a cymbal re-classifier and a false-kick remover —
-          and the measured before/after on a held-out set of songs. Live since v4.5.0; still in v4.9.3.</p>
+          and the measured before/after on a held-out set of songs. Live since v4.5.0 and still shipping.</p>
           <div class="stats"><span><b>2</b>cleanup tools</span><span><b>456</b>songs tested</span><span><b>held-out</b>validation</span></div>
           <button class="go" data-goto="overhaul">Read full report →</button>
         </div>
@@ -156,7 +156,7 @@
       <div class="hc">
         <div class="band" style="background:var(--amber)"></div>
         <div class="body">
-          <div class="tag">July 2026 Arc · v4.9.3</div>
+          <div class="tag">July 2026 Arc</div>
           <h3>Lane Routing &amp; Later Results</h3>
           <p>Per-lane stem isolation, the kick spacing gate, reference-free scoring, cymbal filters, and measurement
           hazards — mostly negative or keep-as-is outcomes on a 232-song corpus. What was tried, including what failed.</p>
@@ -192,7 +192,7 @@
       <span><span class="prov m-cite">CITED</span> drawn from published literature (referenced inline + listed per report)</span>
       <span><span class="prov m-test">TESTED</span> measured in hands-on experiments on real songs</span>
     </div>
-    <p class="sub" style="margin-top:14px">These notes are a point-in-time snapshot (through July 2026; app v4.9.3) and are not maintained as the app evolves.
+    <p class="sub" style="margin-top:14px">These notes are a point-in-time snapshot (research through July 2026) and are not maintained as the app evolves — see the revision history at the foot of the page for what changed when.
     Numbers reflect the specific test setups described and are not universal guarantees. External findings are attributed to their original authors.</p>
   </section>
 
@@ -209,7 +209,7 @@
       from nothing — with no loss on the instruments that were already accurate.</p>
     </div>
 
-    <div class="callout amber"><div class="t">Status — July 2026 (app v4.9.3)</div>The cleanup described here shipped in <b>v4.5.0-1</b> and remains live in <b>v4.9.3</b> — it runs automatically on Audio → MIDI conversions (toggleable under Advanced). A later arc (2026-07-20 → 2026-07-25) added <b>kick-lane stem routing</b> and stress-tested several other ideas; those results, including negatives, live in the <b>Lane Routing &amp; Later Results</b> tab. This report documents the original cleanup research.</div>
+    <div class="callout amber"><div class="t">Status — July 2026</div>The cleanup described here shipped in <b>v4.5.0-1</b> and is still live — it runs automatically on Audio → MIDI conversions (toggleable under Advanced). A later arc (2026-07-20 → 2026-07-25) added <b>kick-lane stem routing</b> and stress-tested several other ideas; those results, including negatives, live in the <b>Lane Routing &amp; Later Results</b> tab. This report documents the original cleanup research.</div>
 
     <div class="legend"><span><span class="prov m-test">TESTED</span> my own measurements</span>
       <span style="color:var(--ink)">All scores are <b>directional</b> — the reference charts are human-quantized (~50&nbsp;ms timing).</span></div>
@@ -507,7 +507,7 @@
   <!-- ============ LANE ROUTING & LATER RESULTS (July 2026) ============ -->
   <section id="later" class="pane">
     <h2><span class="n">D</span>Lane Routing &amp; Later Results</h2>
-    <p class="sub">Detection research arc 2026-07-20 → 2026-07-25, scored against human <code>.rlrr</code> charts on a sync-gated 232-song corpus unless noted. App state at write-up: <b>v4.9.3</b>.</p>
+    <p class="sub">Detection research arc 2026-07-20 → 2026-07-25, scored against human <code>.rlrr</code> charts on a sync-gated 232-song corpus unless noted. Written up July 2026.</p>
 
     <div class="card">
       <p class="lead" style="margin-top:0"><b>In brief.</b> After the cleanup stage shipped, a second research pass tested lane-isolated detection,
@@ -975,11 +975,26 @@
   </section>
 
   <div class="foot">
-    Research notes from ParaKit's detection development, through July 2026 (app v4.9.3) — a point-in-time snapshot, not maintained as the app changes.
+    Research notes from ParaKit's detection development, through July 2026 — a point-in-time snapshot, not maintained as the app changes.
     Findings labelled <span class="prov m-cite">CITED</span> are drawn from published drum-transcription / music-information-retrieval literature and
     attributed to their original authors; findings labelled <span class="prov m-test">TESTED</span> are measurements on real songs from the evaluation setups described.
     Numbers reflect those specific evaluation setups and are not universal guarantees. Negative and "change nothing" results are kept on purpose.
   </div>
+  <div class="foot" style="margin-top:0;padding-top:0">
+    <b>Revision history.</b> This page is dated rather than version-pinned: it used to
+    name the app build it was written against, which went stale two releases later and
+    said nothing a date does not say better. Entries newest first.
+    <ul style="margin:8px 0 0 18px;padding:0">
+      <li><b>2026-08-03</b> &mdash; removed the app-version pins in favour of dates and
+          added this revision history. No findings, numbers or conclusions changed.</li>
+      <li><b>2026-07-25</b> &mdash; July 2026 arc folded in: per-lane stem isolation, the
+          kick spacing gate, and reference-free scoring, measured 2026-07-20 &rarr;
+          2026-07-25.</li>
+      <li><b>2026-07</b> &mdash; first publication of these notes, covering detection work
+          through July 2026.</li>
+    </ul>
+  </div>
+
 
 </div>
 

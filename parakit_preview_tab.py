@@ -61,7 +61,7 @@ import os
 import sys
 import time
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import parakit_preview_engine as eng
 
@@ -99,6 +99,33 @@ RED = "#e5484d"           # Stop / Record accent (Preview-local; spectral has
 CHIP_OFF_EDGE = "#3a3a55"
 SEPARATOR = "#2b2b45"
 TICK_COL = "#554477"       # faint slider tick marks (matches the app convention)
+
+
+def _decoder_audio_patterns():
+    """File patterns the ACTUAL stem decoder can open. The host decodes with
+    soundfile (ParaKit v4.0.py _pp_decode_stem), so ask soundfile which
+    formats its libsndfile build supports instead of hardcoding a list — the
+    old hardcoded list offered *.m4a *.aac, which libsndfile has never
+    decoded: the pick went green as "Loaded stems" and Play ran a silent
+    moving playhead (audit fix 2026-08-02; verified soundfile 0.13.1's
+    available_formats() has no M4A/AAC/MP4). Falls back to the
+    always-supported trio when soundfile isn't importable (standalone run)."""
+    exts = ["wav", "flac", "ogg"]
+    try:
+        import soundfile as sf
+        fmts = set(sf.available_formats())
+        cand = [("WAV", "wav"), ("FLAC", "flac"), ("OGG", "ogg"),
+                ("MP3", "mp3"), ("MPEG", "mp3"),   # key renamed across versions
+                ("AIFF", "aiff"), ("AIFF", "aif")]
+        got = []
+        for key, ext in cand:
+            if key in fmts and ext not in got:
+                got.append(ext)
+        if got:
+            exts = got
+    except Exception:
+        pass
+    return " ".join("*." + e for e in exts)
 
 
 def _prev_tick_strip(parent, length, bg=PANEL, tick_px=10):
@@ -1907,6 +1934,14 @@ class PreviewTab(ttk.Frame):
         self._chart_title = ""
         # Basename for the Import-adjacent path readout (or cross-tab display str).
         self._chart_file_basename = ""
+        # True once the user has edited the CURRENT chart and it has not been
+        # exported since (2026-08-01). Preview has no in-place save, so this never
+        # protects a file — it protects an unsaved editing session, which loading a
+        # demo or importing another chart used to discard with no warning at all.
+        # Deliberately only consulted when _chart_source == "custom": edits to the
+        # built-in demo are disposable, and prompting on them would nag on every
+        # density change, since that path swaps the chart too.
+        self._chart_dirty = False
         self._loop_on = False
         self._loop_a = 0.0
         self._loop_b = 0.0
@@ -1937,8 +1972,16 @@ class PreviewTab(ttk.Frame):
         self._build_popovers()
         self._bind_keys()
 
-        ok, _ = self._hook_call("synth_ensure_rendered")
-        self._synth_ready = bool(ok)
+        # The hook FAILS BY RETURN VALUE, not by raising — same contract as the
+        # mixer_play / mixer_load_stems checks further down. The host's
+        # _pp_synth_ensure never raises and documents "Returns True when the
+        # bank is ready"; discarding that bool into `_` left `ok` meaning only
+        # "the hook exists", so _synth_ready was unconditionally True in the
+        # embedded app and the flag could never go False (audit fix 2026-08-02).
+        # Only an explicit False counts as not-ready; a MISSING hook
+        # (standalone) still yields False exactly as before.
+        ok, ready = self._hook_call("synth_ensure_rendered")
+        self._synth_ready = bool(ok) and ready is not False
 
         self._load_initial_state()
         self._perf_job = self.after(500, self._on_perf_tick)
@@ -2579,7 +2622,19 @@ class PreviewTab(ttk.Frame):
         self.play_btn.configure(text="⏸ Pause" if playing else "▶ Play")
         if playing:
             self._synth_prev_t = self.canvas.now
-            self._hook_call("mixer_play", self.canvas.now, self._speed)
+            ok, res = self._hook_call("mixer_play", self.canvas.now,
+                                      self._speed)
+            # The hook can FAIL BY RETURN VALUE, not just by raising (same
+            # contract as Spectral's _start_stream, breaker R2B2-1): the host
+            # returns False when stems were loaded but NONE decoded — before
+            # this branch a moving playhead ran over total silence with no
+            # warning. Only an explicit False counts; a missing hook
+            # (standalone) stays silent as before, and the synth (if on)
+            # still sounds.
+            if ok and res is False:
+                self._status("Stem audio unavailable — the loaded file could "
+                             "not be decoded. Playing on the silent clock.",
+                             AMBER)
         else:
             self._hook_call("mixer_pause")
 
@@ -2674,6 +2729,7 @@ class PreviewTab(ttk.Frame):
         self._update_seek_from_view(0.0)
         self._sync_bpm_label()
         self._chart_source = "demo"
+        self._chart_dirty = False   # a freshly installed chart is clean
         self._chart_title = "Demo track"
         self._chart_file_basename = ""
         self._set_song_readout()
@@ -2682,6 +2738,8 @@ class PreviewTab(ttk.Frame):
                      % (self.canvas.total_notes, value))
 
     def _on_load_demo(self):
+        if not self._confirm_discard_edits("Loading the demo"):
+            return
         # "Load demo example" button (v4.9.2): the demo loads only on request.
         value = next((d[0] for d in _DENSITIES if d[1] == self.density_var.get()),
                      "dense")
@@ -2689,6 +2747,8 @@ class PreviewTab(ttk.Frame):
         self._set_density(value)
 
     def _load_blank(self):
+        if not self._confirm_discard_edits("Clearing the chart"):
+            return
         # Blank chart (v4.9.2): the tab opens empty, like the Spectral tab, until
         # the user imports a chart or presses "Load demo example".
         self._before_chart_swap()
@@ -2699,6 +2759,7 @@ class PreviewTab(ttk.Frame):
         self.play_btn.configure(text="▶ Play")
         self._chart_source = None
         self._chart_title = ""
+        self._chart_dirty = False   # a freshly installed chart is clean
         self._chart_file_basename = ""
         self._set_song_readout()
         self._update_demo_ui()
@@ -2943,9 +3004,23 @@ class PreviewTab(ttk.Frame):
             self._status("Reached the end of the chart.")
 
     def _on_view_edited(self):
+        self._chart_dirty = True
         self._status("%d notes  ·  %d selected  ·  edit mode %s"
                      % (self.canvas.total_notes, self.canvas.selection_size,
                         "on" if self.canvas.edit_mode else "off"))
+
+    def _confirm_discard_edits(self, what):
+        """True to proceed. Warns only when the user's OWN imported chart has
+        unedited-away changes; demo/blank charts are disposable, so this is silent
+        for them (and therefore silent for demo density changes)."""
+        if not (self._chart_dirty and self._chart_source == "custom"):
+            return True
+        return messagebox.askyesno(
+            "Discard chart edits?",
+            "You have unsaved edits to %s.\n\n%s will replace them, and Preview "
+            "cannot undo across a chart swap.\n\nUse Export first if you want to "
+            "keep them.\n\nDiscard the edits and continue?"
+            % (self._chart_title or "the loaded chart", what))
 
     # ----- audio: stems + mode + synth --------------------------------------
     def _on_load_mix(self):
@@ -2958,7 +3033,7 @@ class PreviewTab(ttk.Frame):
         start_dir = self._cfg_get(T9_AUDIO_DIR_KEY, "") or None
         path = filedialog.askopenfilename(
             title=title, initialdir=start_dir,
-            filetypes=[("Audio", "*.wav *.flac *.ogg *.mp3 *.m4a *.aac"),
+            filetypes=[("Audio", _decoder_audio_patterns()),
                        ("All files", "*.*")])
         if not path:
             return
@@ -2972,12 +3047,22 @@ class PreviewTab(ttk.Frame):
         specs = [{"path": p, "bus": b} for b, p in self._stem_paths.items() if p]
         if self.canvas.is_playing:
             self._on_play_toggle()
-        ok, _ = self._hook_call("mixer_load_stems", specs)
+        ok, res = self._hook_call("mixer_load_stems", specs)
+        # The hook can FAIL BY RETURN VALUE, not just by raising — branch on
+        # its result the way Spectral's _start_stream does (breaker R2B2-1
+        # there): only an explicit False counts as failure; None (hooks with
+        # no return contract) still means "recorded". Before this, the button
+        # went GREEN and the status said "Loaded" whenever the hook merely
+        # ran (audit fix 2026-08-02).
+        failed = ok and res is False
         btn = self.mix_btn if bus == "song" else self.drums_btn
-        btn.accent = GREEN
+        btn.accent = AMBER if failed else GREEN
         btn._restyle()
         self._update_stem_path_label()
-        if ok:
+        if failed:
+            self._status("Could not load stem: %s"
+                         % os.path.basename(path), AMBER)
+        elif ok:
             self._status("Loaded stems: %s" % os.path.basename(path))
         else:
             self._status("Stem set (audio wired at integration): %s"
@@ -3241,6 +3326,7 @@ class PreviewTab(ttk.Frame):
         self._sync_bpm_label()
         self.play_btn.configure(text="▶ Play")
         self._chart_source = "custom"
+        self._chart_dirty = False   # a freshly installed chart is clean
         self._chart_title = os.path.splitext(os.path.basename(path))[0]
         self._chart_file_basename = os.path.basename(path)
         self._set_song_readout()
@@ -3258,6 +3344,8 @@ class PreviewTab(ttk.Frame):
         return True
 
     def _on_import(self):
+        if not self._confirm_discard_edits("Importing another chart"):
+            return
         start_dir = self._cfg_get(T9_IMPORT_DIR_KEY, "") or None
         path = filedialog.askopenfilename(
             title="Import a chart (.mid / .rlrr / .json)", initialdir=start_dir,
@@ -3286,6 +3374,7 @@ class PreviewTab(ttk.Frame):
         except Exception as exc:
             self._status("Export failed — %s" % exc, AMBER)
             return False
+        self._chart_dirty = False   # exported: the edits are preserved on disk
         self._status("⇩ Exported %d notes → %s" % (count, os.path.basename(path)))
         return True
 
@@ -3330,6 +3419,18 @@ class PreviewTab(ttk.Frame):
         try:
             if action != "load_chart":
                 return
+            # A cross-tab send replaces the chart exactly like a local import, so it
+            # gets the same warning (2026-08-01). Without this, every LOCAL swap path
+            # prompted while a send from the MIDI Editor / Song Tester / Creator
+            # silently destroyed edited work -- and the H7 hand-off ends in precisely
+            # this method, so "save your editor edits and send to Preview" was the
+            # one flow that could still lose Preview-side edits without asking.
+            # Costs nothing on a clean or demo chart, so the selftest and any
+            # programmatic caller are unaffected.
+            if not self._confirm_discard_edits("Loading the received chart"):
+                self._status("Kept the current chart — the incoming chart was "
+                             "not loaded.")
+                return
             payload = payload or {}
             core_notes = payload.get("notes") or []
             try:
@@ -3372,6 +3473,7 @@ class PreviewTab(ttk.Frame):
             self.play_btn.configure(text="▶ Play")
             source = payload.get("source") or "the MIDI Editor"
             self._chart_source = "custom"
+            self._chart_dirty = False   # a freshly installed chart is clean
             self._chart_title = payload.get("title") or source
             p = payload.get("path") or ""
             self._chart_file_basename = (os.path.basename(str(p)) if p
@@ -3534,6 +3636,21 @@ class PreviewTab(ttk.Frame):
             pass
 
     def destroy(self):
+        # Stop any live mixer stream FIRST (breaker H8, 2026-07-29): both siblings
+        # already do this -- SpectralTab.destroy (B-DEST-1, 2026-07-21) and
+        # PracticeTab.destroy -- but Preview only cancelled its timers, so a frame
+        # rebuild / teardown while playing left audio going with no tab owning it.
+        # (A normal tab SWITCH already stops via the host's
+        # _preview_on_tab_changed_stop; this covers the destroy path.)
+        # Order matters: stop BEFORE cancelling the jobs. external_stop -> _on_stop
+        # cannot arm an after() job (_perf_job is re-armed only inside _on_perf_tick,
+        # reachable only from the Tk timer), so nothing gets resurrected -- and
+        # external_stop's try/except is what makes this safe on a tearing-down
+        # widget, which is why this calls it rather than _on_stop directly.
+        try:
+            self.external_stop()
+        except Exception:
+            pass
         for attr in ("_perf_job", "_countin_job"):
             job = getattr(self, attr, None)
             if job is not None:

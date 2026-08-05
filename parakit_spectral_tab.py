@@ -2468,6 +2468,32 @@ class SpectralTab(ttk.Frame):
         except Exception as e:
             self._status("config save failed: %s" % e, AMBER)
 
+    def external_chart_changed(self, path: str):
+        """The HOST rewrote `path` (a MIDI Editor save) while this tab may hold a
+        compare of that same file (breaker H6, reverse direction, 2026-07-29).
+        Deliberately does NOT touch the model -- it only disarms Overwrite, so a
+        now-stale model can never be written back over the newer file, and says
+        why. Re-run Compare to pick the new file up."""
+        try:
+            tgt = self._overwrite_target
+            if not tgt or not path:
+                return
+            if (os.path.normcase(os.path.abspath(tgt))
+                    != os.path.normcase(os.path.abspath(path))):
+                return
+            self._overwrite_target = ""
+            # The status line scrolls away; the BUTTON is the durable signal, so grey
+            # it out too. Without this the changelog's promise that saving in the
+            # editor "disables an Overwrite that would write a stale comparison back
+            # over it" was only half true -- the write was blocked, but nothing looked
+            # blocked until you pressed it and got the wrong reason.
+            self._update_transport()
+            self._status("%s was rewritten outside this tab -- Overwrite is "
+                         "disarmed; run Compare again to reload it."
+                         % os.path.basename(path), AMBER)
+        except Exception:
+            pass
+
     def _hook_call(self, name: str, *args, **kwargs):
         """Call a hook by name, returning (ok, result). On missing/exception,
         report to the status line and return (False, None)."""
@@ -3119,6 +3145,16 @@ class SpectralTab(ttk.Frame):
         self.stop_btn.set_enabled(has)
         self.undo_btn.set_enabled(has and bool(self._undo_stack))
         self.redo_btn.set_enabled(has and bool(self._redo_stack))
+        # Overwrite writes IN PLACE, so it must look dead whenever nothing is armed.
+        # Disarming only cleared _overwrite_target and left the button live; pressing
+        # it then fell into the "not a .mid file" branch, which blames the file type
+        # for what was actually a deliberate disarm. Centralised here because the arm
+        # (_finish_compare) and the synthetic-path clear both already refresh the
+        # transport -- external_chart_changed is the one caller that has to ask.
+        # getattr: _update_transport can run before the button row is built.
+        _ob = getattr(self, "overwrite_btn", None)
+        if _ob is not None:
+            _ob.set_enabled(bool(self._overwrite_target))
 
     # ----- sources -------------------------------------------------------------
     def _load_persisted_paths(self):
@@ -4099,6 +4135,16 @@ class SpectralTab(ttk.Frame):
                          GREEN)
         except Exception as e:
             self._status("MIDI write failed: %s" % e, AMBER)
+            return
+        # Tell the host a .mid on disk just changed under it (breaker H6,
+        # 2026-07-29): the MIDI Editor can be holding this exact path in memory,
+        # and its next Save wrote the pre-Spectral copy straight back over these
+        # corrections, with no notice in EITHER direction. Deliberately OUTSIDE
+        # the try above so a hook failure can never be reported as "MIDI write
+        # failed" -- the write already succeeded by this point. _hook_call
+        # no-ops (returns (False, None)) when the hook is absent, so running
+        # this file standalone is unaffected.
+        self._hook_call("midi_written", path)
 
     def _on_overwrite_midi(self):
         if self._model is None:
@@ -4113,7 +4159,15 @@ class SpectralTab(ttk.Frame):
                             len(self._model.notes)))
             return
         target = self._overwrite_target
-        if not target or os.path.splitext(target)[1].lower() not in (".mid", ".midi"):
+        if not target:
+            # Still reachable with the button greyed (a programmatic invoke, or a
+            # disarm that races the click), so give the real reason. Folding this
+            # into the extension check below is what produced "not a .mid file"
+            # for a target that was simply never armed.
+            self._status("Nothing is armed for Overwrite -- run Compare again to "
+                         "reload the chart first.", AMBER)
+            return
+        if os.path.splitext(target)[1].lower() not in (".mid", ".midi"):
             self._status("Overwrite target is not a .mid file -- use Export "
                          "MIDI to save as.", AMBER)
             return
@@ -4680,8 +4734,17 @@ def _selftest(root, tab):
     # R3B2-3: the SYNTHETIC compare path must never arm Overwrite MIDI.
     otab = SpectralTab(root, hooks={"get_cfg": lambda k, d=None: d,
                                     "set_cfg": lambda k, v: None})
+    # This guard was VACUOUS until 2026-08-01: it only set candidate_field and called
+    # _finish_compare(), so _overwrite_target was "" because nothing had EVER armed it
+    # -- deleting the protection line in _finish_compare left this printing OK. ARM it
+    # first, exactly as a real Compare does, so the assertion has something to clear.
+    # The scenario being defended: user Compares their real chart (target armed), then
+    # presses "Load demo"; without the clear, Overwrite would replace their chart with
+    # synthetic notes after one generic confirm.
     otab.candidate_field.set(os.path.join(os.path.dirname(
         os.path.abspath(__file__)), "some_real_chart.mid"))
+    otab._overwrite_target = os.path.join(os.path.dirname(
+        os.path.abspath(__file__)), "some_real_chart.mid")
     otab._finish_compare()
     g13 = otab._overwrite_target == ""
     print("SELFTEST guard synthetic path never arms overwrite: %r -> %s"

@@ -127,6 +127,7 @@ from parakit_practice_engine import (
     decode_chart_bytes,
     default_layout,
     demo_chart,
+    folds_for_order,
     lane_color,
     parse_rlrr,
     resolve_routing,
@@ -448,7 +449,21 @@ class _Synth:
         self._hook = hook_call
         self._note = note
         self._noted = False
+        self._gain = 1.0
         self.available = self._hook("synth_ensure_rendered")[0]
+
+    def set_gain(self, gain: float) -> None:
+        """Loudness for synth hits, 0.0-1.0 (the Synth bus folded with Master).
+
+        The host sets the synth channel's volume purely from note velocity, and applies
+        the mixer's bus gains only to STEM channels -- so the Synth slider (in both the
+        Mixer overlay and Settings) and Master moved a number that changed nothing
+        audible. Velocity is the only channel synth_play offers, so the gain is folded
+        into it here."""
+        try:
+            self._gain = max(0.0, min(1.0, float(gain)))
+        except (TypeError, ValueError):
+            self._gain = 1.0
 
     def _n(self) -> None:
         if not self._noted and not self.available:
@@ -456,6 +471,9 @@ class _Synth:
             self._note("Drum synth wired at integration -- hits are silent for now.")
 
     def play(self, voice: str, vel: int) -> None:
+        if self._gain <= 0.0:
+            return                       # slider fully down = silent, not "quietest"
+        vel = max(1, min(127, int(round(vel * self._gain))))
         ok, _ = self._hook("synth_play", voice, vel)
         if not ok:
             self._n()
@@ -1588,6 +1606,15 @@ class PlayScreen(tk.Frame):
         # stems, so the reference drums could never be turned back on live. Re-push
         # the bus gains now. (Reset the miss-duck flag first so the duck state can't
         # leave drums stuck after an explicit toggle.)
+        # Same shape as the You-drum fix below: Session.auto_kick is fixed when the
+        # session is BUILT, so the dock chip and the `3` key flipped the pref, redrew
+        # the chip as ON, and changed nothing -- kick notes kept being missed, and once
+        # on it could not be turned back off either. muteSynth and youDrum each got a
+        # live-apply case; autoKick was left out.
+        if key == "autoKick" and self._current is not None:
+            _ses = self._current.get("session")
+            if _ses is not None:
+                _ses.auto_kick = bool(self._prefs[key])
         if key == "youDrum":
             # Mute-on-miss is now folded INTO You-drum (owner: the two were
             # confusing — you needed BOTH off to hear the backing drums). One
@@ -1674,10 +1701,17 @@ class PlayScreen(tk.Frame):
         """Push THIS tab's intended bus gains to the (shared) host mixer, so a
         sibling tab (Preview's synth-mode song/drums mute) can't leave our song
         muted. Drums follow the You-drum rule (muted while you play them)."""
+        master = float(self._prefs.get("busMaster", 0.92) or 0.92)
+        # The synth is not a stem channel, so the host's bus gains never reached it --
+        # busSynth had no audible effect anywhere, and Master did not attenuate synth
+        # hits either. Fold both into the synth's own velocity scaling. Done BEFORE the
+        # engine check, because synth hits are audible even with no backing audio loaded,
+        # which is exactly when the slider is most likely to be reached for.
+        if self._synth is not None:
+            self._synth.set_gain(float(self._prefs.get("busSynth", 0.9) or 0.9) * master)
         if self._engine is None:
             return
         song = float(self._prefs.get("busSong", 1.0) or 1.0)
-        master = float(self._prefs.get("busMaster", 0.92) or 0.92)
         drums = (0.0 if self._prefs.get("youDrum", True)
                  else float(self._prefs.get("busDrums", 1.0) or 1.0))
         self._engine.set_bus_gain("song", song)
@@ -2781,7 +2815,18 @@ class KitStudioPanel(tk.Frame):
         self._fold_combo = ttk.Combobox(r4, style="Prac.TCombobox", state="readonly",
                                        width=10, values=fold_vals)
         self._fold_combo.current(0)
+        # DISABLED, deliberately. This combobox had no binding and was never read
+        # anywhere -- changing it did nothing, silently, unlike the neighbouring
+        # Save-as/Pin stubs which at least say they are not wired yet. Per-lane folds
+        # need a routing table that nothing currently builds (the same gap that leaves
+        # PRESET_FOLDS unused), so offering a live-looking control here promises a
+        # feature that does not exist. Showing it greyed with the reason is honest;
+        # re-enable it in the same change that starts passing a routing dict to
+        # resolve_routing().
+        self._fold_combo.configure(state="disabled")
         self._fold_combo.pack(side=tk.LEFT, padx=6)
+        tk.Label(r4, text="(not wired yet)", background=PANEL, foreground=MUTED,
+                 font=F_SMALL).pack(side=tk.LEFT, padx=(4, 0))
 
         r5 = tk.Frame(self.props, background=PANEL)
         r5.pack(fill=tk.X, pady=2)
@@ -2846,9 +2891,19 @@ class KitStudioPanel(tk.Frame):
 
     def _audition(self):
         voice = self._get_layout()["lanes"][self._sel].get("voice", "neutral")
-        ok, _ = self._hook_call("synth_play", voice, 100)
+        # The hook FAILS BY RETURN VALUE, not only by raising: the host's
+        # _pp_synth_play returns False when the voice bank could not be
+        # rendered / the voice is unknown, and returns True when merely muted.
+        # Discarding it into `_` made `ok` mean "the hook exists" -- which it
+        # always does in the embedded app since v4.9.1 wired synth_play -- so a
+        # silent audition never explained itself. Only an explicit False counts;
+        # a MISSING hook (standalone) still takes the same note as before
+        # (audit fix 2026-08-02).
+        ok, played = self._hook_call("synth_play", voice, 100)
         if not ok:
             self._note(f"Audition '{voice}' -- synth wired at integration.")
+        elif played is False:
+            self._note(f"Audition '{voice}' -- the drum synth is unavailable.")
 
     def _on_lefty(self, value):
         self._get_layout()["lefty"] = value
@@ -2985,6 +3040,7 @@ class _KeyboardTestPopup(tk.Toplevel):
         self._pressed: set = set()
         self._last_kp_ms: Dict[str, int] = {}   # keysym -> last KeyPress time
         self._key_bind_id = None
+        self._listen_caption = "Listening…"   # restored if a key proves focus
         self._flash_after: Dict[str, Any] = {}
         self._row_frames: Dict[str, tk.Frame] = {}
         self._row_key_labels: Dict[str, tk.Label] = {}
@@ -3195,13 +3251,57 @@ class _KeyboardTestPopup(tk.Toplevel):
             self._toggle_btn["text"] = "Stop test"
         except Exception:
             pass
-        self._status.configure(text="Listening…", foreground=CYAN)
+        self._listen_caption = "Listening…"
+        self._status.configure(text=self._listen_caption, foreground=CYAN)
+        # <KeyPress> is bound on THIS Toplevel, so "Listening…" is only true
+        # while the keyboard focus is inside this window. focus_set() raising
+        # is the rare half of that (a destroyed window); the common half is a
+        # focus that simply never lands -- the user clicks another app, or the
+        # window manager declines to move focus -- and neither used to change
+        # the status, so a popup that could not receive a single key still read
+        # "Listening…". Gate it the same way the MIDI half below is gated
+        # (audit fix 2026-08-02): claim Listening only on the exception-free
+        # path, then VERIFY a beat later, because Tk focus moves through the
+        # window manager and is not observable synchronously.
+        _focus_ok = True
         try:
             self.focus_set()
         except Exception:
-            pass
+            _focus_ok = False
+        if not _focus_ok:
+            self._status.configure(
+                text="Not listening — could not take keyboard focus",
+                foreground=AMBER)
+        else:
+            self.after(250, self._verify_test_focus)
         self._midi_start_if_available()
         self._append_log("— test started —")
+
+    def _verify_test_focus(self) -> None:
+        """Post-check that the keyboard focus actually landed in this popup.
+
+        Runs ~250 ms after Start test so the window manager has had its say.
+        `focus_displayof()` returns None when focus sits in ANOTHER application
+        -- in which case <KeyPress> never reaches this window and "Listening…"
+        would be a lie. Downgrades the status instead of guessing; a later key
+        press (which proves focus IS here) restores it via _on_key."""
+        if self._closed or not self._testing:
+            return
+        try:
+            w = self.focus_displayof()
+            # winfo_toplevel(), NOT a string prefix: ".!toplevel" is a prefix of
+            # ".!toplevel2", so a path compare would call a DIFFERENT window's
+            # focus "inside" this one.
+            inside = w is not None and w.winfo_toplevel() is self
+        except Exception:
+            return          # can't tell -> say nothing rather than cry wolf
+        if not inside:
+            try:
+                self._status.configure(
+                    text="Not listening — click this window first",
+                    foreground=AMBER)
+            except Exception:
+                pass
 
     def _stop_test(self) -> None:
         self._testing = False
@@ -3226,8 +3326,8 @@ class _KeyboardTestPopup(tk.Toplevel):
         ok2, res = self._hook_call("midi_start", port, self._on_midi_note)
         if ok2 and res is not False:
             self._midi_active = True
-            self._status.configure(
-                text=f"Listening…  MIDI: {port}", foreground=CYAN)
+            self._listen_caption = f"Listening…  MIDI: {port}"
+            self._status.configure(text=self._listen_caption, foreground=CYAN)
         # If start failed, stay keyboard-only silently (status already Listening).
 
     def _midi_stop(self) -> None:
@@ -3274,6 +3374,16 @@ class _KeyboardTestPopup(tk.Toplevel):
             return "break"
         if not self._testing:
             return "break"  # swallow while open so game/settings don't see it
+        # A KeyPress arriving here is proof the focus warning from
+        # _verify_test_focus no longer applies (the user clicked back in), so
+        # put the honest caption back rather than leaving a stale "Not
+        # listening" over a popup that is plainly listening.
+        try:
+            if self._status.cget("text") != self._listen_caption:
+                self._status.configure(text=self._listen_caption,
+                                       foreground=CYAN)
+        except Exception:
+            pass
         # Inter-press timing diagnostic (owner-facing): every KeyPress logs the
         # ms gap since the last press of the SAME key, so a fast roll shows the
         # true delivery cadence — and a held-key OS auto-repeat is logged as a
@@ -3832,6 +3942,31 @@ class SettingsOverlay(_Overlay):
 
 
 class CalibrationOverlay(_Overlay):
+    # 60 BPM MEAN period. The reference the user taps against has to be OURS, at a
+    # period we know, or "how late is the tap" has nothing to be late relative to.
+    #
+    # Was 0.5 (120 BPM): any true latency beyond the +/-250 ms half-period aliased
+    # onto the NEXT click with the WRONG SIGN -- a real +300 ms (ordinary Bluetooth
+    # territory) measured as -200 ms, Apply wrote it, and judging shifted the wrong
+    # way, while the "taps matched" counter looked perfectly healthy throughout.
+    _PERIOD_S = 1.0
+    # The click alternates long-short (1.2x / 0.8x of _PERIOD_S). Against an EVEN
+    # pulse an aliased tap stream is indistinguishable from a genuine small offset
+    # (+900 ms at a 1 s pulse reads as a perfectly consistent -100 ms). Against this
+    # uneven pulse a mis-matched tap's nearest-click distance ALTERNATES between two
+    # values 0.4 * _PERIOD_S apart, so aliasing shows up as spread and is REFUSED
+    # (see _verdict) instead of applied. Residual blind spot: a latency within
+    # ~150 ms of a multiple of the FULL pattern (2 * _PERIOD_S = 2.0 s) still folds
+    # onto a small offset -- inherent to any periodic reference, and no
+    # tap-calibratable audio path is that late.
+    # NOTE if you change _SWING: _offsets_ms keeps the matching window as the
+    # LITERAL 0.4 (= min(_SWING) / 2) because the breaker's INV76 executes that
+    # function standalone on a stub that only has _PERIOD_S. Keep them in step.
+    _SWING = (1.2, 0.8)
+    _APPLY_MIN_MS = -150      # the range inputLatencyMs supports everywhere else
+    _APPLY_MAX_MS = 250       # (Settings spinner + post-session apply both clamp here)
+    _SPREAD_LIMIT_MS = 150.0  # IQR above this = aliased (bimodal) or unusable taps
+
     def __init__(self, parent, *, get_pref, set_pref, note, hook_call) -> None:
         super().__init__(parent, "Calibrate latency", width=460, height=380)
         self._get = get_pref
@@ -3839,20 +3974,57 @@ class CalibrationOverlay(_Overlay):
         self._note = note
         self._hook_call = hook_call
         self._taps: List[float] = []
+        self._clicks: List[float] = []
+        self._job = None
         self._t0 = 0.0
+        self._evt_skew: Optional[float] = None
         self._build()
 
     def open(self) -> None:
         super().open()
         self._taps = []
+        self._clicks = []
+        self._evt_skew = None
         self._t0 = time.perf_counter()
+        self._start_metronome()
         self._update_readout()
         self.panel.focus_set()
+
+    # ----- the metronome this screen always claimed to have -----
+    def _start_metronome(self) -> None:
+        self._stop_metronome()
+        self._click()
+
+    def _click(self) -> None:
+        self._clicks.append(time.perf_counter())
+        self._hook_call("synth_met_click", len(self._clicks) % 4 == 1)
+        # Long-short alternation -- the anti-aliasing lilt, see _SWING above. The
+        # NEXT gap is timed from now, but matching uses the RECORDED click times, so
+        # scheduling drift (or the blocking beep fallback) cannot skew the offsets.
+        gap = self._PERIOD_S * self._SWING[len(self._clicks) % 2]
+        try:
+            self._job = self.panel.after(int(gap * 1000), self._click)
+        except Exception:
+            self._job = None      # widget going away mid-schedule
+
+    def _stop_metronome(self) -> None:
+        if self._job is not None:
+            try:
+                self.panel.after_cancel(self._job)
+            except Exception:
+                pass
+            self._job = None
+
+    def close(self) -> None:
+        # Never leave the click running behind a closed overlay.
+        self._stop_metronome()
+        super().close()
 
     def _build(self) -> None:
         c = self.body
         tk.Label(c, text="Tap along with the metronome click. Press SPACE or "
-                        "click the zone below on each beat.",
+                        "click the zone below on each beat. The click's long-short "
+                        "lilt is deliberate.",
                  background=PANEL, foreground=MUTED, font=F_SMALL,
                  wraplength=400, justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 10))
         self.zone = tk.Frame(c, background=DARKER, highlightthickness=2,
@@ -3872,28 +4044,64 @@ class CalibrationOverlay(_Overlay):
         OutlineButton(brow, "Reset", accent=PURPLE_EDGE, command=self._reset).pack(side=tk.LEFT, padx=6)
 
     def _tap(self, _e=None):
-        t = time.perf_counter()
+        # No click on tap any more: the metronome is the reference now, and sounding a
+        # second identical click on every tap made it impossible to tell which was which.
+        #
+        # Timestamp: when the host has no pygame click, its fallback is a synchronous
+        # winsound.Beep (~70 ms) on THIS thread, so a tap landing during a beep gets
+        # PROCESSED up to ~70 ms late and perf_counter() here would book that delay as
+        # a fake positive offset -- and taps cluster around clicks, exactly when the
+        # beep is sounding. Tk stamps the event when it was QUEUED (event.time, ms
+        # since boot on Windows), so recover the press time from that when it looks
+        # sane. The promptest event seen defines the event-clock <-> perf_counter
+        # offset; anything odd (no event, time 0, clock wrap, correction outside
+        # 0..200 ms) falls back to perf_counter -- never worse than before.
+        now = time.perf_counter()
+        t = now
+        et = getattr(_e, "time", None)
+        if isinstance(et, int) and et > 0:
+            skew = now - et / 1000.0        # clock offset + queue->handler delay
+            if self._evt_skew is None or skew < self._evt_skew:
+                self._evt_skew = skew       # least-delayed event ~= pure clock offset
+            cand = et / 1000.0 + self._evt_skew
+            if 0.0 <= now - cand <= 0.2:
+                t = cand
         self._taps.append(t)
-        self._hook_call("synth_met_click", True)
         self._update_readout()
 
     def _reset(self):
+        # Keep the click running -- resetting means "discard my taps and let me try
+        # again", not "stop the reference".
         self._taps = []
+        self._clicks = [] if self._job is None else self._clicks
         self._update_readout()
 
     def _offsets_ms(self) -> List[float]:
-        # infer beat period from median inter-tap interval; offset = deviation
-        if len(self._taps) < 2:
+        """Each tap MINUS the metronome click it belongs to, in ms.
+
+        The previous version inferred the beat period from the user's OWN median
+        inter-tap interval and then measured every tap against a grid anchored on their
+        OWN first tap. That measures how STEADY someone taps, not how late they are --
+        a perfectly regular tapper scored ~0 ms regardless of their real latency, and
+        with no metronome actually running there was nothing to be late relative to. It
+        could not produce the number it claimed to, and that number is written to
+        inputLatencyMs, which shifts judging.
+
+        Now: real clicks at a known mean period, and the offset is the signed distance
+        to the nearest one. Taps further than half the SHORT click gap from any click
+        are ambiguous (they could belong to either neighbour) and are dropped rather
+        than folded in. 0.4 = min(_SWING) / 2, kept as a literal because the breaker's
+        INV76 executes this function standalone on a stub that only has _PERIOD_S.
+        """
+        if not self._clicks or not self._taps:
             return []
-        intervals = [self._taps[i] - self._taps[i - 1] for i in range(1, len(self._taps))]
-        intervals.sort()
-        period = intervals[len(intervals) // 2]
+        half = self._PERIOD_S * 0.4
         offs = []
-        for i in range(1, len(self._taps)):
-            dev = ((self._taps[i] - self._taps[0]) % period)
-            if dev > period / 2:
-                dev -= period
-            offs.append(dev * 1000.0)
+        for t in self._taps:
+            nearest = min(self._clicks, key=lambda c: abs(t - c))
+            d = t - nearest
+            if abs(d) <= half:
+                offs.append(d * 1000.0)
         return offs
 
     def _suggested(self) -> int:
@@ -3903,23 +4111,80 @@ class CalibrationOverlay(_Overlay):
         so = sorted(offs)
         return max(-150, min(250, _js_round(so[len(so) // 2])))
 
+    def _verdict(self):
+        """(median_ms, problem) for the matched offsets.
+
+        problem is None when the median is applyable; "spread" when the offsets
+        disagree too much to mean one thing -- the aliasing signature of the uneven
+        pulse is two clusters 0.4 * _PERIOD_S apart, and hopeless tapping looks the
+        same; "range" when a CONSISTENT median sits outside what inputLatencyMs
+        supports. Both problems refuse loudly in _apply instead of writing a
+        confidently wrong (or wrongly clamped) number.
+        """
+        offs = self._offsets_ms()
+        if not offs:
+            return None, None
+        so = sorted(offs)
+        n = len(so)
+        median = so[n // 2]
+        if n >= 4 and (so[(3 * n) // 4] - so[n // 4]) > self._SPREAD_LIMIT_MS:
+            return median, "spread"
+        if not (self._APPLY_MIN_MS <= median <= self._APPLY_MAX_MS):
+            return median, "range"
+        return median, None
+
     def _update_readout(self):
         n = len(self._taps)
         offs = self._offsets_ms()
         if offs:
             mean = sum(offs) / len(offs)
-            so = sorted(offs)
-            median = so[len(so) // 2]
+            median, problem = self._verdict()
+            if problem == "spread":
+                tail = "taps too scattered — can't apply"
+            elif problem == "range":
+                tail = (f"outside {self._APPLY_MIN_MS:+d}…{self._APPLY_MAX_MS:+d} ms "
+                        "— can't apply")
+            else:
+                tail = f"suggested {_signed_ms(self._suggested())} ms"
             self.readout.configure(
                 text=f"{n} taps · mean {_signed_ms(mean)} ms · "
-                     f"median {_signed_ms(median)} ms · "
-                     f"suggested {_signed_ms(self._suggested())} ms")
+                     f"median {_signed_ms(median)} ms · {tail}")
         else:
-            self.readout.configure(text=f"{n} taps · (need ≥6 to apply)")
+            self.readout.configure(
+                text=f"{n} taps · (need ≥6 matched to the click to apply)")
 
     def _apply(self):
-        if len(self._taps) < 6:
-            self._note("Tap at least 6 times before applying.")
+        # Gate on USABLE samples (taps matched to a click), not raw presses: a tap that
+        # was too far from any click contributes nothing to the estimate, so six presses
+        # are not necessarily six measurements.
+        if len(self._offsets_ms()) < 6:
+            self._note("Tap along with the click at least 6 times before applying.")
+            return
+        median, problem = self._verdict()
+        if problem == "spread":
+            self._note(
+                "Not applied: your taps disagree with each other too much to give one "
+                "offset. Very high audio latency (Bluetooth / TV audio) reads this way "
+                "against the uneven click on purpose — switch to wired audio and "
+                "recalibrate, or tap more steadily.")
+            return
+        if problem == "range":
+            if median > 0:
+                self._note(
+                    f"Not applied: measured offset {median:+.0f} ms is outside the "
+                    f"{self._APPLY_MIN_MS:+d}…{self._APPLY_MAX_MS:+d} ms range judging "
+                    "supports. Lower-latency (wired) audio is the real fix; you can "
+                    f"also set {self._APPLY_MAX_MS:+d} ms manually in Settings.")
+            else:
+                # A median this far AHEAD of the click is almost never real
+                # anticipation -- it is very high audio latency folding onto the
+                # previous beat. Refuse with the honest reading, never a sign-flipped
+                # correction.
+                self._note(
+                    f"Not applied: taps read {median:+.0f} ms, ahead of the click by "
+                    "more than judging supports. This usually means audio latency too "
+                    "high to measure (Bluetooth / TV audio) — switch to wired audio "
+                    "and recalibrate.")
             return
         v = self._suggested()
         self._set("inputLatencyMs", v)
@@ -4009,7 +4274,18 @@ class PracticeTab(ttk.Frame):
         self._stack.columnconfigure(0, weight=1)
 
         # Home
-        self.home = PracticeHomeScreen(self._stack, hooks=self.hooks)
+        # Home resolves the KIT dropdown through a `get_kit_layout` hook, and the HOST
+        # deliberately omits one ("no host kit store"). Home's DEFAULT choice is
+        # "(current kit)", so with no provider that choice fell through to
+        # default_layout(): every play silently ran on the stock kit, and because
+        # _prepare_session assigns the resolved layout back to self._layout, opening Kit
+        # Studio afterwards persisted that default OVER the user's customised kit. The
+        # tab owns the live layout, so it answers for itself. A snapshot rather than the
+        # live dict, so nothing downstream can alias and mutate our layout in place.
+        _home_hooks = dict(self.hooks)
+        _home_hooks.setdefault(
+            "get_kit_layout", lambda _name=None: apply_layout_snapshot(self._layout))
+        self.home = PracticeHomeScreen(self._stack, hooks=_home_hooks)
         self.home.grid(row=0, column=0, sticky="nsew")
         self.home.on_play_request = self._on_play_request
         self.home.on_open_settings = self._open_settings
@@ -4095,6 +4371,24 @@ class PracticeTab(ttk.Frame):
     def _pref_set(self, key, value) -> None:
         self._prefs[key] = value
         self._cfg_set(_CFG_PREFS_KEY, self._prefs)
+        # Settings > Audio only refreshed the view, so Song/Drums/Master/Mute-synth
+        # changed nothing until the NEXT session started -- while the dock's own `m`
+        # toggle worked. Two controls for one setting, one of them inert. Push the
+        # change now, the same way the dock does.
+        # ...through the PLAY SCREEN, which is where the mixer and the synth live.
+        # Calling self._apply_bus_gains()/self._synth here raised AttributeError on
+        # every slider tick -- PracticeTab has neither -- so the live-apply this
+        # block exists for never happened AND the exception skipped the view refresh
+        # below it. In the frozen .exe stderr is an unread StringIO, so it was silent.
+        _ps = getattr(self, "play", None)
+        if _ps is not None:
+            if key in ("busSong", "busDrums", "busSynth", "busMaster", "youDrum"):
+                _ps._prefs = self._prefs      # _apply_bus_gains reads the screen's copy
+                _ps._apply_bus_gains()
+            elif key == "muteSynth":
+                _syn = getattr(_ps, "_synth", None)
+                if _syn is not None:
+                    _syn.set_muted(bool(value))
         # live-apply to the play screen view where relevant
         if self._current is not None and self.play.winfo_ismapped():
             self.play._prefs = self._prefs
@@ -4163,7 +4457,11 @@ class PracticeTab(ttk.Frame):
         # honour the Home-chosen kit for this play (fall back to the tab layout)
         layout = config.get("layout") or self._layout
         self._layout = apply_layout_snapshot(layout)
-        resolved = resolve_routing(chart, self._layout, None)
+        # Pass the preset's fold table. With routing=None a note whose lane the preset
+        # does not show fell to active_order[0] -- the hi-hat -- so Compact 6 demanded
+        # hi-hat for Tom-2 and Ride, and Starter 4 for crash and every tom.
+        resolved = resolve_routing(
+            chart, self._layout, {"folds": folds_for_order(self._layout.get("order"))})
         lane_notes = build_lane_notes(chart, resolved)
         order = resolved["activeOrder"]
         lane_visible = [self._layout["lanes"][lid].get("visible", True) is not False
@@ -4187,7 +4485,17 @@ class PracticeTab(ttk.Frame):
         if source_mode not in {"auto", "fullmix", "stems"}:
             source_mode = "auto"
         self._hook_call("mixer_set_source_mode", source_mode)
-        self._hook_call("mixer_load_stems", config.get("audio_paths") or {})
+        # The load hook FAILS BY RETURN VALUE, not only by raising (same
+        # contract Preview's _load_stem branches on): the host returns False
+        # when the stem load blew up internally, and discarding it started the
+        # session over total silence with no explanation. Only an explicit
+        # False counts -- a missing hook (standalone) and a None return still
+        # mean "recorded" (audit fix 2026-08-02).
+        _ld_ok, _ld_res = self._hook_call(
+            "mixer_load_stems", config.get("audio_paths") or {})
+        if _ld_ok and _ld_res is False:
+            self._status("Song audio could not be loaded — "
+                         "playing on the silent clock.")
         ok, dur = self._hook_call("mixer_audio_duration")
         audio_dur = max(0.0, _finite_or(dur, 0.0)) if ok else 0.0
         duration = max(song_duration_from_lanes(lane_notes), audio_dur)
@@ -4334,7 +4642,11 @@ class PracticeTab(ttk.Frame):
         chart = cur["chart"]
         old = cur["session"]
         old_order = list((cur.get("resolved") or {}).get("activeOrder") or [])
-        resolved = resolve_routing(chart, self._layout, None)
+        # Re-derived from the CURRENT layout, so a live Kit Studio edit that moves the
+        # kit away from a preset shape drops the folds with it rather than keeping
+        # stale fold targets that may no longer be lanes.
+        resolved = resolve_routing(
+            chart, self._layout, {"folds": folds_for_order(self._layout.get("order"))})
         lane_notes = build_lane_notes(chart, resolved)
         order = resolved["activeOrder"]
         lane_visible = [self._layout["lanes"][lid].get("visible", True) is not False

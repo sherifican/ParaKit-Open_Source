@@ -117,6 +117,7 @@ from parakit_practice_engine import (
     decode_chart_bytes,
     default_layout,
     difficulty_from_filename,
+    folds_for_order,
     lane_color,
     parse_rlrr,
     resolve_routing,
@@ -2155,10 +2156,23 @@ class PracticeHomeScreen(ttk.Frame):
 
     def _on_load_single_audio(self) -> None:
         last_dir = self._cfg_get("practice_last_audio_dir", "")
+        # Offer only what the actual decoder can open. Practice's manual audio
+        # is decoded by the host mixer via soundfile (_pp_decode_stem), the
+        # SAME decoder Preview uses, so reuse Preview's decoder-derived pattern
+        # helper instead of hardcoding a list here (the Preview picker's old
+        # hardcoded list offered *.m4a *.aac, which soundfile cannot decode —
+        # green "Loaded" button, silent playback; audit fix 2026-08-02).
+        try:
+            from parakit_preview_tab import _decoder_audio_patterns
+            patterns = _decoder_audio_patterns()
+        except Exception:
+            # Standalone / import failure: the always-supported trio (same
+            # fallback the helper itself uses when soundfile is missing).
+            patterns = "*.wav *.flac *.ogg"
         paths = filedialog.askopenfilenames(
             title="Add audio (Full Mix / Stem)",
             initialdir=last_dir or None,
-            filetypes=[("Audio", "*.wav *.mp3 *.flac *.ogg"), ("All files", "*.*")])
+            filetypes=[("Audio", patterns), ("All files", "*.*")])
         if paths:
             self._load_single_audio_paths(list(paths))
 
@@ -2192,10 +2206,15 @@ class PracticeHomeScreen(ttk.Frame):
             base_name = base_name[: -len(" (yours)")]
         if base_name in BUILTIN_PRESETS:
             return BUILTIN_PRESETS[base_name]()
-        if base_name not in (_KIT_CURRENT, _KIT_PINNED):
-            ok, layout = self._hook_call("get_kit_layout", base_name)
-            if ok and isinstance(layout, dict):
-                return layout
+        # Ask the owner what this choice means -- INCLUDING "(current kit)" and
+        # "(pinned to this song)". Those two used to skip the hook entirely and fall
+        # straight through to default_layout(), and "(current kit)" is the DEFAULT
+        # selection, so the common path silently discarded whatever the user had built
+        # in Kit Studio. default_layout() is now only the answer when nobody can give
+        # one at all.
+        ok, layout = self._hook_call("get_kit_layout", base_name)
+        if ok and isinstance(layout, dict):
+            return layout
         return default_layout()
 
     def _build_session_config(self, *, source: str, chart: dict,
@@ -2205,7 +2224,11 @@ class PracticeHomeScreen(ttk.Frame):
                               audio_source: str = "auto",
                               mom_supported: Optional[bool] = None) -> dict:
         layout = self._resolve_kit_layout(kit_choice)
-        resolved = resolve_routing(chart, layout, None)
+        # Same fold table the play screen will use, so the lane counts shown on the
+        # pre-play panel match what the session actually routes. Passing None here made
+        # every lane the chosen preset hides collapse onto the hi-hat.
+        resolved = resolve_routing(chart, layout,
+                                   {"folds": folds_for_order(layout.get("order"))})
         lane_notes = build_lane_notes(chart, resolved)
         duration = song_duration_from_lanes(lane_notes)
         prefs = self._prefs

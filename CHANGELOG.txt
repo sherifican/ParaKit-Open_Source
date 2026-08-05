@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.8  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.10  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,300 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.10   --   2026-08-01
+------------------------------------------------------------------------------
+  Bug fixes across the MIDI Editor, Spectral Comparison, Preview, the YouTube
+  tab, the Stem Splitter and batch conversion. No detection changes.
+
+  REVIEW ISSUES NO LONGER FIXES THE WRONG NOTES
+  The MIDI Editor's Review Issues window remembered the notes it found by
+  POSITION. That window is meant to be used while you edit the chart behind it
+  -- that is what Select & Jump is for -- so if you deleted, sorted or undid
+  anything before pressing Auto Fix, every position had shifted and Auto Fix
+  acted on whatever note had moved into that slot instead. It now remembers the
+  notes themselves. If the chart has changed so much that a scan is stale, it
+  tells you to rescan instead of quietly doing nothing.
+
+  TWO TABS CAN NO LONGER OVERWRITE EACH OTHER'S WORK
+  Spectral Comparison's Overwrite and the MIDI Editor's Save could both write
+  the same file. Whichever you used second silently threw away the other's
+  corrections. Each now tells the other, so the editor reloads (or asks first if
+  you have unsaved edits), and saving in the editor disables an Overwrite that
+  would write a stale comparison back over it.
+
+  UNSAVED EDITS ARE NO LONGER LOST WITHOUT WARNING
+  Sending a chart from the MIDI Editor to Preview loaded the SAVED file, so
+  unsaved edits silently did not appear -- it now offers to save first. Preview
+  itself no longer replaces an edited chart when you load the demo, import
+  another chart, clear it, or receive one from another tab, without asking.
+
+  AUDIO NO LONGER KEEPS PLAYING AFTER PREVIEW CLOSES
+  Closing Preview cancelled its timers but never stopped playback, so the song
+  could keep playing with nothing left on screen to stop it. Preview now stops
+  the audio first, then closes.
+
+  YOUTUBE LIBRARY
+  When a download finished without reporting its file name, ParaKit fell back to
+  the newest audio file in the folder no matter how old it was, then wrote the
+  requested song's title, artist and cover onto it -- silently relabelling an
+  unrelated earlier download. It now only considers files from that download.
+  A corrupted Deno download could also be reported as "Deno detected" while the
+  button to re-download it was disabled; it is now validated before being kept.
+
+  STEM SPLITTER
+  The model-status line was written by two checks racing each other, so "models
+  ready" could be replaced a moment later by "models not cached". Frozen builds
+  running DrumSep also ignored the graphics-card check and could crash on newer
+  cards instead of falling back to the CPU.
+
+  DISK SPACE
+  Stem-splitting and pre-split leftovers were written under names the temp
+  sweep did not recognise, so a run that crashed part-way left files behind
+  that nothing ever cleaned up. They are now named so the sweep can find them,
+  and anything a crash leaves behind is cleared on the next start.
+
+  BATCH CONVERSION
+  An unexpected error left the progress bar spinning and the button stuck on
+  "Converting..." forever, with nothing reported. It now says what happened.
+
+  Later fix rounds in the same release, below, extend to Sheet Music, the
+  Practice tab, the Song Tester, the Song Creator, the Asset Manager, the
+  .ogg converter, the MIDI Extractor and the Help tab.
+
+  SHEET MUSIC: TIMING
+  Four timing defects, covering both conversion modes:
+  - Auto-align (Basic mode) applied the typed offset in the wrong units, so
+    it was only correct for files that happened to use 480 divisions per
+    quarter note. A typed 2.5-second offset could land at 1200 seconds on one
+    file and 1.6 on another; Sibelius and Finale exports were both affected.
+    The offset now lands exactly where entered, as the label promises.
+  - In the default (high-accuracy) mode, a pickup bar pushed the whole song
+    late: every note after the lead-in played late by the length of the
+    missing beats, on a bar layout that is routine for MuseScore scores.
+    Measures now advance by their actual content.
+  - "Override Time Sig" did nothing in the default mode, and every exported
+    file claimed 4/4 whatever the score said. A 6/8 score now writes 6/8,
+    and the override is honoured in both modes.
+  - Scores with more than one instrument could come out stretched in Basic
+    mode: the drum part was timed with the FIRST part's resolution (say, the
+    piano's), so drum onsets could play at several times their real spacing.
+  Also: notes pushed before 0:00 by a negative offset were silently stacked
+  into one chord at the very start -- the number clamped is now reported --
+  and the log line reporting the offset printed +0.000s no matter what was
+  typed.
+
+  SHEET MUSIC: .MXL FILES, SILENT OVERWRITES, MISSING FFMPEG
+  - A compressed .mxl whose score member is named "score.musicxml" --
+    spec-legal, and what common exporters produce -- failed to convert:
+    "Could not find XML content" in Basic mode, and in the default mode a
+    crash naming an internal Python variable, right after a log line saying
+    a step had been harmlessly skipped. Both modes read these files now.
+  - Both modes wrote "<score name>.mid" into the remembered output folder
+    without asking, so two sources sharing a file name silently replaced
+    each other's chart. It now asks before overwriting; declining saves
+    alongside under a numbered name instead of throwing away a conversion
+    that already ran.
+  - On a machine without FFmpeg, audio conversion failed with one
+    "[WinError 2] The system cannot find the file specified" per file --
+    wording that reads as "your input file is missing". FFmpeg is now
+    checked before any file is touched and the install guidance, with the
+    download link, is actually shown. Installs with a bundled ffmpeg.exe
+    still convert as before.
+  - The Polish word for the kick drum was stored garbled in the
+    instrument-name table, so the advertised Polish instrument-name
+    correction could never match it.
+  - Every conversion log ended with a stray duplicate of the last
+    per-instrument count line.
+
+  PRACTICE: CALIBRATION MEASURED THE WRONG THING
+  The latency calibration overlay said "tap along with the metronome click"
+  -- and never started a metronome; it only clicked back in response to each
+  tap. The number it produced measured how STEADILY you tap, not how LATE: a
+  perfectly steady tapper scored about 0 ms whatever their real latency was,
+  and that value shifts how your hits are judged. A real metronome click now
+  plays at a fixed tempo and each tap is measured against it; taps too far
+  from any click to be attributed are dropped rather than guessed at, and
+  the click stops when the overlay closes.
+
+  A second defect in the same test surfaced after that fix: the click ran
+  twice a second, so any real delay past a quarter second matched the NEXT
+  click instead of its own -- with the wrong sign. A true +300 ms delay
+  (ordinary Bluetooth-headphone territory) measured as -200 ms, was
+  applied, and pushed timing further out, while every tap looked cleanly
+  matched. The click is now slower and deliberately uneven -- the
+  long-short lilt is on purpose -- which makes that mismatch show up as
+  scatter instead of a clean wrong answer. And a result the test cannot
+  measure confidently is now REFUSED, with a message naming what it saw
+  and pointing at wired audio, instead of applied as a guess. Anyone who
+  calibrated on high-latency audio with an earlier build should
+  recalibrate, or clear the offset in Settings.
+
+  PRACTICE: SMALLER KITS PILED EVERYTHING ONTO THE HI-HAT
+  Picking a smaller kit preset is supposed to fold the hidden lanes into
+  sensible neighbours -- toms into a remaining tom, cymbals into the crash.
+  The fold tables existed but were never consulted, so every hidden lane's
+  notes landed on the hi-hat instead. On the Starter 4 kit, every tom and
+  cymbal in a chart played on the hi-hat lane while the lane labelled
+  "Toms+Cym" received none of them. The folds now apply; the Standard 8,
+  Cymbal Split 10 and Lefty kits hide nothing and are unchanged.
+
+  PRACTICE: THE KIT YOU CUSTOMISED WAS NOT THE KIT YOU PLAYED
+  With "(current kit)" selected, every session ran on the stock kit rather
+  than the live Kit Studio layout -- and opening Kit Studio after playing
+  could then save that stock kit OVER the customised one. Sessions now use
+  the tab's own live layout.
+
+  CONTROLS THAT DID NOTHING
+  - "Push to Quest" failed on every press -- invisibly in the .exe build --
+    which also made its own "convert a song first" guidance unreachable.
+  - Practice's Auto-kick toggle (the dock chip and key 3) flipped the label
+    but not the running session, so kicks kept being missed and it could not
+    be turned back off mid-song.
+  - The Synth volume slider did nothing anywhere, and Master never lowered
+    synth hits either; synth volume now follows both.
+  - Changes in Practice's Settings > Audio did not take effect during play,
+    while the dock's own controls did. They now apply immediately.
+  - Kit Studio's "Fold into" dropdown was never read at all; it is now
+    disabled and labelled "(not wired yet)" instead of looking live.
+
+  SONG TESTER NO LONGER CRASHES ON THE PROBLEMS IT EXISTS TO FIND
+  Four kinds of input ended the analysis with a raw Python error dumped into
+  the report: silent or unreadable audio (nothing to align against), a chart
+  whose notes all sit past the end of the audio (the exact case its own
+  duration-mismatch warning describes), a .rlrr with no note events, and a
+  valid .rlrr that identifies instruments by index instead of by name. Each
+  now stops with a plain explanation, and the Run button recovers instead of
+  sticking on "Testing...".
+
+  SONG TESTER HIGHLIGHTS NOW ACTUALLY LAND IN THE EDITOR
+  "Highlight in MIDI Editor" could announce "N note(s) highlighted" while
+  nothing was outlined: when testing from a .rlrr -- the path the tab calls
+  RECOMMENDED -- the tester's timestamps carry the conversion offset and the
+  editor's do not, and the lookup demanded an exact match. Flags are now
+  matched to the editor's own notes within a tight tolerance, the count
+  shown is how many actually landed, and flags that match no note are
+  reported instead of silently dropped.
+
+  SONG CREATOR AND PROJECT FILES
+  - Opening a .parakit project that omits the difficulty or complexity
+    setting -- which is legal -- misnamed the export and then broke Convert
+    with an internal error until restart. Both values are now validated;
+    the recent-songs list had the same weakness and got the same guard.
+  - A song title containing a character Windows forbids in folder names
+    (an "AC/DC"-style slash) silently prevented the conversion log .txt
+    from being written.
+  - An extra stem sharing a file name with the song audio overwrote it
+    inside the output pack and appeared twice in the track list. Every
+    copied file now gets a unique destination name.
+  - Clear All left the Preview Clip and Extra Stem attached even though
+    every visible field emptied, so the next Convert copied the previous
+    song's files into the new pack.
+
+  ASSET MANAGER
+  - An album-art search that errored or found nothing left the PREVIOUS
+    song's cover on screen -- and "Apply art" and "Save Image..." then
+    silently acted on that earlier song. The preview and the stored result
+    are now cleared the moment a new search starts.
+  - A clip with a zero or negative Duration was exported as a silent,
+    header-only .ogg and reported as saved -- and could then be wired into
+    a song pack. It is now rejected before anything is written.
+
+  A FAILED .OGG CONVERSION NO LONGER DESTROYS THE PREVIOUS FILE
+  Re-converting a song replaces its existing .ogg -- but the old file was
+  emptied BEFORE encoding began, so a failed encode (an FFmpeg build without
+  .ogg support, a full disk) left the earlier good file at zero bytes under
+  a "Failed" message. Encoding now goes to a temporary file that only
+  replaces the real one on success.
+
+  ALBUM ART COULD COME FROM THE WRONG SONG
+  Covers extracted from audio tags were cached under the audio FILE NAME
+  alone, so two same-named files in different folders -- exactly what the
+  stem workflow produces -- shared one cached cover: the last extraction
+  won, and the other song exported the wrong art. The cache is now keyed to
+  the file's full location.
+
+  REVIEW ISSUES AND SPECTRAL FOLLOW-UPS
+  Two rough edges in this release's own fixes: Soften Flams and the cymbal
+  Auto Fix answered "No safe fixes were found" when the real cause was a
+  stale scan (they now say to rescan, like the other rows), and a Spectral
+  Overwrite button disarmed by a newer editor save blamed the file type
+  ("not a .mid file") instead of saying why it was disabled.
+
+  TAP TEMPO WAS INVERTED AT CHANGED PLAYBACK SPEEDS
+  Tapping a BPM in the MIDI Editor -- the B key, or the tempo-map row's Tap
+  button -- while playback was slowed or sped up scaled the result the
+  wrong way: tapping along to a 120 BPM song at half speed wrote 30 BPM.
+  Only normal speed gave the right number, and the value feeds the tempo
+  map, so a chart's timing grid could be warped by it. Both tap paths now
+  convert correctly at any playback speed.
+
+  MIDI EXTRACTOR
+  - Extract ran on remembered picks, not on the sub-tab on screen -- and a
+    single-file pick was never forgotten. Pick one file, switch to Batch
+    Folder, pick a folder, press Extract: it re-extracted the single file
+    while the batch label still promised a folder's worth. Extract now runs
+    whatever the visible sub-tab shows, and says so if nothing is picked
+    there yet.
+  - An unexpected error mid-run -- a file gone missing, locked, or a
+    cloud-synced file failing to download partway through a batch -- ended
+    the run silently: no error, no completion, the panel stuck on
+    "Running..." with its buttons disabled until ParaKit was restarted. The
+    error is now reported (for a batch, with the counts up to that point)
+    and the buttons recover.
+
+  SUCCESS MESSAGES THAT WERE NEVER CHECKED
+  - The Manual Note Manager's hi-hat save reported "saved to this chart",
+    and its Reset reported all lanes reset, whether or not the write to
+    disk actually succeeded -- on a read-only folder or a full disk the old
+    choices quietly returned on the next load. Both now say when the change
+    could not be saved and holds for this session only.
+  - Exporting an activity log ("Export Log"), or the Song Tester's fix log,
+    to a folder that cannot be written did nothing at all -- no error, no
+    file, no confirmation. A failed export now says why and suggests
+    another folder.
+
+  HELP DESCRIBED A TAB THAT NO LONGER EXISTS
+  The Preview section of Help still documented the retired Visualizer tab:
+  it called Preview "visual reference only - no scoring, no input" and
+  listed controls that do not exist, while omitting what the tab actually
+  has -- including the unsaved-edit prompts added in this very release, and
+  stating the audio offset in seconds when the control takes milliseconds.
+  Rewritten from the live tab, and Practice is documented as its own tab
+  rather than a button that is no longer reachable. Related label fixes:
+  the drum separator's "Off" choice no longer claims to be the default;
+  Neural Stem Isolation is no longer marked "(experimental)" -- it defaults
+  on once installed; Spectral Comparison lost a "New!" badge it had
+  outgrown; the YouTube Requirements list now names the JS runtime and the
+  Get Deno button; the Review Issues legend names both causes of an orange
+  outline; and the save-before-handoff prompts in Preview and Song Creator
+  now say that declining cancels, instead of aborting silently.
+
+  THE STEM SEPARATOR SETTING COULD BE IGNORED
+  Audio to MIDI read the Neural Stem Isolation choice while the conversion
+  was already running, on a different thread from the one that owns it. If
+  that read failed the conversion did not stop or warn -- it quietly carried
+  on as though the setting were off, producing a different chart from the one
+  the setting asked for. The choice is now read once when the conversion
+  starts. The separator buttons are also disabled during a run, like every
+  other detection setting; they were the only ones still clickable.
+
+  SETTINGS THAT DID NOT STICK
+  Several Audio to MIDI settings did not survive a restart the way the
+  controls implied. The detection engine and other options could be silently
+  reverted at launch to whatever an older saved profile held, and the older
+  value was then written back over the newer one. Ride, kick, the separator
+  choice and the debug toggle were left out of saved profiles entirely -- and
+  the kick and debug settings were not saved anywhere at all, so they reset on
+  every launch. Genre profiles promised to remember the engine, ML threshold
+  and de-duplication settings but only ever saved three of the five.
+
+  PER-SONG SETTINGS COULD OVERWRITE EACH OTHER
+  Audio to MIDI remembers settings per source file, but two files with the
+  same name in different folders -- or the same song as .wav and .flac --
+  shared one entry, so opening the second silently replaced the first's saved
+  settings. Each file now gets its own; anything already saved still loads.
 
 ------------------------------------------------------------------------------
   v4.9.8   --   2026-07-31

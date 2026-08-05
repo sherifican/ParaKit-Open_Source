@@ -4,7 +4,7 @@
   with Clone Hero (.chart) support.
 ==============================================================================
 
-  Version in this release: 4.9.8
+  Version in this release: 4.9.10
   Runtime:                 Python 3.12 (required)
 
   This is the plain-text companion to README.md. It has the same information
@@ -147,13 +147,12 @@
 
     ParaKit v5 (future)
       - UI framework:  PySide6 / Qt
-      - Status:        early rebuild, barely started -- NOT in this release
+      - Status:        NOT in this release (see the note at the top)
       - Themeable with UI Studio?  Yes (UI Studio is built for v5)
 
   UI Studio -- the visual UI/layout designer -- is built for the v5 (PySide6)
   rebuild and is NOT compatible with this v4.x (Tkinter) app. It is not included
-  in this release because it cannot run without the v5 code, which is not ready
-  yet. UI Studio and v5 will arrive in a later follow-up. You cannot use UI
+  in this release because it cannot run without the v5 code. You cannot use UI
   Studio to re-theme or edit this v4.x app -- but once it ships, you will be
   able to use it to design for v5 or build your own custom ParaKit from source.
 

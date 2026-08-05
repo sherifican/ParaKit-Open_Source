@@ -43,7 +43,37 @@ RECOMMENDED_ASYM_QUALITY = {"gate_to_ride": 0.3, "gate_swap": 0.7}
 
 # ---- kick post-pass constants (mirror kick_postpass.py) ---------------------
 KICK_PHANTOM_LABEL = 0
-KICK_RECOMMENDED_GATE = 0.9
+# 2026-07-31: HELD AT 0.9 after a corpus sweep, deliberately.
+# A 40-pack sweep (41,771 detected kicks, split by input arm) recommended 0.950, and it IS
+# strictly better than the pre-fix FULL-MIX baseline (288 phantoms removed / 4 real lost vs
+# 25 / 8). But the recommendation was scored against the wrong arm for this app: on a
+# DRUMS-STEM input the cleanup was ALREADY aligned, so today's behaviour there is the drums
+# arm at 0.900 -- 680 removed / 28 lost. Moving to 0.950 would have cut phantom removal for
+# stem users by 58% (680 -> 288), i.e. a REGRESSION on the main workflow, bought with a
+# gain on a path that (a) is not the common case and (b) already pre-splits a full mix
+# before detection anyway.
+#
+# Held also because this project's own error hierarchy says a phantom kick at a no-drum time
+# is the WORST error class -- worse than a missing kick -- so at BOTH of the ratios below the
+# extra cleaning is the better chart:
+#   * gate trade, drums arm, 0.900 vs 0.950 -- 392 more phantoms removed for 24 more real
+#     kicks, ~16:1. THIS is the trade this constant controls.
+#   * a FIXED 0.900 scored on two DIFFERENT inputs, full-mix arm 25/8 vs drums arm 680/28.
+#     An earlier revision of this comment quoted these as the gate trade, which was wrong
+#     (right conclusion, wrong arithmetic attached), and a later one called them "what
+#     4.9.9 ships". BOTH descriptions are now void: 4.9.9 was the change that fed this
+#     pass the separator composite, and it was REVERTED on 2026-08-01 after a 40-pack
+#     measurement of the real production condition showed it removes 178 FEWER phantoms
+#     and scores 4.24 pp WORSE on cymbals than doing nothing. Nothing in this file's
+#     behaviour changed; what changed is that the audio it reads is the user's own file,
+#     as it has always been in shipped builds.
+#
+# ⚠ The gate is ALSO input-dependent, which this single constant cannot express: matched
+# probes put the composite's equivalent point near 0.875 (stem) and 0.830 (full mix). Those
+# are 10-pack figures, unshipped, and they only matter if the composite is ever fed here
+# again. Note they would not fix the cymbal half at all -- the cymbal pass does not read
+# this constant.
+KICK_RECOMMENDED_GATE = 0.9   # unchanged across 4.9.8/4.9.9/4.9.10; see above before touching
 
 # ---- cross-stem bleed kick pass (F12), two-tier -----------------------------
 # A kick is a bleed-phantom candidate iff a non-drum stem dominates the drums

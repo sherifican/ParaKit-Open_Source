@@ -61,7 +61,7 @@ def parse_rlrr(rlrr_path: Path):
     get a clean message rather than a raw traceback.
     """
     text = None
-    for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1"):
+    for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
         try:
             text = rlrr_path.read_text(encoding=enc)
             break
@@ -227,6 +227,14 @@ def extract_notes_from_rlrr(rlrr_path: Path) -> tuple[list, dict, str]:
         meta, events, instruments, _ = parse_rlrr(rlrr_path)
     except RuntimeError as exc:
         return [], {}, str(exc)
+    except OSError as exc:
+        # Unreadable file — deleted mid-batch, AV-locked, or a OneDrive
+        # placeholder whose recall failed. parse_rlrr's read_text lets OSError
+        # propagate, and parse_rlrr itself must stay identical to
+        # paradb_extract.py (SYNC RULE at top of file), so the translation to a
+        # clean per-file error lives here: the batch skips and reports this
+        # file instead of the worker thread dying on a raw traceback.
+        return [], {}, f"Could not read {rlrr_path.name}: {exc}"
 
     notes = []
     try:

@@ -636,7 +636,7 @@ SM_DRUM_NAME_TO_MIDI = {
     # NL
     'bastrom':          36, 'basdrum':          36,
     # PL
-    'beben':            36, 'wielki bÄ™ben':     36,
+    'beben':            36, 'wielki bęben':     36,
     # JA (romaji)
     'basudoramu':       36, 'kikku':            36,
 
@@ -5658,16 +5658,31 @@ class MidiExtractorPanel:
         self._stop_event.clear()
         self._set_running(True)
 
-        if self._single_path and not self._folder_path:
-            t = threading.Thread(target=self._run_single, daemon=True)
-        elif self._folder_path and not self._single_path:
+        # Dispatch on the VISIBLE subtab, not on stored path state. _single_path
+        # is never cleared once set, so the old path-state dispatch made the
+        # Batch Folder subtab unreachable after any single-file pick — Extract
+        # silently re-ran the old single file while the batch count label sat
+        # there promising N files.
+        try:
+            on_batch = self._nb.select() == str(self._tab_batch)
+        except Exception:
+            # Notebook unavailable (shouldn't happen) — old behaviour minus the
+            # single-path bias: prefer whichever pick exists uniquely.
+            on_batch = bool(self._folder_path and not self._single_path)
+
+        if on_batch:
+            if not self._folder_path:
+                self._log_write("Pick a folder on the Batch Folder subtab first.\n", "warn")
+                self._set_running(False)
+                return
             rlrrs = self._filtered_rlrrs()
             t = threading.Thread(target=self._run_batch, args=(rlrrs,), daemon=True)
-        elif self._single_path:
-            t = threading.Thread(target=self._run_single, daemon=True)
         else:
-            self._set_running(False)
-            return
+            if not self._single_path:
+                self._log_write("Pick a .rlrr file on the Single File subtab first.\n", "warn")
+                self._set_running(False)
+                return
+            t = threading.Thread(target=self._run_single, daemon=True)
         t.start()
 
     def _start_extract_and_send(self):
@@ -5681,73 +5696,97 @@ class MidiExtractorPanel:
     # ── Workers (daemon threads — no direct widget access) ────────────────────
 
     def _run_single(self):
-        path = self._single_path
-        self._frame.after(0, lambda: self._log_write(f"Extracting {path.name} …\n", "info"))
-        self._frame.after(0, self._progress.start)
+        # try/finally mirrors _batch_do_convert's guard: an unexpected raise on
+        # this worker thread used to die silently — status stuck on "Running…",
+        # Extract/Send disabled until restart. The finally runs _on_done on
+        # EVERY exit.
+        try:
+            path = self._single_path
+            self._frame.after(0, lambda: self._log_write(f"Extracting {path.name} …\n", "info"))
+            self._frame.after(0, self._progress.start)
 
-        title  = self._meta_title.get().strip()
-        artist = self._meta_artist.get().strip()
-        notes  = self._single_notes
+            title  = self._meta_title.get().strip()
+            artist = self._meta_artist.get().strip()
+            notes  = self._single_notes
 
-        if not notes:
-            notes, _, err = extract_notes_from_rlrr(path)
-            if err:
-                self._frame.after(0, lambda: self._log_write(f"ERR {err}\n", "err"))
-                self._frame.after(0, self._on_done)
+            if not notes:
+                notes, _, err = extract_notes_from_rlrr(path)
+                if err:
+                    self._frame.after(0, lambda: self._log_write(f"ERR {err}\n", "err"))
+                    return
+
+            stem     = _me_safe_stem(title) if title else path.stem
+            out_path = (self._output_dir or path.parent) / (stem + ".mid")
+
+            try:
+                tmp = out_path.with_suffix(".mid.tmp")
+                write_mid_with_metadata(notes, tmp, title=title, artist=artist)
+                tmp.replace(out_path)
+            except Exception as exc:
+                msg = f"Write failed: {exc}"
+                self._frame.after(0, lambda: self._log_write(f"ERR {msg}\n", "err"))
                 return
 
-        stem     = _me_safe_stem(title) if title else path.stem
-        out_path = (self._output_dir or path.parent) / (stem + ".mid")
-
-        try:
-            tmp = out_path.with_suffix(".mid.tmp")
-            write_mid_with_metadata(notes, tmp, title=title, artist=artist)
-            tmp.replace(out_path)
+            label = f"{title} - {artist}".strip(" -") if artist else (title or path.stem)
+            self._frame.after(0, lambda: self._log_write(
+                f"OK  {label} -> {out_path.name} ({len(notes)} notes)\n", "ok"))
+            if self._send_to_editor_after and self._on_send_to_editor:
+                _p = str(out_path)
+                self._frame.after(0, lambda: self._on_send_to_editor(_p))
         except Exception as exc:
-            msg = f"Write failed: {exc}"
-            self._frame.after(0, lambda: self._log_write(f"ERR {msg}\n", "err"))
+            _m = f"{type(exc).__name__}: {exc}"
+            try:
+                self._frame.after(0, lambda m=_m: self._log_write(
+                    f"ERR unexpected error — {m}\n", "err"))
+            except Exception:
+                pass
+        finally:
             self._frame.after(0, self._on_done)
-            return
-
-        label = f"{title} - {artist}".strip(" -") if artist else (title or path.stem)
-        self._frame.after(0, lambda: self._log_write(
-            f"OK  {label} -> {out_path.name} ({len(notes)} notes)\n", "ok"))
-        if self._send_to_editor_after and self._on_send_to_editor:
-            _p = str(out_path)
-            self._frame.after(0, lambda: self._on_send_to_editor(_p))
-        self._frame.after(0, self._on_done)
 
     def _run_batch(self, rlrr_files: list):
-        total = len(rlrr_files)
-        self._frame.after(0, lambda: self._progress.configure(
-            maximum=max(total, 1), value=0))
+        # Same try/finally guard as _run_single (and _batch_do_convert): a raise
+        # mid-batch used to strand the UI on "Running…" with no error shown.
         ok_count = err_count = skip_count = 0
+        total = len(rlrr_files)
+        try:
+            self._frame.after(0, lambda: self._progress.configure(
+                maximum=max(total, 1), value=0))
 
-        for i, rlrr_path in enumerate(rlrr_files, 1):
-            if self._stop_event.is_set():
-                skip_count = total - (i - 1)
-                self._frame.after(0, lambda s=i - 1: self._log_write(
-                    f"Stopped after {s}/{total} files.\n", "warn"))
-                break
+            for i, rlrr_path in enumerate(rlrr_files, 1):
+                if self._stop_event.is_set():
+                    skip_count = total - (i - 1)
+                    self._frame.after(0, lambda s=i - 1: self._log_write(
+                        f"Stopped after {s}/{total} files.\n", "warn"))
+                    break
 
-            out_path = self._resolve_output(rlrr_path)
-            ok, msg = self._extract_one_batch(rlrr_path, out_path)
-            tag  = "ok" if ok else "err"
-            line = f"{'OK ' if ok else 'ERR'} [{i}/{total}] {msg}\n"
-            if ok:
-                ok_count += 1
-            else:
-                err_count += 1
+                out_path = self._resolve_output(rlrr_path)
+                ok, msg = self._extract_one_batch(rlrr_path, out_path)
+                tag  = "ok" if ok else "err"
+                line = f"{'OK ' if ok else 'ERR'} [{i}/{total}] {msg}\n"
+                if ok:
+                    ok_count += 1
+                else:
+                    err_count += 1
 
-            self._frame.after(0, lambda l=line, t=tag, v=i: (
-                self._log_write(l, t),
-                self._progress.configure(value=v),
-                self._prog_var.set(f"{v}/{total}"),
-            ))
+                self._frame.after(0, lambda l=line, t=tag, v=i: (
+                    self._log_write(l, t),
+                    self._progress.configure(value=v),
+                    self._prog_var.set(f"{v}/{total}"),
+                ))
 
-        self._frame.after(0, lambda: self._log_write(
-            f"\nDone — {ok_count} OK, {err_count} error(s), {skip_count} skipped\n"))
-        self._frame.after(0, self._on_done)
+            self._frame.after(0, lambda: self._log_write(
+                f"\nDone — {ok_count} OK, {err_count} error(s), {skip_count} skipped\n"))
+        except Exception as exc:
+            _m = f"{type(exc).__name__}: {exc}"
+            try:
+                self._frame.after(0, lambda m=_m: self._log_write(
+                    f"\nERR batch stopped by an unexpected error — {m}\n"
+                    f"({ok_count} OK, {err_count} error(s) before it stopped)\n",
+                    "err"))
+            except Exception:
+                pass
+        finally:
+            self._frame.after(0, self._on_done)
 
     # ── Core extraction (worker thread) ──────────────────────────────────────
 
@@ -5810,7 +5849,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.8"
+    VERSION = "4.9.10"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -7414,7 +7453,11 @@ class MidiToRlrrApp:
         %TEMP%/parakit_sep_v4_4_*/ (Neural Stem Isolation mkdtemp dirs — 100+ MB
         of stem WAVs per run, never cleaned in-run), and
         %TEMP%/larsnet_runtime_*.yaml (orphaned when the alt-detector child is
-        timeout-killed before its own finally runs).
+        timeout-killed before its own finally runs), %TEMP%/pk_presplit_* and
+        %TEMP%/pk_bleed_* (cleaned in-run on every normal exit path, so these are
+        the hard-crash/kill leftovers only), and %TEMP%/parakit_viz_stretch_*.wav
+        (the Song Visualizer speed cache — retired in-run, this is its backstop
+        for the case where the mixer still held the file open).
 
         Age-guarded: only items older than max_age_h are removed, so a second
         running instance — or THIS session's separator workdir, which
@@ -7425,7 +7468,25 @@ class MidiToRlrrApp:
         tmp = tempfile.gettempdir()
         pats = [os.path.join(tmp, "parakit_alt_detector", "*"),
                 os.path.join(tmp, "parakit_sep_v4_4_*"),
-                os.path.join(tmp, "larsnet_runtime_*.yaml")]
+                os.path.join(tmp, "larsnet_runtime_*.yaml"),
+                # Added 2026-07-31 (breaker M15 + F5), each for a DIFFERENT reason:
+                #  * pk_presplit_* / pk_bleed_*  — cleaned on every in-process exit
+                #    path since 2026-07-28, so these only ever exist after a HARD
+                #    crash / kill / power loss. Without a pattern here that leftover
+                #    was permanent, because nothing else ever looks at those names.
+                #  * parakit_viz_stretch_*       — the Song Visualizer's speed-change
+                #    cache. Now retired in-run when it is replaced, but the mixer can
+                #    hold the old file open on Windows and that delete is best-effort,
+                #    so this is its backstop.
+                os.path.join(tmp, "pk_presplit_*"),
+                os.path.join(tmp, "pk_bleed_*"),
+                os.path.join(tmp, "parakit_viz_stretch_*.wav"),
+                # Stem Splitter / DrumSep workdirs (added 2026-08-01, round-3 P2-2).
+                # Removed by their context managers on every normal exit; these globs
+                # exist only so a hard kill does not strand 100+ MB of stem WAVs
+                # under a name nothing could ever match.
+                os.path.join(tmp, "parakit_stemsplit_*"),
+                os.path.join(tmp, "parakit_drumsep_*")]
         for pat in pats:
             for p in glob.glob(pat):
                 try:
@@ -8767,15 +8828,27 @@ class MidiToRlrrApp:
         mode = (mode or "auto").lower()
         if mode not in ("auto", "compact", "roomy"):
             mode = "auto"
+        # save_config returns False on a failed write (it never raises) — the
+        # old code discarded that and always announced "Layout mode saved",
+        # so a full disk / locked config file produced a confident success
+        # popup for a setting that would silently revert on restart.
         try:
-            save_config({"me_layout_mode": mode})
+            saved = bool(save_config({"me_layout_mode": mode}))
         except Exception:
-            pass
+            saved = False
         try:
-            messagebox.showinfo(
-                "Layout mode saved",
-                f"Layout mode set to: {mode.title()}\n\n"
-                "Restart ParaKit for the new layout to take effect.")
+            if saved:
+                messagebox.showinfo(
+                    "Layout mode saved",
+                    f"Layout mode set to: {mode.title()}\n\n"
+                    "Restart ParaKit for the new layout to take effect.")
+            else:
+                messagebox.showwarning(
+                    "Layout mode NOT saved",
+                    f"Could not write the layout-mode setting "
+                    f"({mode.title()}) to the config file.\n\n"
+                    "The override will not survive a restart. Check disk "
+                    "space / permissions and try again.")
         except Exception:
             pass
 
@@ -9400,6 +9473,24 @@ class MidiToRlrrApp:
         def _single_update_add_btn():
             _single_add_btn.configure(
                 state="normal" if len(self._single_extra_stems) < 4 else "disabled")
+
+        def _single_clear_extra_stems():
+            """Tear down every Extra Stem row and forget them.
+
+            Exposed on self because the resets that need it (_clear_all_fields, the
+            recent/project loaders) live outside this closure. Emptying the list alone
+            would not do -- the rows are widgets, so they would stay on screen while the
+            model said there were none, and the Add button would re-enable underneath
+            four visible rows."""
+            for _sd in list(self._single_extra_stems):
+                try:
+                    _sd["frame"].destroy()
+                except Exception:
+                    pass
+            self._single_extra_stems = []
+            _single_update_add_btn()
+
+        self._single_clear_extra_stems = _single_clear_extra_stems
 
         def _single_add_stem():
             if len(self._single_extra_stems) >= 4:
@@ -11005,8 +11096,22 @@ class MidiToRlrrApp:
         self.title_var.set(r.get("title", "Untitled"))
         self.artist_var.set(r.get("artist", "Unknown"))
         self.creator_var.set(r.get("creator", "ParaKit"))
-        self.difficulty_var.set(r.get("difficulty", "Expert"))
-        self.complexity_var.set(r.get("complexity", 3))
+        # Same validation as _project_load: complexity_var is an IntVar, so a stored
+        # non-integer poisons it and every later .get() raises TclError -- including the
+        # one Convert depends on. The recents store is on-disk state and can be edited
+        # or carried over from an older build, so it is not trusted either.
+        _rc_diff = r.get("difficulty")
+        self.difficulty_var.set(_rc_diff if _rc_diff in ("Easy", "Medium", "Hard", "Expert")
+                                else "Expert")
+        _raw_cx = r.get("complexity", 3)
+        if isinstance(_raw_cx, bool):      # bool is an int in Python
+            _rc_cx = 3
+        else:
+            try:
+                _rc_cx = int(_raw_cx)
+            except (TypeError, ValueError):
+                _rc_cx = 3
+        self.complexity_var.set(max(1, min(5, _rc_cx)))
 
     def _save_recent(self, entry: dict):
         """Save a completed conversion to the recent-songs list (max 10)."""
@@ -11035,7 +11140,15 @@ class MidiToRlrrApp:
         """Push the last converted song folder to a connected Meta Quest via ADB."""
         import threading
         # Find the output folder — use the last converted song folder if available
-        out_folder = getattr(self, '_last_rlrr_folder', None) or self.output_folder_var.get().strip()
+        # `self.output_folder_var` never existed on this class -- the only similar name
+        # is _PdToChConverterWindow._output_folder_var, a different window entirely. So
+        # this raised AttributeError out of the Tk callback on EVERY press (invisible in
+        # the frozen .exe), and the friendly "Convert a song first..." warning three
+        # lines below was unreachable. The Single Song Creator's output folder is
+        # output_var.
+        out_folder = (getattr(self, '_last_rlrr_folder', None)
+                      or getattr(self, 'output_var', None)
+                      and self.output_var.get().strip() or "")
         if not out_folder or not os.path.isdir(out_folder):
             messagebox.showwarning("No Output Folder",
                                    "Convert a song first, or browse to the song folder to push.")
@@ -11265,9 +11378,25 @@ class MidiToRlrrApp:
         top  = (ih - side) // 2
         img  = img.crop((left, top, left + side, top + side))
         img  = img.resize((512, 512), Image.LANCZOS)
+        import hashlib as _hl
         audio_stem = os.path.splitext(os.path.basename(src_path))[0]
         safe_stem  = _re.sub(r'[<>:"/\\|?*]', '_', audio_stem)[:80] or "metadata_art"
-        tmp_path   = os.path.join(tempfile.gettempdir(), f"{safe_stem}.parakit-cover.png")
+        # This name was built from the audio's BASENAME alone, and it is shared by the
+        # Single Song Creator and every Create Multiple Songs slot. Two songs whose
+        # audio files share a name -- `A\song.ogg` and `B\song.ogg`, which is precisely
+        # what this project's own stem workflows produce -- therefore wrote the SAME
+        # temp PNG: whichever extracted last won, both cover_vars pointed at it, and the
+        # first song exported the second's artwork with no warning (its 80px preview
+        # still looked right, having rendered before the overwrite). The same collision
+        # ran in reverse on cleanup -- turning one slot off unlinked the file another
+        # slot still referenced, so that song exported with no cover at all. Key the
+        # name to the FULL source path so two distinct sources can never collide, and
+        # a slot's cleanup can only ever remove its own file.
+        _src_key = _hl.sha1(
+            os.path.normcase(os.path.abspath(src_path)).encode("utf-8", "replace")
+        ).hexdigest()[:10]
+        tmp_path   = os.path.join(tempfile.gettempdir(),
+                                  f"{safe_stem}.{_src_key}.parakit-cover.png")
         img.save(tmp_path, format="PNG")
         return tmp_path
 
@@ -13681,20 +13810,47 @@ class MidiToRlrrApp:
         return _external_path("drumsep_model", for_writing=True)
 
     def _drumsep_check_model_status(self):
+        # The old probe was `isfile()` alone — the SAME self-reinforcing trap
+        # diagnosed for the ONNX model in v4.7.23/26 (see _a2m_model_is_loadable):
+        # the UI vouched for bytes it never checked AND disabled the Download
+        # button that would replace them. An interrupted pre-fix download wrote
+        # DIRECTLY to the final name, so a truncated file read "✓ Model ready"
+        # with its own remedy greyed out. Downloads now land via .part +
+        # os.replace (atomic — see _drumsep_download_worker), and this probe
+        # does the cheapest REAL check available: a torch .th checkpoint is a
+        # zip archive (verified on the shipped 160 MB model, 2026-08-02), so a
+        # readable end-of-central-directory means the file is structurally
+        # complete — a truncation loses it. Not a full load, so a file that
+        # fails the check is reported "couldn't be verified", never "invalid",
+        # and Download stays ENABLED whenever we cannot vouch for the bytes.
         model_file = os.path.join(self._drumsep_model_dir(), "49469ca8.th")
         present = os.path.isfile(model_file)
+        verified = False
         if present:
             size_mb = os.path.getsize(model_file) / 1024 / 1024
-            self.drumsep_model_status_var.set(f"✓  Model ready ({size_mb:.0f} MB)")
+            try:
+                import zipfile
+                verified = size_mb >= 1.0 and zipfile.is_zipfile(model_file)
+            except Exception:
+                verified = False
+            if verified:
+                self.drumsep_model_status_var.set(
+                    f"✓  Model ready ({size_mb:.0f} MB)")
+            else:
+                self.drumsep_model_status_var.set(
+                    f"⚠  Model file present ({size_mb:.0f} MB) but couldn't be "
+                    "verified — it may be a partial download. "
+                    "Download Model will replace it.")
         else:
             self.drumsep_model_status_var.set("✗  Model not downloaded — click Download Model")
-        # v4.4.5 — gray out Download Model when the model is already on disk.
-        # getattr-guard tolerates the launch-time call that runs before the
-        # button widget has been constructed.
+        # v4.4.5 — gray out Download Model when the model is on disk; since the
+        # 2026-08-02 fix only a VERIFIED file disables it. getattr-guard
+        # tolerates the launch-time call that runs before the button widget
+        # has been constructed.
         try:
             btn = getattr(self, "_drumsep_dl_btn", None)
             if btn is not None:
-                btn.configure(state=("disabled" if present else "normal"))
+                btn.configure(state=("disabled" if verified else "normal"))
         except Exception:
             pass
 
@@ -13716,6 +13872,15 @@ class MidiToRlrrApp:
         def _upd(msg):
             self.root.after(0, lambda m=msg: self.drumsep_model_status_var.set(m))
 
+        # Download to a temp .part and os.replace() into place on success only
+        # (audit fix 2026-08-02, same philosophy as the ONNX-model trap fix in
+        # v4.7.23/26): the old code wrote DIRECTLY to model_file, so an
+        # interrupted download left a truncated file the status probe then
+        # vouched for ("✓ Model ready") while disabling the re-download that
+        # would fix it. Bonus: the old exception path deleted model_file — a
+        # failed RE-download could destroy a good existing model; now failures
+        # only ever touch the .part.
+        model_part = model_file + ".part"
         for label, url in [("GitHub", GITHUB_URL), ("Google Drive", GD_URL)]:
             try:
                 _upd(f"Connecting to {label}...")
@@ -13731,7 +13896,7 @@ class MidiToRlrrApp:
                 with opener.open(url, timeout=120) as resp:
                     total = int(resp.headers.get("Content-Length", 0))
                     downloaded = 0
-                    with open(model_file, "wb") as f:
+                    with open(model_part, "wb") as f:
                         while True:
                             buf = resp.read(65536)
                             if not buf:
@@ -13745,15 +13910,19 @@ class MidiToRlrrApp:
                             else:
                                 _upd(f"Downloading from {label}..."
                                      f"  {downloaded//1024//1024} MB received")
-                if os.path.getsize(model_file) < 1024 * 1024:
-                    os.remove(model_file)
+                if os.path.getsize(model_part) < 1024 * 1024:
+                    os.remove(model_part)
                     _upd(f"✗  {label} returned invalid file — trying next source...")
                     continue
+                os.replace(model_part, model_file)
                 self.root.after(0, self._drumsep_check_model_status)
                 return
             except Exception as e:
-                if os.path.isfile(model_file):
-                    os.remove(model_file)
+                try:
+                    if os.path.isfile(model_part):
+                        os.remove(model_part)
+                except OSError:
+                    pass
                 _upd(f"✗  {label} failed: {e} — trying next source...")
 
         _upd("✗  Download failed from all sources. Place 49469ca8.th manually in "
@@ -13797,7 +13966,35 @@ class MidiToRlrrApp:
             out_dir = params["drumsep_out_dir"]
             is_frozen = getattr(sys, 'frozen', False)
 
-            with tempfile.TemporaryDirectory() as tmp:
+            # Arch-checked device, computed ONCE for both branches (2026-08-01).
+            # The dev-mode branch below has always passed --device; the frozen branch
+            # passed none, so demucs defaulted to cuda whenever a GPU was present --
+            # including GPUs whose arch this PyTorch build was not compiled for. That
+            # is the exact Blackwell case the standard splitter guards against, so
+            # frozen DrumSep crashed where dev-mode correctly fell back to CPU.
+            try:
+                import torch as _t_dev
+                if _t_dev.cuda.is_available():
+                    _sm = _t_dev.cuda.get_device_capability()
+                    _sm_val = _sm[0] * 10 + _sm[1]
+                    _sm_str = f"sm_{_sm_val}"
+                    try:
+                        _arch_list = _t_dev.cuda.get_arch_list()
+                    except Exception:
+                        _arch_list = []
+                    if _arch_list:
+                        _device = ("cuda" if (_sm_str in _arch_list
+                                              or (_sm_str + "a") in _arch_list)
+                                   else "cpu")
+                    else:
+                        _device = ("cuda" if _sm_val in [50, 60, 61, 70, 75, 80, 86, 89, 90]
+                                   else "cpu")
+                else:
+                    _device = "cpu"
+            except Exception:
+                _device = "cpu"
+
+            with tempfile.TemporaryDirectory(prefix="parakit_drumsep_") as tmp:
                 if is_frozen:
                     import torchaudio, soundfile as sf, io
                     def _ps(filepath, src, sr, **kw):
@@ -13806,6 +14003,8 @@ class MidiToRlrrApp:
                     torchaudio.save = _ps
                     # Apply weights_only=False patch BEFORE importing demucs
                     # (PyTorch 2.6+ changed default to True, breaking DrumSep model load)
+                    _torch = None
+                    _orig_load = None
                     try:
                         import torch as _torch
                         _orig_load = _torch.load
@@ -13818,9 +14017,18 @@ class MidiToRlrrApp:
                     try:
                         import demucs.separate
                         demucs.separate.main(["--repo", model_dir, "-n", "49469ca8",
+                                              "--device", _device,
                                               "--out", tmp, input_path])
                     finally:
                         torchaudio.save = orig
+                        # Restore torch.load too (2026-08-01). Only torchaudio.save
+                        # was being put back, so after one frozen DrumSep run every
+                        # LATER torch.load in the process kept the patched
+                        # weights_only=False default -- unsafe deserialization, for
+                        # the rest of the session, on models this code never meant
+                        # to cover.
+                        if _torch is not None and _orig_load is not None:
+                            _torch.load = _orig_load
                         cap = sys.stdout.getvalue()
                         sys.stdout, sys.stderr = oo, oe
                         if cap.strip():
@@ -13937,48 +14145,33 @@ demucs.separate.main()
         """Check demucs model cache and update the status label."""
         import threading
         def _check():
+            # 2026-08-01: this method used to define _check TWICE and start BOTH as
+            # threads -- one scanning the exe-relative cache, one scanning the legacy
+            # ~/.cache/torch path -- with both writing stem_model_status_var. Last
+            # writer won, so on a standard install (models in Requirements\, nothing
+            # in ~/.cache) a correct "models ready" could be overwritten a moment
+            # later by "models not cached, will download ~300MB". A paste-over that
+            # never deleted the original. Now ONE check over BOTH locations, so the
+            # readout is a single answer derived from everything it looked at.
             try:
                 cache = self._stem_exe_relative_cache()
                 hub_cache = os.path.join(cache, "hub", "checkpoints")
+                legacy = os.path.join(os.path.expanduser("~"), ".cache",
+                                      "torch", "hub", "checkpoints")
                 drumsep_sig = "49469ca8"
                 found = []
-                for d in [hub_cache, cache]:
-                    if os.path.isdir(d):
-                        found += [f for f in os.listdir(d)
-                                  if f.endswith(".th") and drumsep_sig not in f]
+                seen_dirs = set()
+                for d in [hub_cache, cache, legacy]:
+                    key = os.path.normcase(os.path.abspath(d))
+                    if key in seen_dirs or not os.path.isdir(d):
+                        continue
+                    seen_dirs.add(key)
+                    found += [f for f in os.listdir(d)
+                              if f.endswith(".th") and drumsep_sig not in f]
                 if found:
                     msg = f"✓  {len(found)} demucs model file(s) ready"
                 else:
                     msg = "⚠  Demucs models not found — will download on first split (~300MB)"
-                try:
-                    self.root.after(0, lambda m=msg: self.stem_model_status_var.set(m))
-                except RuntimeError:
-                    pass
-            except Exception:
-                try:
-                    self.root.after(0, lambda: self.stem_model_status_var.set(""))
-                except RuntimeError:
-                    pass
-        threading.Thread(target=_check, daemon=True).start()
-        def _check():
-            try:
-                # Use demucs's own pretrained API — most reliable check
-                import demucs.pretrained as _dp
-                import demucs.repo as _dr
-                cache = os.path.join(os.path.expanduser("~"), ".cache",
-                                     "torch", "hub", "checkpoints")
-                drumsep_sig = "49469ca8"
-                if os.path.isdir(cache):
-                    th_files = [f for f in os.listdir(cache)
-                                if f.endswith(".th") and drumsep_sig not in f]
-                    if th_files:
-                        msg = f"✓  Demucs model(s) cached ({len(th_files)} files) — ready to split"
-                        try:
-                            self.root.after(0, lambda m=msg: self.stem_model_status_var.set(m))
-                        except RuntimeError:
-                            pass
-                        return
-                msg = "⚠  Demucs models not cached — will auto-download on first split (~300MB, one-time)"
                 try:
                     self.root.after(0, lambda m=msg: self.stem_model_status_var.set(m))
                 except RuntimeError:
@@ -14446,7 +14639,12 @@ demucs.separate.main()
             is_frozen = getattr(sys, 'frozen', False)
 
             import tempfile
-            with tempfile.TemporaryDirectory() as tmp:
+            # Named prefix (2026-08-01): this holds 100+ MB of stem WAVs and the
+            # context manager cleans it on every NORMAL exit -- but a hard kill or
+            # power loss orphaned a generic %TEMP%\tmpXXXX that NO sweep pattern
+            # could ever match, so it was unreclaimable forever. Same defect and same
+            # remedy as pk_presplit_* / pk_bleed_* / parakit_viz_stretch_*.
+            with tempfile.TemporaryDirectory(prefix="parakit_stemsplit_") as tmp:
                 self._stem_log("Running Demucs...")
                 song_name = os.path.splitext(os.path.basename(input_path))[0]
 
@@ -14977,39 +15175,72 @@ demucs.separate.main()
             if not self.a2m_remember_settings_var.get():
                 return
             genre = self.a2m_genre_var.get()
+            # 2026-08-03 — SAVE THE DEPARTING GENRE FIRST. The control's label promises
+            # onset/threshold/mode/engine/dedup persist per genre, but _save_genre_settings
+            # was traced on only onset/frame/mode — engine, ml_threshold and dedup were
+            # written INTO the dict and nothing ever triggered a save when they changed,
+            # so three of the five advertised fields silently did not persist.
+            # Saving here covers every field with one call, and it must name the genre
+            # explicitly because a2m_genre_var already holds the NEW one by now.
+            _prev = getattr(self, "_a2m_prev_genre", None)
+            if _prev is not None and _prev != genre:
+                try:
+                    _save_genre_settings(genre=_prev)
+                except Exception:
+                    pass
+            self._a2m_prev_genre = genre
             cfg   = load_config()
             saved = cfg.get("a2m_genre_settings", {})
             if genre in saved:
-                s = saved[genre]
-                # F10: clamp to the slider's 0.1-0.9 range — an out-of-range
-                # persisted value made delta = 1.0 - onset negative, which
-                # crashes librosa's peak_pick inside detect_onsets.
+                # Restoring sets vars that _save_genre_settings is traced on; the flag
+                # makes those fire-and-return instead of saving a half-restored state.
+                self._a2m_genre_restoring = True
+                # try/finally, not a trailing assignment: if ANY restore step below
+                # raises, a flag left True would silently disable genre saving for the
+                # rest of the session — a worse bug than the one it guards.
                 try:
-                    _onset_r = float(s.get("onset", 0.5))
-                except (TypeError, ValueError):
-                    _onset_r = 0.5
-                self.a2m_onset_var.set(min(0.9, max(0.1, _onset_r)))
-                self.a2m_frame_var.set(s.get("frame", 0.3))
-                self.a2m_mode_var.set(s.get("mode", "auto"))
-                # Restore engine if saved — triggers dedup auto-sync via _a2m_update_engine_ui
-                if "engine" in s:
-                    self.a2m_engine_var.set(s["engine"])
-                    self._a2m_update_engine_ui()
-                if "ml_threshold" in s:
-                    self.a2m_ml_thresh_var.set(s["ml_threshold"])
-                # Restore per-engine dedup stored values
-                if "dedup_spectral" in s:
-                    self._a2m_dedup_stored["spectral"].update(s["dedup_spectral"])
-                if "dedup_hybrid" in s:
-                    self._a2m_dedup_stored["hybrid"].update(s["dedup_hybrid"])
-                # Reload sliders for whichever mode is now active
-                self._a2m_switch_dedup_mode(
-                    new_mode=self._a2m_dedup_mode_var.get(), auto=False)
+                    s = saved[genre]
+                    # F10: clamp to the slider's 0.1-0.9 range — an out-of-range
+                    # persisted value made delta = 1.0 - onset negative, which
+                    # crashes librosa's peak_pick inside detect_onsets.
+                    try:
+                        _onset_r = float(s.get("onset", 0.5))
+                    except (TypeError, ValueError):
+                        _onset_r = 0.5
+                    self.a2m_onset_var.set(min(0.9, max(0.1, _onset_r)))
+                    self.a2m_frame_var.set(s.get("frame", 0.3))
+                    self.a2m_mode_var.set(s.get("mode", "auto"))
+                    # Restore engine if saved — triggers dedup auto-sync via _a2m_update_engine_ui
+                    if "engine" in s:
+                        self.a2m_engine_var.set(s["engine"])
+                        self._a2m_update_engine_ui()
+                    if "ml_threshold" in s:
+                        self.a2m_ml_thresh_var.set(s["ml_threshold"])
+                    # Restore per-engine dedup stored values
+                    if "dedup_spectral" in s:
+                        self._a2m_dedup_stored["spectral"].update(s["dedup_spectral"])
+                    if "dedup_hybrid" in s:
+                        self._a2m_dedup_stored["hybrid"].update(s["dedup_hybrid"])
+                    # Reload sliders for whichever mode is now active
+                    self._a2m_switch_dedup_mode(
+                        new_mode=self._a2m_dedup_mode_var.get(), auto=False)
+                finally:
+                    self._a2m_genre_restoring = False
 
-        def _save_genre_settings(*args):
+        def _save_genre_settings(*args, genre=None):
             if not self.a2m_remember_settings_var.get():
                 return
-            genre = self.a2m_genre_var.get()
+            # 2026-08-03 — re-entrancy guard. _on_genre_change RESTORES by setting the
+            # very vars this is traced on, so without it a genre switch fires this
+            # mid-restore and writes half-restored values back over the genre being
+            # loaded. Set by _on_genre_change for the duration of its restore.
+            if getattr(self, "_a2m_genre_restoring", False):
+                return
+            # `genre` is passed explicitly when saving the DEPARTING genre: this trace
+            # fires from a2m_genre_var, which by then already holds the NEW name, so
+            # reading it here would file the old settings under the new genre.
+            if genre is None:
+                genre = self.a2m_genre_var.get()
             cfg   = load_config()
             saved = cfg.get("a2m_genre_settings", {})
             # Save current slider state into stored before reading
@@ -15241,7 +15472,7 @@ demucs.separate.main()
             style="Sub.TLabel", foreground="#8888aa",
             justify=tk.LEFT, wraplength=430).pack(anchor="w", fill=tk.X)
 
-        # ── F-INT-001 v4.4.4: Neural Stem Isolation (experimental) ────────────
+        # ── F-INT-001 v4.4.4: Neural Stem Isolation ───────────────────────────
         # Separator-slot opt-in. Default OFF; opt-in routes A→MIDI through the
         # active separator → composite → existing hybrid detector. Adds ~30-60s
         # CPU time per song. License-NOASSERTION model is user-downloaded only;
@@ -15269,7 +15500,11 @@ demucs.separate.main()
 
         sep_frame = ttk.LabelFrame(
             mid_body,
-            text=" Neural Stem Isolation (experimental) ", padding=8,
+            # Not "(experimental)" any more: it is default-ON once the model is
+            # installed, the sibling radio is marked "(recommended)", and the 4.9.6
+            # full-mix fix runs inside this branch. A shipped default should not be
+            # labelled as an experiment.
+            text=" Neural Stem Isolation ", padding=8,
             style="Card.TLabelframe")
         sep_frame.pack(fill=tk.X, pady=(0, 10))
         self._a2m_sep_frame = sep_frame
@@ -15287,13 +15522,18 @@ demucs.separate.main()
         sep_radio_row = ttk.Frame(sep_frame)
         sep_radio_row.pack(anchor="w", fill=tk.X, pady=(0, 4))
         rb_off = ttk.Radiobutton(
-            sep_radio_row, text="Off (default detection)",
+            sep_radio_row, text="Off (no pre-cleaning)",
             value="off", variable=self.a2m_separator_slot_var)
         rb_off.pack(anchor="w", pady=1)
+        # Label and tooltip both used to call this "the default". It is not, whenever
+        # the Jarredou model is on disk -- sep_default above selects the separator in
+        # that case, and the sibling radio is marked "(recommended)". Saying "default"
+        # here contradicted the control 30 lines below it.
         self._add_tooltip(
             rb_off,
             "Detection runs on the audio you provide, with no pre-cleaning step.\n"
-            "This is the default — fast and matches every prior ParaKit version.")
+            "Fastest, and matches how every ParaKit version before 4.5 behaved.\n"
+            "Chosen automatically only when the separator model is not installed.")
 
         rb_jarredou = ttk.Radiobutton(
             sep_radio_row,
@@ -15301,6 +15541,11 @@ demucs.separate.main()
             value="jarredou_mdx23c",
             variable=self.a2m_separator_slot_var)
         rb_jarredou.pack(anchor="w", pady=1)
+        # 2026-08-03 — kept on `self` so `_a2m_set_controls_locked` can reach them.
+        # As bare locals they were unreachable, which made the separator the ONLY
+        # detection control still clickable mid-conversion: every engine radio, the
+        # ML/alt frames and the dedup radios lock, this did not.
+        self._a2m_separator_rbs = [rb_off, rb_jarredou]
         self._add_tooltip(
             rb_jarredou,
             "Splits the audio into kick / snare / hi-hat / toms / cymbals / ride\n"
@@ -16105,9 +16350,42 @@ demucs.separate.main()
         ttk.Button(preset_row, text="Save Current", command=_save_preset).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(preset_row, text="Load", command=_load_preset).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(preset_row, text="Delete", command=_delete_preset).pack(side=tk.LEFT)
+        # 2026-08-03 — STARTUP PRECEDENCE. Nine of these controls also auto-save their
+        # OWN config key on every change via trace_add; `a2m_last_settings` is refreshed
+        # only on preset-load and Troubleshooter-apply. So at launch the dedicated keys
+        # restore first and this delayed snapshot then overwrote them with older values
+        # — and because each overwrite fires the control's trace, the STALE value was
+        # written back to disk, corrupting the good key rather than just the display.
+        #
+        # The fix is precedence, not a change to who writes: drop any snapshot key that
+        # also owns a dedicated key already present in the config, because the dedicated
+        # key is written on every change and is therefore never the older of the two.
+        # (Adding trace_add saves to the snapshot's own controls was the other candidate
+        # and is a trap: four of them are SLIDERS and save_config is an fsync'd
+        # tmp+replace+.bak write, so that is a durable disk write per pixel of drag.)
+        #
+        # Applied ONLY here, on the startup restore. An explicit preset Load (:16306)
+        # calls the same function and must keep snapshot-wins semantics — the user just
+        # chose that preset, so a "newer" dedicated key must NOT override it.
         _last_settings = load_config().get("a2m_last_settings")
         if isinstance(_last_settings, dict):
-            self.root.after(80, lambda s=_last_settings: self._a2m_apply_settings_snapshot(s))
+            _cfg_now = load_config()
+            _owns_dedicated_key = {
+                "engine": "a2m_engine",
+                "ml_threshold": "a2m_ml_threshold",
+                "post_classify": "a2m_post_classify",
+                "remove_flams": "a2m_remove_flams",
+                "cymbal_resolver": "a2m_cymbal_resolver",
+                "cleanup_pass": "a2m_cleanup_pass",
+                "cleanup_cymbal": "a2m_cleanup_cymbal",
+                "cleanup_kick": "a2m_cleanup_kick",
+                "cleanup_bleed": "a2m_cleanup_bleed",
+            }
+            _fresh = {k: v for k, v in _last_settings.items()
+                      if not (k in _owns_dedicated_key
+                              and _owns_dedicated_key[k] in _cfg_now)}
+            if _fresh:
+                self.root.after(80, lambda s=_fresh: self._a2m_apply_settings_snapshot(s))
 
         # ── Output ────────────────────────────────────────────────────────────
         out_frame = ttk.LabelFrame(mid_body, text=" Output ", padding=10,
@@ -16339,6 +16617,12 @@ demucs.separate.main()
             except Exception: pass
         # Dedup mode toggle
         for rb in getattr(self, '_a2m_dedup_mode_rbs', []):
+            try: rb.configure(state=state)
+            except Exception: pass
+        # Stem-separator radios (2026-08-03). Previously unreachable — the widgets
+        # were locals, so this function silently skipped them and the separator
+        # stayed clickable for the whole run.
+        for rb in getattr(self, '_a2m_separator_rbs', []):
             try: rb.configure(state=state)
             except Exception: pass
 
@@ -16695,6 +16979,16 @@ demucs.separate.main()
             self.root.after(0, lambda m=msg: self.a2m_onnx_status_lbl.configure(
                 text=m, foreground="#b388ff"))
 
+        # Download to a temp .part and os.replace() into place on success only
+        # (audit fix 2026-08-03 — the same shape _drumsep_download_worker already
+        # uses, so the two downloaders behave identically). The old code opened
+        # `dest` itself for writing and, on any exception, DELETED dest — and
+        # v4.7.26 deliberately leaves Get Model ENABLED for a present-but-
+        # unverifiable model ("unknown"), so the intended remedy click was the
+        # trigger: a network error mid-write truncated the existing model, then
+        # the exception handler removed it outright. Failures now only ever touch
+        # the .part, and dest is untouched until a size-validated file replaces it.
+        dest_part = dest + ".part"
         for label, url in [("GitHub", GITHUB_URL)]:
             try:
                 _upd(f"Connecting to {label}...")
@@ -16708,7 +17002,7 @@ demucs.separate.main()
                 with opener.open(url, timeout=120) as resp:
                     total      = int(resp.headers.get("Content-Length", 0))
                     downloaded = 0
-                    with open(dest, "wb") as f:
+                    with open(dest_part, "wb") as f:
                         while True:
                             buf = resp.read(65536)
                             if not buf:
@@ -16724,10 +17018,14 @@ demucs.separate.main()
                                 _upd(f"Downloading from {label}..."
                                      f"  {downloaded//1024//1024} MB received")
 
-                if os.path.getsize(dest) < 1024 * 1024:
-                    os.remove(dest)
+                if os.path.getsize(dest_part) < 1024 * 1024:
+                    os.remove(dest_part)
                     _upd(f"✗  {label} returned invalid file — trying next source...")
                     continue
+
+                # Only a size-validated file is allowed to become `dest`; same
+                # directory => same filesystem => os.replace stays atomic.
+                os.replace(dest_part, dest)
 
                 # Success — update path field and status
                 self.root.after(0, lambda d=dest: self.a2m_onnx_path_var.set(d))
@@ -16736,8 +17034,12 @@ demucs.separate.main()
                 return
 
             except Exception as e:
-                if os.path.isfile(dest):
-                    os.remove(dest)
+                # Only the .part — never a previously-good `dest`.
+                try:
+                    if os.path.isfile(dest_part):
+                        os.remove(dest_part)
+                except OSError:
+                    pass
                 _upd(f"✗  {label} failed: {e} — trying next source...")
 
         _upd("✗  Download failed from all sources. "
@@ -17213,6 +17515,18 @@ demucs.separate.main()
             # like the other cleanup toggles so the worker never reads a Tk var.
             "cleanup_bleed": bool(getattr(self, "a2m_cleanup_bleed_var", None)
                                   is not None and self.a2m_cleanup_bleed_var.get()),
+            # 2026-08-03 — the separator slot. It was the ONE control still read live
+            # from the worker (`_a2m_active_separator_for_run` did `slot_var.get()`
+            # mid-run), which broke the contract three lines above in the way that
+            # matters most: the helper swallows any exception into `return None`, so a
+            # cross-thread read failure did not raise — it silently downgraded the run
+            # to NO SEPARATOR and changed what the conversion produced, with no message.
+            # Every other flag here was migrated to capture-at-start; this one was
+            # missed. Reads `None` when the var is absent (standalone/older config),
+            # which the helper already treats as "off".
+            "separator_slot": (self.a2m_separator_slot_var.get()
+                               if getattr(self, "a2m_separator_slot_var", None) is not None
+                               else None),
             "allow_ride": bool(getattr(self, "a2m_ride_var", None)
                                is not None and self.a2m_ride_var.get()),
         }
@@ -17715,13 +18029,25 @@ demucs.separate.main()
         return m if m in ("htdemucs", "htdemucs_ft") else "htdemucs"
 
     def _a2m_active_separator_for_run(self):
-        try:
-            slot_value = getattr(self, "a2m_separator_slot_var", None)
-            if slot_value is None:
+        # 2026-08-03 — reads the capture-at-start snapshot, NOT the live Tk var.
+        # This is called FROM THE WORKER. The old body did `slot_var.get()` here and
+        # swallowed any failure into `return None`, so a cross-thread read that failed
+        # did not raise — it silently produced a no-separator run. Same defect the
+        # `_a2m_run_flags` contract exists to prevent ("the worker must never read a
+        # Tk var"); the separator was the one control never migrated to it.
+        # Falls back to the var only when no run is in flight, so the settings UI and
+        # any main-thread caller still see the current selection.
+        flags = getattr(self, "_a2m_run_flags", None)
+        if isinstance(flags, dict) and "separator_slot" in flags:
+            sep_name = flags["separator_slot"]
+        else:
+            try:
+                slot_value = getattr(self, "a2m_separator_slot_var", None)
+                if slot_value is None:
+                    return None
+                sep_name = slot_value.get()
+            except Exception:
                 return None
-            sep_name = slot_value.get()
-        except Exception:
-            return None
         if not sep_name or sep_name == "off":
             return None
         # Lazy import — keeps ParaKit launch time unchanged for users who
@@ -18949,6 +19275,64 @@ demucs.separate.main()
             # then deleted), and the cleanup's own log line always landed after the banner.
             # Both passes read _a2m_run_flags (never Tk vars), so they are worker-safe.
             self._a2m_strip_toms_if_off(midi_path)
+            # ⛔ DO NOT pass detect_audio_path=input_path here. That "alignment fix" was
+            # written, shipped to dev as 4.9.9, and REVERTED on 2026-08-01 after it was
+            # measured. It is intuitive and it is WRONG, so it will look like an obvious
+            # improvement to the next person who reads this — it was to me.
+            #
+            # The reasoning was: the separator rebinds input_path to the drums composite,
+            # so the cleanup should judge the chart against the same audio the detector
+            # heard rather than the user's original file. Measured over 40 packs with
+            # detection held fixed on the composite, at the shipped 0.9 gate:
+            #
+            #   row 3, separator ON + drums stem (the MAIN workflow)
+            #     user's real stem (this line, today):  576 phantoms removed / 20 real lost
+            #     the composite    (the "fix"):         398 removed / 9 lost   -> net -167
+            #     cymbal accuracy: baseline 61.22% -> 71.13% today vs 66.90% "fixed"
+            #   row 4, separator ON + full mix: same direction on kick, cymbal a wash.
+            #
+            # It loses on kick AT THE SHIPPED GATE in both measured conditions. The four
+            # open questions that framing left were then measured (2026-08-01). The (b)(c)(a)
+            # results below are a 10-PACK subset of those same 40 packs — representative in
+            # direction and proportion (net -48 vs -167 kick, -5.03 pp vs -4.24 pp cymbal),
+            # but a quarter, and labelled as one:
+            #
+            #   * TIME OFFSET between composite and chart — RULED OUT. Cross-correlation,
+            #     6 packs x 3 windows, +/-1 s search: zero lag in every window, peak r
+            #     0.978-0.998, no early->late drift, sample counts equal. The rest are
+            #     therefore readings, not artifacts of a misalignment.
+            #   * CLASS-CONDITIONAL shift — neither hypothesis. The classes move TOWARD
+            #     each other (real kicks +0.0086, phantoms -0.0238) and both stds shrink;
+            #     inside A's operating tail (P>=0.8) the compression hits REALS harder
+            #     (-0.066 vs -0.045), which is the opposite of artifacts rescuing phantoms.
+            #     That is temperature-like recalibration, ~90% re-tunable. The residue is
+            #     ranking loss: AUROC 0.8471 -> 0.8391. Onset-level CI excludes zero;
+            #     PACK-level cluster bootstrap does NOT (P=0.874 at n=10) — so the loss is
+            #     real on these onsets but not settled for unseen packs.
+            #   * PR CURVES — B crosses A at precision ~0.95-0.96 and is ahead BELOW it,
+            #     but is strictly under A at every threshold ABOVE 0.97, which is where a
+            #     0.9-style gate operates (A@0.9 runs at precision 0.965). That deep-tail
+            #     deficit is information no gate value buys back.
+            #   * GATE SWEEP, exhaustive over every distinct B threshold. Row 3 against
+            #     A@0.9 = 164 phantoms / 6 real lost: gates at which B strictly beats A =
+            #     ZERO; B's best inside A's real-loss budget is 159/6. Row 4 against
+            #     A@0.9 = 33/1 is the complication — EIGHT B gates Pareto-dominate
+            #     (e.g. 0.83 -> 33/0). Retuned B genuinely wins the kick task on the
+            #     full-mix row. "It loses everywhere" would be false.
+            #
+            # So the honest verdict is NOT "dead by mechanism". It is PARITY-AT-BEST on
+            # row-3 kicks, a small strict win on row-4 kicks, and BLOCKED ON CYMBALS — and
+            # the cymbal block is the load-bearing half. It is code-verified here, not just
+            # in the harness: cleanup.py hands reclassify() only cymbal_gate-derived kwargs,
+            # so no kick-gate value can move the -4.24 pp. Whether that cymbal loss is
+            # itself a calibration artifact is UNMEASURED and unmeasurable from stored data
+            # at any sample size, because the harness never recorded cymbal proposal scores.
+            #
+            # Reviving this requires that measurement FIRST. Absent it, the change costs two
+            # fitted constants and ~4-5 pp of cymbal accuracy to gain nothing on the main
+            # workflow. Re-running the above at 40 packs is NOT the missing piece and was
+            # recommended against: it cannot flip "no strict win", and it cannot touch the
+            # cymbal question at all.
             self._a2m_apply_cleanup_pass(midi_path)
             # Save settings for this specific file (the USER's file — input_path
             # may point at the separator's temp composite; see F1 note above)
@@ -19107,8 +19491,24 @@ demucs.separate.main()
         if hasattr(self, "description_text"):
             self.description_text.delete("1.0", "end")
             self.description_text.insert("1.0", project.get("description", "") or "")
-        self.difficulty_var.set( project.get("difficulty",  "medium"))
-        self.complexity_var.set( project.get("complexity",  "medium"))
+        # Both fallbacks used to be the string "medium", which is not a value either
+        # control accepts: difficulty_var is one of Easy/Medium/Hard/Expert (so a
+        # "medium" chart wrote Song_medium.rlrr and fell out of _DIFFICULTY_RETENTION),
+        # and complexity_var is an IntVar -- setting it to a string poisoned it, so
+        # every later .get() raised TclError and Convert stayed broken until restart.
+        # A .parakit that simply omits these keys is legal, so validate rather than trust.
+        _pj_diff = project.get("difficulty")
+        self.difficulty_var.set(_pj_diff if _pj_diff in ("Easy", "Medium", "Hard", "Expert")
+                                else "Expert")
+        _raw_cx = project.get("complexity", 3)
+        if isinstance(_raw_cx, bool):      # bool is an int in Python
+            _pj_cx = 3
+        else:
+            try:
+                _pj_cx = int(_raw_cx)
+            except (TypeError, ValueError):
+                _pj_cx = 3
+        self.complexity_var.set(max(1, min(5, _pj_cx)))
         self.output_var.set(     project.get("output",      ""))
         self.bpm_var.set(        project.get("bpm",         ""))
         self.offset_var.set(     project.get("offset",      ""))
@@ -19161,9 +19561,22 @@ demucs.separate.main()
                 return
 
         # Clear all fields
+        #
+        # The Preview Clip and the Extra Stem rows were both missing from this reset, so
+        # a control whose own dialog promises to "reset the Single Song Creator to a
+        # blank state" left the previous song's preview clip and stems attached. The next
+        # Convert then copied those files into the NEW song's folder and listed the stale
+        # stem in songTracks -- with nothing on screen to suggest it, because every field
+        # the user had just watched clear really was empty.
         for var in [self.midi_var, self.audio_var, self.drum_audio_var,
                     self.cover_var, self.bpm_var, self.offset_var]:
             var.set("")
+        if hasattr(self, "preview_audio_var"):
+            self.preview_audio_var.set("")
+        # Stem rows are widgets, not just vars, so they need the builder's own teardown.
+        _clear_stems = getattr(self, "_single_clear_extra_stems", None)
+        if callable(_clear_stems):
+            _clear_stems()
         self.title_var.set("")
         self.artist_var.set("")
         if hasattr(self, "description_text"):
@@ -19604,11 +20017,19 @@ demucs.separate.main()
                     if key:
                         store = self._manual_note_store()
                         store[key] = dict(cur)
+                        # Same gate as _save_lane above: save_config returns
+                        # False on a failed write (disk full / read-only) —
+                        # don't claim "saved to this chart" if it didn't
+                        # persist; the in-memory choice still applies THIS
+                        # session but vanishes on reload.
+                        _ok = False
                         try:
-                            save_config({self._MANUAL_NOTE_STORE_KEY: store})
+                            _ok = bool(save_config(
+                                {self._MANUAL_NOTE_STORE_KEY: store}))
                         except Exception:
-                            pass
-                        where = "saved to this chart"
+                            _ok = False
+                        where = ("saved to this chart" if _ok
+                                 else "couldn't save to disk — this session only")
                     else:
                         where = "this session only — no MIDI loaded"
                     try:
@@ -19678,14 +20099,20 @@ demucs.separate.main()
             # is loaded) — back to per-lane defaults.
             self._me_note_overrides = {}
             key = getattr(self, "_manual_note_active_key", None)
+            _persist_ok = True
             if key:
                 store = self._manual_note_store()
                 if key in store:
                     store.pop(key, None)
+                    # Same gate as _save_lane / _hh_save: save_config returns
+                    # False on a failed write — don't claim the reset stuck if
+                    # the saved choices will come back on reload.
+                    _persist_ok = False
                     try:
-                        save_config({self._MANUAL_NOTE_STORE_KEY: store})
+                        _persist_ok = bool(save_config(
+                            {self._MANUAL_NOTE_STORE_KEY: store}))
                     except Exception:
-                        pass
+                        _persist_ok = False
             for lname2, cb2 in combos.items():
                 opts2 = self.MANUAL_NOTE_OPTIONS[lname2]
                 cb2.set(f"{opts2[0][0]} — {opts2[0][1]}")
@@ -19693,7 +20120,10 @@ demucs.separate.main()
                 self._me_redraw()
             except Exception:
                 pass
-            status_var.set("✓  All lanes reset to defaults for this chart")
+            status_var.set(
+                "✓  All lanes reset to defaults for this chart" if _persist_ok
+                else "✓  Lanes reset for this session — couldn't save to disk, "
+                     "saved choices return on reload")
         ttk.Button(btns, text="↺  Reset to defaults",
                    command=_reset).pack(side=tk.LEFT)
         ttk.Button(btns, text="Close", command=_close).pack(side=tk.RIGHT)
@@ -21555,7 +21985,12 @@ demucs.separate.main()
                 intervals = [state["taps"][i] - state["taps"][i-1]
                              for i in range(1, len(state["taps"]))]
                 avg = sum(intervals) / len(intervals)
-                real_bpm = (60.0 / avg) * self._me_speed if avg > 0 else 0
+                # Speed convention: _me_speed < 1 = SLOWED playback (position
+                # advances base + elapsed*speed; audio is stretched by /speed).
+                # Taps are wall-clock, so at 0.5x a true-120-BPM song is tapped
+                # at 60 wall-BPM — true BPM = wall BPM / speed. DIVIDE, do not
+                # multiply (multiplying was off by speed² at slowed speeds).
+                real_bpm = (60.0 / avg) / self._me_speed if avg > 0 else 0
                 b_var.set(f"{real_bpm:.1f}")
                 self.me_status_var.set(
                     f"🥁  B tap ({len(state['taps'])}) → {real_bpm:.1f} BPM  "
@@ -21744,10 +22179,17 @@ demucs.separate.main()
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
             initialfile=default_filename)
         if path:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(f"ParaKit v{self.VERSION} — {tab_name} Log\n")
-                f.write("=" * 60 + "\n")
-                f.write(content)
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(f"ParaKit v{self.VERSION} — {tab_name} Log\n")
+                    f.write("=" * 60 + "\n")
+                    f.write(content)
+            except OSError as exc:
+                messagebox.showerror(
+                    "Export Failed",
+                    f"Could not write the log file:\n{exc}\n\n"
+                    f"Try a different folder (this one may be read-only).")
+                return
             messagebox.showinfo("Exported", f"Log saved to:\n{path}")
 
     def _tester_export_fix_log(self):
@@ -21764,11 +22206,74 @@ demucs.separate.main()
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
             initialfile="fix_log.txt")
         if path:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(f"ParaKit v{self.VERSION} — Fix Log\n")
-                f.write("=" * 50 + "\n")
-                f.write(content)
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(f"ParaKit v{self.VERSION} — Fix Log\n")
+                    f.write("=" * 50 + "\n")
+                    f.write(content)
+            except OSError as exc:
+                messagebox.showerror(
+                    "Export Failed",
+                    f"Could not write the fix log:\n{exc}\n\n"
+                    f"Try a different folder (this one may be read-only).")
+                return
             messagebox.showinfo("Exported", f"Fix log saved to:\n{path}")
+
+    def _me_rekey_flags(self, raw_flags, tol=0.012):
+        """Re-key Song Tester flags onto the times the EDITOR actually holds.
+
+        Returns (flags_by_editor_time, matched, dropped).
+
+        The tester keys flags by the TEST SOURCE's timestamps and the editor looked them
+        up with exact float equality (me_flagged.get(note["time"])). Those two never had
+        to agree. When the test ran on the .rlrr -- the path the UI calls RECOMMENDED --
+        the keys are float("%.4f") values that also carry the conversion OFFSET, while
+        _me_load derives times from MIDI ticks at full precision and applies no offset.
+        So the handoff announced "N note(s) highlighted" while nothing was outlined, and
+        Auto-Fix's me_flagged.pop(t) quietly matched nothing.
+
+        Matching is nearest-note within a TIGHT tolerance and nothing else. An earlier
+        version of this also estimated the constant offset from the median
+        nearest-neighbour delta and shifted everything by it. That was worse than the bug
+        it fixed: with 0.5 s note spacing and a 0.35 s offset the nearest neighbour is
+        ambiguous, so it re-keyed flags onto the WRONG notes (1.0 and 2.0 became 1.5 and
+        2.5), and flags 90 s from any note still matched one because the shift was
+        estimated from garbage and then applied. Highlighting nothing is a bad
+        experience; silently highlighting the wrong notes is a wrong answer.
+
+        So: a test run against the MIDI (float noise only) matches, and a test run
+        against the .rlrr (offset-shifted times) matches NOTHING and is reported as such,
+        which is the truth. The caller tells the user what really landed rather than
+        quoting the size of the input.
+        """
+        notes = getattr(self, "me_notes", None) or []
+        if not raw_flags or not notes:
+            return {}, 0, len(raw_flags or {})
+        times = sorted({float(n["time"]) for n in notes})
+        import bisect
+
+        def _nearest(t):
+            i = bisect.bisect_left(times, t)
+            best = None
+            for j in (i - 1, i, i + 1):
+                if 0 <= j < len(times):
+                    d = times[j] - t
+                    if best is None or abs(d) < abs(best[0]):
+                        best = (d, times[j])
+            return best            # (delta, note_time) or None
+
+        try:
+            raw = {float(k): v for k, v in raw_flags.items()}
+        except (TypeError, ValueError):
+            return {}, 0, len(raw_flags)
+
+        out, matched = {}, 0
+        for t, flag in raw.items():
+            hit = _nearest(t)
+            if hit and abs(hit[0]) <= tol:
+                out[hit[1]] = flag
+                matched += 1
+        return out, matched, len(raw) - matched
 
     def _tester_open_flagged(self):
         """Load MIDI into editor with flagged notes highlighted, no changes."""
@@ -21779,9 +22284,27 @@ demucs.separate.main()
         if not r.get("midi_path"):
             messagebox.showerror("No MIDI", "No MIDI file from the last test.")
             return
+        # Staleness gate (audit fix 2026-08-02): the highlights describe the
+        # chart AS IT WAS at test time; the file may have been rewritten since
+        # (re-conversion / editor Save / Spectral Overwrite). This handoff
+        # makes NO changes, so a warn-and-choose is proportionate here —
+        # Auto-Fix, which mutates, refuses outright.
+        _sig_then = r.get("chart_sig")
+        if _sig_then is not None:
+            if self._a2m_chart_sig(r["midi_path"]) != _sig_then:
+                if not messagebox.askyesno(
+                        "Chart Changed Since Test",
+                        "This MIDI file has been modified since the sync test "
+                        "ran (a re-conversion, an editor Save, or a Spectral "
+                        "overwrite).\n\nThe highlights describe the OLD file "
+                        "and may not line up — re-running the sync test "
+                        "refreshes them.\n\nOpen with the old highlights "
+                        "anyway?"):
+                    return
         if not self._me_load(r["midi_path"]):
             return   # R2-1: declined/failed — don't stamp the old chart's flags
-        self.me_flagged = dict(r.get("flagged_notes", {}))
+        self.me_flagged, _fl_matched, _fl_dropped = self._me_rekey_flags(
+            r.get("flagged_notes", {}))
         self._me_redraw()
 
         # Log what was flagged
@@ -21798,6 +22321,10 @@ demucs.separate.main()
             self._fix_log(f"  {counts['balance']} note(s) with balance issues  [magenta outline]")
         if not counts:
             self._fix_log("  No flagged notes.")
+        if _fl_dropped:
+            # Say it rather than quietly reporting the input size as the result.
+            self._fix_log(f"  ⚠  {_fl_dropped} flag(s) matched no note in this MIDI "
+                          f"and were not highlighted.")
 
         for i in range(self.notebook.index("end")):
             if "MIDI Editor" in self.notebook.tab(i, "text"):
@@ -21830,9 +22357,37 @@ demucs.separate.main()
                 "Please select at least one fix option.")
             return
 
+        # Staleness gate (audit fix 2026-08-02): the FLAG half of this handoff
+        # was already made safe (tolerance re-key + dropped-count disclosure
+        # below), but the offset/section half had NO staleness check — after a
+        # re-conversion, an editor Save, or a Spectral Overwrite rewrote
+        # midi_path, the OLD run's best_offset deleted "past-audio-end" notes
+        # and the OLD drift sections shifted timing (up to 150 ms/note) on a
+        # chart the analysis never saw. Compare content signatures
+        # (_a2m_chart_sig — the v4.7.21 helper built for exactly this) and
+        # REFUSE with a re-run instruction rather than fixing the wrong bytes.
+        _sig_then = r.get("chart_sig")
+        if _sig_then is not None:
+            if self._a2m_chart_sig(r["midi_path"]) != _sig_then:
+                messagebox.showwarning(
+                    "Chart Changed Since Test",
+                    "This MIDI file has been modified since the sync test ran "
+                    "(a re-conversion, an editor Save, or a Spectral "
+                    "overwrite).\n\nThe test's offset and drift analysis "
+                    "describe the OLD file, so applying them now could delete "
+                    "or shift the wrong notes.\n\nPlease re-run the sync "
+                    "test, then Auto-Fix.")
+                return
+
         if not self._me_load(r["midi_path"]):
             return   # R2-1: declined/failed — don't auto-fix the OLD chart
-        self.me_flagged = dict(r.get("flagged_notes", {}))
+        # Re-keyed for the same reason as the read-only handoff: Auto-Fix pops these by
+        # time, and an unmatched key pops nothing at all.
+        self.me_flagged, _af_matched, _af_dropped = self._me_rekey_flags(
+            r.get("flagged_notes", {}))
+        if _af_dropped:
+            self._fix_log(f"  ⚠  {_af_dropped} flag(s) matched no note in this MIDI "
+                          f"and will not be auto-fixed.")
 
         import copy
         self._me_push_undo()
@@ -22110,7 +22665,11 @@ demucs.separate.main()
                 if len(taps) >= 2:
                     intervals = [taps[i] - taps[i-1] for i in range(1, len(taps))]
                     avg = sum(intervals) / len(intervals)
-                    bv.set(f"{60.0 / avg * self._me_speed:.1f}" if avg > 0 else "0")
+                    # Speed convention: _me_speed < 1 = SLOWED playback, so
+                    # wall-clock taps run slow by the same factor — true BPM =
+                    # wall BPM / speed. DIVIDE, do not multiply (same fix as
+                    # the B-key tap handler).
+                    bv.set(f"{60.0 / avg / self._me_speed:.1f}" if avg > 0 else "0")
                     lv.set(f"Tap({len(taps)})")
                 else:
                     lv.set("Tap(1)")
@@ -24746,6 +25305,18 @@ demucs.separate.main()
             self.me_mode_inplace_rb.configure(state="normal")
             self.me_mode_copy_rb.configure(state="normal")
             self.me_mode_lock_lbl.pack_forget()
+            # H6 dual (breaker 2026-07-29): tell Spectral Comparison the .mid it
+            # compared just changed under it, so its Overwrite cannot write a
+            # stale model back over the edits just saved here. Guarded because
+            # the Spectral tab is optional -- it degrades to absent when its
+            # sidecar fails to import.
+            try:
+                _st = getattr(self, "_spectral_tab", None)
+                _fn = getattr(_st, "external_chart_changed", None)
+                if callable(_fn):
+                    _fn(path)
+            except Exception:
+                pass
             if show_message:
                 messagebox.showinfo("Saved", f"MIDI saved to:\n{path}")
             return path
@@ -24870,7 +25441,9 @@ demucs.separate.main()
                 save_first = messagebox.askyesno(
                     "Save MIDI First",
                     "You have unsaved MIDI Editor changes.\n\n"
-                    "Save a copy before sending this MIDI to Song Creator?")
+                    "Save a copy before sending this MIDI to Song Creator?\n\n"
+                    "No cancels the send — Song Creator reads the file from disk, so "
+                    "it would otherwise receive the notes as they were last saved.")
                 if not save_first:
                     return
                 saved_path = self._me_save(show_message=False)
@@ -24899,14 +25472,28 @@ demucs.separate.main()
         # Carry the active Manual Note Manager choices onto the path being sent,
         # so the Song Creator converts with the SAME note choices even when a
         # copy was saved to a new filename (choices are keyed per MIDI path).
+        #
+        # This write is NOT optional bookkeeping: the Creator resolves the
+        # choices with _get_manual_note_overrides(midi_path), which reads them
+        # back OUT OF CONFIG — so a failed write means it converts with this
+        # file's PREVIOUSLY saved choices (or the lane defaults), silently
+        # producing different output than the editor is showing. The old
+        # fire-and-forget inside a blanket `except: pass` could not say so.
+        # save_config returns False on a failed write and never raises for
+        # that, so gate on the return AND keep the exception guard
+        # (audit fix 2026-08-02).
+        _ovr_persist_ok = True
         try:
             active = getattr(self, "_me_note_overrides", {}) or {}
             if active:
                 store = self._manual_note_store()
                 store[self._norm_chart_key(path)] = dict(active)
-                save_config({self._MANUAL_NOTE_STORE_KEY: store})
-        except Exception:
-            pass
+                _ovr_persist_ok = bool(
+                    save_config({self._MANUAL_NOTE_STORE_KEY: store}))
+        except Exception as _ovr_exc:
+            print(f"[MIDI] failed to carry note overrides to Song Creator: "
+                  f"{_ovr_exc}")
+            _ovr_persist_ok = False
 
         self.midi_var.set(path)
         self.use_midi_bpm_var.set(True)
@@ -24931,6 +25518,15 @@ demucs.separate.main()
             pass
 
         self.notebook.select(0)
+        # The hand-off dialog is the only user-visible confirmation this flow
+        # has, so a failed override write is surfaced there rather than staying
+        # a log line — it changes what the Creator will actually export.
+        _ovr_warn = ("" if _ovr_persist_ok else
+                     "\n\n⚠  Your Manual Note Manager choices could NOT be "
+                     "saved to disk, so Song Creator will convert this file "
+                     "with its previously saved note choices (or the lane "
+                     "defaults). Check disk space / permissions, then re-open "
+                     "the Manual Note Manager and send again.")
         if drums_sent:
             messagebox.showinfo("Sent to Song Creator",
                                 f"MIDI file set in Single Song Creator:\n"
@@ -24938,12 +25534,14 @@ demucs.separate.main()
                                 f"Drums audio also sent:\n"
                                 f"{drums_basename}\n\n"
                                 f"'Use BPM from MIDI file' was turned on automatically.\n"
-                                f"Add the backing audio (Song Audio / Full Mix) manually.")
+                                f"Add the backing audio (Song Audio / Full Mix) manually."
+                                + _ovr_warn)
         else:
             messagebox.showinfo("Sent to Song Creator",
                                 f"MIDI file set in Single Song Creator:\n"
                                 f"{os.path.basename(path)}\n\n"
-                                f"'Use BPM from MIDI file' was turned on automatically.")
+                                f"'Use BPM from MIDI file' was turned on automatically."
+                                + _ovr_warn)
 
     def _me_hscroll_both(self, *args):
         """Sync horizontal scroll between piano roll and waveform canvas."""
@@ -26510,8 +27108,61 @@ demucs.separate.main()
                  bg=APP_BG, fg="#ffffff",
                  font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 8))
 
+        # H4 (breaker 2026-07-29) — the five issue lists above are POSITIONAL indices
+        # into me_notes, frozen at scan time, and this dialog is deliberately
+        # NON-modal: Select & Jump / Prev / Next exist to drive editing in the roll
+        # behind it, and the footer promises Ctrl+Z. Any delete / sort / undo between
+        # the scan and a button press re-aimed every index at whatever note now sits
+        # in that slot, so Auto Fix deleted notes the scan never identified and left
+        # the real duplicates in place. Hold the note OBJECTS and resolve them back
+        # to live positions on every use — the same identity trick as
+        # _me_capture_selection/_me_restore_selection. _scan_objs keeps the captured
+        # notes alive for the dialog's lifetime, so id() reuse cannot occur.
+        # NOT fixed with grab_set(): a modal grab would block exactly the roll
+        # editing and Ctrl+Z that this dialog exists to drive.
+        _scan_objs = list(self.me_notes)
+
+        def _live_pos():
+            return {id(n): i for i, n in enumerate(self.me_notes)}
+
+        def _live(idxs, pos=None):
+            """Scan-time indices -> current indices, dropping notes no longer in the
+            chart. Order preserved."""
+            pos = _live_pos() if pos is None else pos
+            out = []
+            for i in idxs:
+                if 0 <= i < len(_scan_objs):
+                    j = pos.get(id(_scan_objs[i]))
+                    if j is not None:
+                        out.append(j)
+            return out
+
+        def _live_pairs(pairs):
+            """Scan-time (i, j) pairs -> live pairs. A pair with either half gone is
+            DROPPED, never half-applied: if the user already deleted one of a
+            duplicate couple the couple is resolved, and removing the survivor too is
+            precisely the bug this fix exists for."""
+            pos = _live_pos()
+            out = []
+            for i, j in pairs:
+                a = _live((i,), pos)
+                b = _live((j,), pos)
+                if a and b:
+                    out.append((a[0], b[0]))
+            return out
+
+        def _stale_note(kind):
+            """Say it once, plainly, instead of a silent no-op: Ctrl+Z installs
+            deepcopies (_me_snapshot), so a single undo detaches EVERY scanned note
+            and the row legitimately has nothing left to act on."""
+            messagebox.showinfo(
+                "Review Issues",
+                f"The chart changed since this scan — none of the {kind} it found "
+                "are still in the chart.\n\nClose this window and run Review Issues "
+                "again to rescan.")
+
         def _valid_sorted(idxs):
-            safe = [i for i in idxs if 0 <= i < len(self.me_notes)]
+            safe = _live(idxs)
             return sorted(set(safe), key=lambda i: (self.me_notes[i]["time"], i))
 
         def _center_on_note(note_idx):
@@ -26551,14 +27202,25 @@ demucs.separate.main()
             return True
 
         def _apply_duplicate_fix():
-            to_remove = {j for _, j in near_dups if 0 <= j < len(self.me_notes)}
-            return _remove_indices(to_remove, "duplicate")
+            live = _live_pairs(near_dups)
+            if not live:
+                _stale_note("duplicate pairs")
+                return False
+            return _remove_indices({j for _, j in live}, "duplicate")
 
         def _apply_likely_flam_fix():
+            # `moves` can end up empty for two different reasons and they need two
+            # different messages: every scanned pair was detached by an undo (stale ->
+            # rescan), or the pairs are still live but none is safe to soften. Reporting
+            # "no safe fixes were found" for the first is exactly the silent-no-op the
+            # 4.9.10 stale-scan pass existed to end -- that pass fixed three rows and
+            # missed this one, so the row kept blaming the chart for a stale scan.
+            live = _live_pairs(likely_flams)
+            if not live:
+                _stale_note("likely flam pairs")
+                return False
             moves = []
-            for i, j in likely_flams:
-                if i >= len(self.me_notes) or j >= len(self.me_notes):
-                    continue
+            for i, j in live:
                 first, second = (i, j)
                 if self.me_notes[j]["time"] < self.me_notes[i]["time"]:
                     first, second = (j, i)
@@ -26591,9 +27253,11 @@ demucs.separate.main()
 
         def _apply_misclass_fix():
             to_remove = set()
-            for i, j in misclass_pairs:
-                if i >= len(self.me_notes) or j >= len(self.me_notes):
-                    continue
+            live = _live_pairs(misclass_pairs)
+            if not live:
+                _stale_note("same-onset pairs")
+                return False
+            for i, j in live:
                 ci = self.me_notes[i].get("conf")
                 cj = self.me_notes[j].get("conf")
                 if ci is None or cj is None or abs(ci - cj) < 0.08:
@@ -26626,10 +27290,14 @@ demucs.separate.main()
                         return True
                 return False
 
+            # Same two-cause split as the flam row above: an all-stale scan must say so
+            # rather than report "no safe fixes were found" and look like a dead button.
+            live_idxs = _live(cymbal_anomalies)
+            if not live_idxs:
+                _stale_note("cymbal notes")
+                return False
             moves = []
-            for idx in cymbal_anomalies:
-                if idx >= len(self.me_notes):
-                    continue
+            for idx in live_idxs:
                 kind = self._me_lane_kind(self.me_notes[idx]["lane_idx"])
                 target_kind = None
                 if kind == "crash" and _has_neighbor(idx, "hihat", True) and _has_neighbor(idx, "hihat", False):
@@ -26664,7 +27332,11 @@ demucs.separate.main()
             return True
 
         def _apply_low_conf_fix():
-            return _remove_indices(set(low_conf), "low-confidence")
+            live = _live(low_conf)
+            if not live:
+                _stale_note("low-confidence notes")
+                return False
+            return _remove_indices(set(live), "low-confidence")
 
         def _row(icon, count, desc, color, jump_idx_list, auto_fix=None, auto_label="🔧 Auto Fix"):
             r = tk.Frame(f, bg=APP_BG)
@@ -26673,13 +27345,17 @@ demucs.separate.main()
                      bg=APP_BG, fg=color,
                      font=("Segoe UI", 9)).pack(side=tk.LEFT)
             if jump_idx_list:
-                valid_idxs = _valid_sorted(jump_idx_list)
-                if not valid_idxs:
+                if not _valid_sorted(jump_idx_list):
                     return
+                # Keep the SCAN-time list, NOT the translated one. _valid_sorted now
+                # maps scan -> live, so re-feeding it already-live indices (as this
+                # function used to, harmlessly, when the mapping was identity) would
+                # translate twice and mis-aim Select & Jump at the wrong notes.
+                scan_idxs = list(jump_idx_list)
                 step_state = {"pos": 0}
 
-                def _cluster_at(pos, idxs=valid_idxs):
-                    safe = _valid_sorted(idxs)
+                def _cluster_at(pos, safe):
+                    """`safe` is an ALREADY-live, time-sorted index list."""
                     if not safe:
                         return []
                     pos = max(0, min(pos, len(safe) - 1))
@@ -26688,8 +27364,12 @@ demucs.separate.main()
                     return local[:12] or safe[pos:pos + 1]
 
                 def _show_cluster(pos=None):
-                    safe = _valid_sorted(valid_idxs)
+                    safe = _valid_sorted(scan_idxs)
                     if not safe:
+                        # Don't fail silently — the row's notes are all gone.
+                        self.me_status_var.set(
+                            "Review Issues: those notes are no longer in the chart "
+                            "— close and rescan to refresh this list")
                         return
                     if pos is None:
                         pos = step_state["pos"]
@@ -26721,12 +27401,15 @@ demucs.separate.main()
                 ttk.Button(r, text="Select & Jump", command=_jump).pack(side=tk.RIGHT, padx=(12, 0))
 
         if near_dups:
-            dup_notes = _valid_sorted([i for pair in near_dups for i in pair])
+            # Raw SCAN indices — _row translates them to live positions itself, on
+            # every step. Pre-translating here would feed _valid_sorted its own
+            # output and translate twice (H4, 2026-07-29).
+            dup_notes = [i for pair in near_dups for i in pair]
             _row("⚠", len(near_dups),
                  "possible duplicate notes  (same lane, <35ms apart)",
                  "#e09a3a", dup_notes, _apply_duplicate_fix)
         if likely_flams:
-            flam_notes = _valid_sorted([i for pair in likely_flams for i in pair])
+            flam_notes = [i for pair in likely_flams for i in pair]
             _row("🥁", len(likely_flams),
                  "likely flams  (loaded/edited MIDI, same-lane snare/tom, 8-35ms apart)",
                  "#b388ff", flam_notes, _apply_likely_flam_fix, "Soften Flams")
@@ -26747,7 +27430,7 @@ demucs.separate.main()
                  bg=APP_BG, fg="#888",
                  font=("Segoe UI", 8)).pack(anchor="w", pady=(8, 4))
         tk.Label(f,
-                 text="Yellow outline = same-onset misclassification  (lime green on Ride notes)  |  Hot pink stripes = low-confidence ML  |  Orange outline = Detection Troubleshooter flag\n"
+                 text="Yellow outline = same-onset misclassification  (lime green on Ride notes)  |  Hot pink stripes = low-confidence ML  |  Orange outline = Detection Troubleshooter flag or cross-stem bleed\n"
                       "Use Select & Jump for review, or Auto Fix for cautious proposed fixes. Ctrl+Z to undo.",
                  bg=APP_BG, fg="#666",
                  font=("Segoe UI", 8), justify=tk.LEFT).pack(anchor="w")
@@ -26791,6 +27474,17 @@ demucs.separate.main()
             "cleanup_cymbal": getattr(self, "a2m_cleanup_cymbal_var", tk.BooleanVar(value=True)).get(),
             "cleanup_kick": getattr(self, "a2m_cleanup_kick_var", tk.BooleanVar(value=True)).get(),
             "cleanup_bleed": getattr(self, "a2m_cleanup_bleed_var", tk.BooleanVar(value=False)).get(),
+            # 2026-08-03 — four controls that existed but were never captured, so a
+            # preset silently did not carry them. Ride and separator at least persist
+            # by their own means; KICK and DEBUG persisted NOWHERE AT ALL, so those two
+            # were reset on every launch with no way for a user to keep a choice.
+            # Old presets lack these keys and degrade cleanly — the apply table guards
+            # each with `if key in settings`.
+            "ride": getattr(self, "a2m_ride_var", tk.BooleanVar(value=True)).get(),
+            "kick": getattr(self, "a2m_kick_var", tk.BooleanVar(value=True)).get(),
+            "separator_slot": getattr(self, "a2m_separator_slot_var",
+                                      tk.StringVar(value="off")).get(),
+            "debug": getattr(self, "a2m_debug_var", tk.BooleanVar(value=False)).get(),
             "enhanced_detection_mode": getattr(
                 self, "a2m_enhanced_detection_mode_var",
                 tk.StringVar(value="off")).get(),
@@ -26818,6 +27512,11 @@ demucs.separate.main()
             ("a2m_cleanup_bleed_var", "cleanup_bleed"),
             ("a2m_enhanced_detection_mode_var", "enhanced_detection_mode"),
             ("a2m_tom_sensitivity_var", "tom_sensitivity"),
+            # 2026-08-03 — the four the capture was missing (see the note there).
+            ("a2m_ride_var", "ride"),
+            ("a2m_kick_var", "kick"),
+            ("a2m_separator_slot_var", "separator_slot"),
+            ("a2m_debug_var", "debug"),
         ]:
             if key in settings and hasattr(self, attr):
                 try:
@@ -26872,7 +27571,17 @@ demucs.separate.main()
             return False
         presets = self._a2m_saved_presets()
         presets[name] = self._a2m_capture_settings_snapshot()
-        save_config({"a2m_setting_presets": presets, "a2m_last_preset": name})
+        # Gate the confirmation on the write actually landing — save_config
+        # returns False on failure (disk full / locked config), and the old
+        # ungated status line claimed "Saved" for a preset that would not
+        # exist next launch.
+        if not save_config({"a2m_setting_presets": presets,
+                            "a2m_last_preset": name}):
+            messagebox.showwarning(
+                "Preset Not Saved",
+                f"Could not write preset '{name}' to the config file.\n"
+                "Check disk space / permissions and try again.")
+            return False
         self._set_global_status(f"Saved Audio to MIDI preset: {name}", 3500)
         return True
 
@@ -26885,15 +27594,45 @@ demucs.separate.main()
         if not messagebox.askyesno("Delete Preset", f"Delete Audio to MIDI preset '{name}'?"):
             return False
         presets.pop(name, None)
-        save_config({"a2m_setting_presets": presets, "a2m_last_preset": ""})
+        # `presets` is a local copy from load_config, so an unwritten delete is
+        # not even durable for this session — gate the confirmation on the
+        # write (save_config returns False on failure, it never raises).
+        if not save_config({"a2m_setting_presets": presets,
+                            "a2m_last_preset": ""}):
+            messagebox.showwarning(
+                "Preset Not Deleted",
+                f"Could not write the config file — preset '{name}' was NOT "
+                "deleted.\nCheck disk space / permissions and try again.")
+            return False
         self._set_global_status(f"Deleted Audio to MIDI preset: {name}", 3500)
         return True
 
-    def _a2m_get_file_key(self, path):
-        """Return a config key based on the source file basename (no extension)."""
+    def _a2m_get_file_key(self, path, legacy=False):
+        """Return the config key for a source file's remembered settings.
+
+        2026-08-03 — keyed on the FULL normalised path. It used to hash only the
+        extensionless basename, so `C:\\A\\song.wav` and `D:\\B\\song.flac` shared one
+        key and silently overwrote each other's saved settings: no error, no warning,
+        and the second file simply opened with the first file's settings. Anyone with
+        `song.wav` in more than one album folder had this.
+
+        `legacy=True` returns the OLD basename key. Callers read the new key first and
+        fall back to it, so settings people have already saved keep working — silently
+        orphaning every existing entry would be a worse bug than the collision it fixes.
+        """
         import hashlib
-        name = os.path.splitext(os.path.basename(path))[0] if path else ""
-        h    = hashlib.md5(name.encode()).hexdigest()[:8]
+        if not path:
+            name = ""
+        elif legacy:
+            name = os.path.splitext(os.path.basename(path))[0]
+        else:
+            try:
+                name = os.path.normcase(os.path.abspath(path))
+            except Exception:
+                # A path os.path cannot normalise is not a reason to lose the
+                # settings — fall back to the old scheme rather than to nothing.
+                name = os.path.splitext(os.path.basename(path))[0]
+        h = hashlib.md5(name.encode()).hexdigest()[:8]
         return f"a2m_file_{h}"
 
     def _a2m_save_file_settings(self, source_path):
@@ -26922,8 +27661,15 @@ demucs.separate.main()
         """Restore Audio→MIDI settings for a previously seen source file."""
         if not source_path:
             return False
+        _cfg = load_config()
         key = self._a2m_get_file_key(source_path)
-        s   = load_config().get(key)
+        s   = _cfg.get(key)
+        if not s:
+            # 2026-08-03 — fall back to the pre-fix basename key so settings saved
+            # before the full-path change still load. Read-only: the next save writes
+            # the new key, so entries migrate as files are used rather than all at
+            # once, and a user who never reopens a file simply keeps the old entry.
+            s = _cfg.get(self._a2m_get_file_key(source_path, legacy=True))
         if not s:
             return False
         # F10: clamp to the slider's 0.1-0.9 range (see the genre-restore note).
@@ -26947,35 +27693,6 @@ demucs.separate.main()
             self._a2m_dedup_stored["hybrid"].update(s["dedup_hybrid"])
         self._a2m_switch_dedup_mode(new_mode=self._a2m_dedup_mode_var.get(), auto=False)
         return True
-        """Repeat the selected notes, tiling them once after their last note."""
-        if not self._me_selected_notes:
-            self.me_status_var.set("↻  Select notes to repeat first (Shift+drag to select)")
-            return
-        import copy
-        notes = [copy.deepcopy(self.me_notes[i]) for i in sorted(self._me_selected_notes)]
-        t_min = min(n["time"] for n in notes)
-        t_max = max(n["time"] for n in notes)
-        pattern_len = t_max - t_min
-        # Snap pattern length to nearest beat for clean tiling
-        if self.me_bpm > 0:
-            beat = 60.0 / self.me_bpm
-            pattern_len = round(pattern_len / beat) * beat
-        if pattern_len <= 0:
-            self.me_status_var.set("↻  Selection too short to repeat")
-            return
-        self._me_push_undo()
-        gap = 60.0 / self.me_bpm / 4.0 if self.me_bpm > 0 else 0.1
-        new_notes = [dict(n, time=n["time"] - t_min + t_max + gap)
-                     for n in notes]
-        self.me_notes.extend(new_notes)
-        self.me_notes.sort(key=lambda n: n["time"])
-        self.me_duration = max(self.me_duration, max(n["time"] for n in new_notes) + 0.5)
-        self._me_selected_notes = {i for i, n in enumerate(self.me_notes)
-                                    if any(abs(n["time"] - nn["time"]) < 0.001 and
-                                           n["lane_idx"] == nn["lane_idx"] for nn in new_notes)}
-        self._me_redraw()
-        self._me_update_info()
-        self.me_status_var.set(f"↻  Repeated {len(notes)} note(s) — Ctrl+Z to undo")
 
     # ── Feature 5: Velocity threshold filter ─────────────────────────────────
     def _me_filter_velocity(self):
@@ -27388,6 +28105,52 @@ demucs.separate.main()
             self._add_recent_file("recent_me_mix", mix)
             found.append("Full Mix:  " + os.path.basename(mix))
         self._auto_fetch_show_result(song, drums, mix, used_recursive, found)
+
+    def _spec_on_midi_written(self, path):
+        """Spectral Comparison just wrote `path` (breaker H6, 2026-07-29).
+
+        If the MIDI Editor is holding that SAME file, reconcile now. Before this,
+        the editor silently kept its pre-Spectral copy and the user's next Save
+        rewrote the file WITHOUT Spectral's corrections -- no warning in either
+        direction. Clean editor -> reload in place; dirty editor -> say what
+        happened and let the user choose which copy wins."""
+        try:
+            held = getattr(self, "_me_last_midi", "") or ""
+            if not held or not path:
+                return
+            if (os.path.normcase(os.path.abspath(held))
+                    != os.path.normcase(os.path.abspath(path))):
+                return
+            if not getattr(self, "me_edit_started", False):
+                # Nothing unsaved to lose -- just take the new file.
+                # exact_midi=True is REQUIRED here: this is precisely the
+                # "caller just wrote that file and means it literally" case, and
+                # without it the .rlrr sibling matcher can substitute a
+                # different chart.
+                self._me_load(path, exact_midi=True)
+                self._set_global_status(
+                    "MIDI Editor reloaded -- Spectral Comparison rewrote "
+                    f"{os.path.basename(path)}", 5000)
+                return
+            if messagebox.askyesno(
+                    "Chart rewritten by Spectral Comparison",
+                    f"Spectral Comparison just rewrote:\n{os.path.basename(path)}\n\n"
+                    "The MIDI Editor still holds an EDITED copy of that same "
+                    "file. Saving there will overwrite those corrections.\n\n"
+                    "Reload the Spectral version into the MIDI Editor now?\n\n"
+                    "Yes = discard the editor's unsaved edits.\n"
+                    "No = keep editing (the Spectral file stays on disk until "
+                    "you save over it)."):
+                # The user just consented, so suppress _me_load's own identical
+                # discard prompt -- but RESTORE the dirty flag if the load is
+                # declined or fails, or the quit guard would stop warning about
+                # edits that are still in memory.
+                _dirty = self.me_edit_started
+                self.me_edit_started = False
+                if not self._me_load(path, exact_midi=True):
+                    self.me_edit_started = _dirty
+        except Exception:
+            pass
 
     def _spec_auto_fetch_audio(self, chart_path):
         """Hook for the Spectral tab's Auto Fetch Audio button: from the loaded
@@ -28876,7 +29639,7 @@ demucs.separate.main()
                 pass
             return None
 
-    def _a2m_apply_cleanup_pass(self, midi_path):
+    def _a2m_apply_cleanup_pass(self, midi_path, detect_audio_path=None):
         """v4.5.0-1 — apply the trained detection CLEANUP PASS (cymbal re-classifier
         + kick phantom-remover) to the freshly-written Audio->MIDI .mid IN PLACE,
         before it loads into the editor. Operates ONLY on the detector's OUTPUT
@@ -28884,7 +29647,16 @@ demucs.separate.main()
         sidecar) -- it does NOT change detection. Gated by the adv_frame toggles;
         master OFF, both sub-passes off, or no source audio => no-op (output is
         byte-identical to pre-4.5). Any failure is caught + logged so a cleanup
-        error never blocks loading the chart."""
+        error never blocks loading the chart.
+
+        ``detect_audio_path`` is currently PASSED BY NOBODY, on purpose. It exists so
+        the caller can hand this pass the detection audio (the separator's drums
+        composite) instead of the user's own file. That was done in 4.9.9 and
+        REVERTED on 2026-08-01: measured over 40 packs it removed 178 FEWER phantom
+        kicks and scored 4.24 pp WORSE on cymbals in the main workflow. The argument
+        is kept rather than deleted because the change becomes correct once paired
+        with an input-dependent gate (the composite depresses confidence, so a fixed
+        gate under-fires). See the block comment at the call site before using it."""
         # v4.7.19 — did clean_a2m_midi actually run? The except below must never say
         # "skipped" once this is True (breaker INV12).
         # v4.7.20 — this flag alone is NOT enough, and its old comment ("set the moment the
@@ -28946,7 +29718,23 @@ demucs.separate.main()
             # detection is OFF the user wants no rides, so the cymbal re-classifier
             # must not promote onsets into the ride lane (it folds them to crash).
             allow_ride = _flag("allow_ride")
-            audio_path = getattr(self, "_a2m_source_file", None)
+            # SOURCE AUDIO. `_a2m_source_file` is `_orig_input_path` — the USER's own
+            # file, captured at :17769 BEFORE the separator rebinds input_path to the
+            # drums composite. That is deliberate and it is what wins; see the block at
+            # the call site before changing it.
+            #
+            # ⚠ THIS COMMENT USED TO ARGUE THE OPPOSITE. Until 2026-08-01 it described
+            # the "source-audio alignment" of 4.9.9 as shipped and good, citing a 3-pack
+            # proxy (AUROC 0.740 full-mix vs 0.917 drums-stem) and calling the two
+            # changes inseparable. That proxy was superseded by a direct 40-pack
+            # measurement of the actual production condition, which reversed the verdict,
+            # and 4.9.9 was reverted. The old text is gone rather than annotated because
+            # it was an imperative — a future reader would have acted on it.
+            #
+            # `_a2m_source_file` is NOT repointed by anything: it has four other
+            # consumers, including the MIDI-Editor hand-off at :16134 which passes it as
+            # the DRUMS audio.
+            audio_path = detect_audio_path or getattr(self, "_a2m_source_file", None)
             if not audio_path or not os.path.isfile(audio_path):
                 try:
                     self._a2m_log("Cleanup pass:      skipped (source audio not found)")
@@ -29060,8 +29848,17 @@ demucs.separate.main()
             try:
                 self._a2m_log(
                     "Cleanup pass:      "
-                    + (("cymbals re-classified"
-                        + ("" if allow_ride else " (ride off -> folded to crash)"))
+                    # Audit fix 2026-08-03 — this string is selected purely from `do_cymbal`, so it was
+                    # a claim about WORK DONE made without checking any. "cymbals
+                    # re-classified" was printed for a chart with no cymbal onsets at
+                    # all, and for one where every cymbal kept its original lane. What is
+                    # actually known here is that the pass was enabled and ran, so say
+                    # only that; a real moved-note count isn't available at this point
+                    # (`cymbal_relabeled` carries NET per-lane deltas, which a
+                    # count-preserving relabel reports as zero) and inventing one would
+                    # trade this bug for a worse one.
+                    + (("cymbal re-classifier ran"
+                        + ("" if allow_ride else " (ride off -> any rides folded to crash)"))
                        if do_cymbal else "cymbals off")
                     + ", "
                     # v4.7.19 — the MEASURED count, not summary['n_kicks_removed']: the log
@@ -29080,6 +29877,18 @@ demucs.separate.main()
                 _review = list((summary or {}).get("bleed_review_flags", []) or [])
             except Exception:
                 _review = []
+            # Audit fix 2026-08-03 — the removal tier and the review BAND are DISJOINT by construction
+            # (passes.bleed_kick_pass: removal takes ratio >= remove_gate, the band takes
+            # review_gate <= ratio < remove_gate), so an empty review list says nothing
+            # whatever about whether bleed was found. The old zero-line read
+            # "0 kick(s) flagged for review (no cross-stem bleed found)" — which is the
+            # OPPOSITE of the truth on the commonest interesting run: one kick over the
+            # removal gate and none in the band. Report the two tiers independently, and
+            # never let an empty band imply a clean pass.
+            try:
+                _n_bleed_removed = int((summary or {}).get("n_bleed_kicks_removed", 0) or 0)
+            except Exception:
+                _n_bleed_removed = 0
             if _review:
                 # Path-TAG the stash with the exact chart it belongs to, so a later
                 # open of a DIFFERENT chart can never inherit these flags (the open
@@ -29089,25 +29898,20 @@ demucs.separate.main()
                     "midi": os.path.abspath(midi_path),
                     "times": [float(t) for t in _review],
                 }
-                try:
-                    self._a2m_log(
-                        f"  ℹ  {len(_review)} kick(s) flagged for review "
-                        f"(possible cross-stem bleed) — highlighted in the MIDI Editor.")
-                except Exception:
-                    pass
             else:
                 # No flags this run — clear any stale set from a previous conversion.
                 self._a2m_bleed_review_flags = None
-                # v4.9.4 — SAY SO. Previously this branch was silent, so "the pass ran and
-                # found nothing" and "the pass ran and flagged some" were distinguishable
-                # in the log only by the ABSENCE of a line — you had to know the line
-                # existed to notice it was missing. Log the zero explicitly.
-                if do_bleed:
-                    try:
-                        self._a2m_log(
-                            "  ℹ  0 kick(s) flagged for review (no cross-stem bleed found).")
-                    except Exception:
-                        pass
+            # v4.9.4 — SAY SO even at zero. Previously the empty case was silent, so "the
+            # pass ran and found nothing" and "the pass ran and flagged some" were
+            # distinguishable in the log only by the ABSENCE of a line.
+            if do_bleed:
+                try:
+                    self._a2m_log(
+                        f"  ℹ  Cross-stem bleed: {_n_bleed_removed} kick(s) removed, "
+                        f"{len(_review)} in the review band"
+                        + (" — highlighted in the MIDI Editor." if _review else "."))
+                except Exception:
+                    pass
         except Exception as _e:
             try:
                 # v4.7.19 — "skipped" is a factual claim about the chart on disk, so it may
@@ -29201,14 +30005,62 @@ demucs.separate.main()
         if not self._me_load(midi_path):
             return
         self.me_midi_var.set(midi_path)
-        # Attach ML confidence data to notes if available
-        conf_lookup = getattr(self, '_a2m_conf_lookup', {})
+        # Attach ML confidence data to notes if available.
+        # Audit fix 2026-08-02, two parts:
+        #  * TOLERANT MATCH — detection keys confidences by (round(raw_sec,4),
+        #    pitch) (~:19041), but the chart is written on a 480-tpb grid with
+        #    a TRUNCATED integer tempo and the editor re-derives times from
+        #    ticks (ticks_to_secs), so the old exact dict hit only landed when
+        #    the quantized time round-tripped into the same 0.1 ms bucket:
+        #    simulating both paths' arithmetic measured 7.1% matched at 90 BPM
+        #    / 14.3% at 174.9 BPM — low-confidence stripes, the Review Issues
+        #    low-conf tally and same-onset lower-confidence removal all
+        #    starved on the missing ~90%. Match nearest-in-time PER PITCH
+        #    within the same tight 12 ms bar as _me_rekey_flags (same
+        #    simulation: 100% matched), and per that function's hard-won
+        #    discipline: NO offset estimation, and count what fails to match
+        #    instead of swallowing it.
+        #  * PROVENANCE — the attach was unconditional, so a chart opened from
+        #    Sheet Music (inherit_a2m_source=False) could inherit the LAST
+        #    conversion's confidences on a coincidental key hit. Gate it like
+        #    the two adjacent hand-offs (_me_source_audio, 4.7.13; the bleed
+        #    stash path-tag below).
+        conf_lookup = (getattr(self, '_a2m_conf_lookup', {})
+                       if inherit_a2m_source else {})
         if conf_lookup:
+            import bisect as _bisect
+            _by_pitch = {}
+            for (_ct, _cp), _cv in conf_lookup.items():
+                _by_pitch.setdefault(_cp, []).append((float(_ct), _cv))
+            for _lst in _by_pitch.values():
+                _lst.sort()
+            _CONF_TOL = 0.012   # same tight bar as _me_rekey_flags
+            _attached = _missed = 0
             for note in self.me_notes:
-                key = (round(note["time"], 4), note["note"])
-                c   = conf_lookup.get(key)
-                if c is not None:
-                    note["conf"] = c
+                _lst = _by_pitch.get(note["note"])
+                if not _lst:
+                    continue    # no ML conf for this pitch at all — not a miss
+                _t = float(note["time"])
+                _i = _bisect.bisect_left(_lst, (_t,))
+                _best = None
+                for _j in (_i - 1, _i, _i + 1):
+                    if 0 <= _j < len(_lst):
+                        _d = abs(_lst[_j][0] - _t)
+                        if _best is None or _d < _best[0]:
+                            _best = (_d, _lst[_j][1])
+                if _best is not None and _best[0] <= _CONF_TOL:
+                    note["conf"] = _best[1]
+                    _attached += 1
+                else:
+                    _missed += 1
+            if _missed:
+                try:
+                    self._a2m_log(
+                        f"  Confidence attach: {_attached} note(s) matched a "
+                        f"detection confidence; {_missed} had none within "
+                        f"{int(_CONF_TOL * 1000)} ms and stay unshaded")
+                except Exception:
+                    pass
             self._me_redraw()
         # v4.9.0 — F12 cross-stem bleed REVIEW tier: the cleanup pass stashed the kick
         # onset times it flagged (not removed) for a human look. Highlight those kicks
@@ -29838,20 +30690,11 @@ demucs.separate.main()
             return
 
         try:
-            # Read raw XML (handles both .mxl and .xml)
-            if input_path.lower().endswith('.mxl'):
-                import zipfile
-                with zipfile.ZipFile(input_path, 'r') as z:
-                    xml_content = None
-                    for name in z.namelist():
-                        if name.endswith('.xml') and not name.startswith('META'):
-                            xml_content = z.read(name)
-                            break
-                if xml_content is None:
-                    raise ValueError("Could not find XML content inside .mxl file.")
-            else:
-                with open(input_path, 'rb') as f:
-                    xml_content = f.read()
+            # Read raw XML (handles both .mxl and .xml). Container-aware -- see
+            # _sm_extract_musicxml; the scan that used to live here accepted only names
+            # ending '.xml', so a spec-legal container whose rootfile is
+            # 'score.musicxml' was reported as holding no XML at all.
+            xml_content = self._sm_extract_musicxml(input_path)
 
             root = ET.fromstring(xml_content)
 
@@ -29932,6 +30775,94 @@ demucs.separate.main()
         else:
             threading.Thread(target=self._sm_do_convert, daemon=True).start()
 
+    @staticmethod
+    def _sm_free_path(path):
+        """`path`, or the first 'name (N).ext' beside it that does not exist."""
+        base, ext = os.path.splitext(path)
+        n = 2
+        while os.path.exists(path):
+            path = "%s (%d)%s" % (base, n, ext)
+            n += 1
+        return path
+
+    def _sm_confirm_overwrite(self, path):
+        """Worker-thread-safe 'this file already exists' prompt. True = replace.
+
+        Sheet Music wrote '<score name>.mid' into the output folder unconditionally,
+        and that folder is remembered across sessions -- so any two sources sharing a
+        basename silently replaced each other's chart, with no prompt and nothing in
+        the log. That is the same loss the .ogg converter was hardened against in
+        4.7.26, on a path that had never been asked to ask.
+
+        Runs the dialog on the MAIN thread and blocks this worker on the result, the
+        established pattern here (see the mid-batch art popup). If the dialog cannot
+        run -- app shutting down, main loop gone -- the wait times out and we answer
+        NO, because the safe default is to keep the file the user already has.
+        """
+        holder = {"replace": False}
+        done = threading.Event()
+
+        def _ask():
+            try:
+                holder["replace"] = messagebox.askyesno(
+                    "File already exists",
+                    "%s already exists in the output folder.\n\n"
+                    "Replace it?\n\nChoosing No saves the new chart alongside it "
+                    "under a free name." % os.path.basename(path),
+                    parent=self.root)
+            except Exception:
+                holder["replace"] = False
+            finally:
+                done.set()
+
+        try:
+            self.root.after(0, _ask)
+        except Exception:
+            return False
+        done.wait(timeout=120)
+        return bool(holder["replace"])
+
+    def _sm_extract_musicxml(self, input_path):
+        """Bytes of the MusicXML score, reading .mxl containers properly.
+
+        Three separate places used to scan a .mxl for the first member whose name ends
+        '.xml'. A compressed MusicXML container names its score in META-INF/container.xml,
+        and that rootfile is very often 'score.musicxml' -- spec-legal and produced by
+        common exporters. The old scan found nothing for those files: one path reported
+        "Could not find XML content inside .mxl file", and the other swallowed the
+        resulting NameError as "(instrument map skipped: ...)" and then died further down
+        on an unbound xml_root, which reached the user as a raw Python
+        internal-variable error with a log line claiming a step had been harmlessly
+        skipped.
+
+        Read the container first, fall back to any plausible score member, and if there
+        genuinely is none, say what the archive DOES hold so the message is actionable.
+        """
+        if not input_path.lower().endswith('.mxl'):
+            with open(input_path, 'rb') as f:
+                return f.read()
+        import zipfile
+        with zipfile.ZipFile(input_path, 'r') as z:
+            names = [n for n in z.namelist() if not n.endswith('/')]
+            # 1) The container declares which member is the score.
+            try:
+                for rf in ET.fromstring(z.read('META-INF/container.xml')).iter():
+                    if rf.tag.split('}')[-1] == 'rootfile':
+                        full = rf.get('full-path') or ''
+                        if full in names:
+                            return z.read(full)
+            except (KeyError, ValueError, ET.ParseError):
+                pass          # absent or malformed container -- fall through
+            # 2) Anything that looks like a score, by extension.
+            for name in names:
+                if name.startswith('META-INF/'):
+                    continue
+                if name.lower().endswith(('.xml', '.musicxml')):
+                    return z.read(name)
+            raise ValueError(
+                "No MusicXML score found inside this .mxl file. It contains: %s"
+                % (", ".join(names)[:200] or "nothing"))
+
     def _sm_do_convert(self):
         """Worker thread — parse MusicXML and build MIDI."""
         audio_offset_secs = 0.0  # v4.4.57.92-10 init for NameError-safety; populated below
@@ -29959,20 +30890,9 @@ demucs.separate.main()
             self._sm_log(f"=== Sheet Music → MIDI ===\n")
             self._sm_log(f"Input: {os.path.basename(input_path)}")
 
-            # Handle .mxl (compressed MusicXML = zip file)
-            xml_content = None
-            if input_path.lower().endswith('.mxl'):
-                import zipfile
-                with zipfile.ZipFile(input_path, 'r') as z:
-                    for name in z.namelist():
-                        if name.endswith('.xml') and not name.startswith('META'):
-                            xml_content = z.read(name)
-                            break
-                if xml_content is None:
-                    raise ValueError("Could not find XML content inside .mxl file.")
-            else:
-                with open(input_path, 'rb') as f:
-                    xml_content = f.read()
+            # Handle .mxl (compressed MusicXML = zip file). Container-aware -- see
+            # _sm_extract_musicxml.
+            xml_content = self._sm_extract_musicxml(input_path)
 
             root = ET.fromstring(xml_content)
 
@@ -30143,6 +31063,26 @@ demucs.separate.main()
                 perc_part = parts[0]
                 self._sm_log(f"  No explicit percussion part found — using first part: {part_id_to_name.get(pid, pid)}")
 
+            # MusicXML declares <divisions> PER PART, and the drum part is very often not
+            # the first one. Reading it from the document root above took the FIRST
+            # part's value: a piano part at divisions=1 ahead of a drumset at
+            # divisions=4 stretched every drum onset by 4x, while the log cheerfully
+            # printed "Divisions per quarter: 1". The music21 path has always scoped this
+            # to the drum part; this one did not, which is why "works with full band
+            # sheet music too" was false in Basic mode.
+            if perc_part is not None:
+                _part_div_el = find_first(perc_part, 'divisions')
+                if _part_div_el is not None and _part_div_el.text:
+                    try:
+                        _part_div = int(_part_div_el.text)
+                    except ValueError:
+                        _part_div = 0
+                    if _part_div > 0:
+                        if _part_div != divisions:
+                            self._sm_log(f"  Divisions for the drum part: {_part_div}  "
+                                         f"(the document root declared {divisions})")
+                        divisions = _part_div
+
             abs_tick = 0
             measures = find_all(perc_part, 'measure') if perc_part is not None else []
             self._sm_log(f"  Measures found: {len(measures)}")
@@ -30223,6 +31163,16 @@ demucs.separate.main()
                         if dur_el is not None and dur_el.text:
                             abs_tick += int(dur_el.text)
 
+            # Read the offset BEFORE the summary below reports it. It used to be read 60
+            # lines further down, so the "With offset ... → lands at ..." line printed the
+            # initialiser (+0.000s) no matter what the user typed. That line is their only
+            # feedback about where the offset actually puts the chart, and it was a fixed
+            # lie -- the MIDI was written with the real value.
+            try:
+                audio_offset_secs = float(self.sm_offset_var.get().strip() or "0")
+            except ValueError:
+                audio_offset_secs = 0.0
+
             total_notes = len(events)
             self._sm_log(f"\n✓ Notes parsed: {total_notes}")
             if events:
@@ -30288,11 +31238,7 @@ demucs.separate.main()
             tpb = 480  # ticks per beat
             scale = tpb / divisions  # scale from file ticks to our ticks
             tempo_us = int(60_000_000 / bpm)
-
-            try:
-                audio_offset_secs = float(self.sm_offset_var.get().strip() or "0")
-            except ValueError:
-                audio_offset_secs = 0.0
+            # audio_offset_secs was read above, before the summary that reports it.
 
             first_secs_raw = 0.0
             if events:
@@ -30305,12 +31251,33 @@ demucs.separate.main()
             normalize = getattr(self, 'sm_offset_normalize_var', None) and self.sm_offset_normalize_var.get()
             if normalize and events:
                 first_tick_raw = sorted(events, key=lambda e: e[0])[0][0]
-                # Shift in ticks: first note becomes offset_ticks exactly
-                offset_ticks = int(round(audio_offset_secs * bpm / 60 * tpb))
-                shift_ticks = offset_ticks - first_tick_raw
-                events = [(max(0, tick + shift_ticks), note, vel) for tick, note, vel in events]
-                self._sm_log(f"  Auto-align: first note tick {first_tick_raw} → {offset_ticks} "
-                             f"(shift: {shift_ticks:+d} ticks)")
+                # Shift in FILE ticks. `events` are still in the file's own <divisions>
+                # units at this point and get multiplied by tpb/divisions in midi_track
+                # below -- so a shift computed in 480-tpb ticks was in the wrong domain
+                # AND was then scaled a second time. It came out right only when the file
+                # happened to use divisions=480. Measured: a Sibelius export
+                # (divisions=256) put a typed 2.500s offset at 4.688s, and divisions=1
+                # put it at 1200s, while the tab's own label promises the offset "lands
+                # exactly where entered".
+                offset_ticks_file = int(round(audio_offset_secs * bpm / 60 * divisions))
+                shift_ticks = offset_ticks_file - first_tick_raw
+                _shifted = [(tick + shift_ticks, note, vel) for tick, note, vel in events]
+                # Negative offsets are a DOCUMENTED workflow -- Help tells users with a
+                # count-in bar to pull the chart back -- and MIDI has no negative time, so
+                # anything landing before zero collapses onto tick 0. Survivable, but it
+                # must not be silent: the count-in notes become one simultaneous chord at
+                # 0:00, which reads as a conversion bug rather than as the consequence of
+                # the offset the user asked for.
+                _clamped = sum(1 for _t, _n, _v in _shifted if _t < 0)
+                events = [(max(0, tick), note, vel) for tick, note, vel in _shifted]
+                self._sm_log(f"  Auto-align: first note tick {first_tick_raw} → "
+                             f"{offset_ticks_file} (shift {shift_ticks:+d} file ticks; "
+                             f"lands at {audio_offset_secs:+.3f}s)")
+                if _clamped:
+                    self._sm_log(f"  ⚠  {_clamped} note(s) landed before 0:00 and were "
+                                 f"stacked onto the very start — MIDI cannot hold negative "
+                                 f"time. Use a smaller negative offset if those count-in "
+                                 f"notes matter.")
                 offset_ticks = 0  # already baked in
             else:
                 offset_ticks = int(round(audio_offset_secs * bpm / 60 * tpb))
@@ -30371,6 +31338,14 @@ demucs.separate.main()
             if self.sm_save_file_var.get():
                 os.makedirs(output_dir, exist_ok=True)
                 midi_path = os.path.join(output_dir, f"{song_name}.mid")
+                # Ask before replacing someone else's chart. The output folder persists
+                # across sessions, so two scores sharing a basename used to overwrite
+                # each other in silence. Declining saves alongside instead of cancelling
+                # the conversion the user already waited for.
+                if os.path.exists(midi_path) and not self._sm_confirm_overwrite(midi_path):
+                    midi_path = self._sm_free_path(midi_path)
+                    self._sm_log(f"  Kept the existing file — saving as: "
+                                 f"{os.path.basename(midi_path)}")
                 with open(midi_path, 'wb') as f:
                     f.write(midi_bytes)
                 self._sm_log(f"\n✓ MIDI saved to: {midi_path}")
@@ -30453,19 +31428,20 @@ demucs.separate.main()
             # override wrong note numbers using a name-based correction table —
             # this handles transcribers who assigned the wrong MIDI note to a drum.
             inst_id_to_midi = {}
-            try:
-                if input_path.lower().endswith('.mxl'):
-                    with zf.ZipFile(input_path, 'r') as z:
-                        for name in z.namelist():
-                            if name.endswith('.xml') and not name.startswith('META'):
-                                xml_bytes = z.read(name)
-                                break
-                else:
-                    with open(input_path, 'rb') as f:
-                        xml_bytes = f.read()
-                xml_root = ET.fromstring(xml_bytes)
-                def _strip_ns(tag): return tag.split('}')[-1] if '}' in tag else tag
+            # Reading the score XML is NOT optional -- xml_root is used further down for
+            # part detection. It used to sit inside the same try as the (genuinely
+            # optional) instrument-map build below, whose except logs "(instrument map
+            # skipped: ...)" and carries on. So a container this could not read produced
+            # a reassuring "a step was skipped" line and then died on an unbound
+            # xml_root, which surfaced to the user as a raw Python internal-variable
+            # error naming a variable they have no way to know about. A failure here is
+            # fatal to this path, so let it raise and be reported as itself.
+            xml_bytes = self._sm_extract_musicxml(input_path)
+            xml_root = ET.fromstring(xml_bytes)
 
+            def _strip_ns(tag): return tag.split('}')[-1] if '}' in tag else tag
+
+            try:
                 # Step 1: build id → raw midi-unpitched from the file
                 raw_midi = {}
                 for midi_inst in xml_root.iter():
@@ -30677,6 +31653,10 @@ demucs.separate.main()
 
             # ── Parse notes measure by measure ───────────────────────────────
             ts_num, ts_den = 4, 4
+            # The FIRST time signature seen in this part, kept separately: ts_num/ts_den
+            # are rewritten by every <attributes> as the loop walks, so by the end of the
+            # score they hold the LAST bar's meter -- not what belongs in the header.
+            hdr_ts = None
             abs_tick = 0
             measures = _find_all(drum_part_xml, 'measure')
             self._sm_log(f"  Measures: {len(measures)}")
@@ -30696,6 +31676,7 @@ demucs.separate.main()
             for measure in measures:
                 measure_start_tick = abs_tick
                 note_tick = abs_tick
+                measure_max_tick = abs_tick
 
                 for child in measure:
                     ctag = _strip(child.tag)
@@ -30712,6 +31693,8 @@ demucs.separate.main()
                             try:
                                 ts_num = int(b.text)
                                 ts_den = int(bt.text)
+                                if hdr_ts is None:
+                                    hdr_ts = (ts_num, ts_den)
                             except (ValueError, TypeError): pass
 
                     elif ctag == 'note':
@@ -30791,8 +31774,26 @@ demucs.separate.main()
                         if d is not None and d.text:
                             note_tick += int(d.text)
 
-                # Advance to next measure
-                measure_dur = int(ts_num * (4.0 / ts_den) * divisions)
+                    # Furthest point this bar actually reaches. `backup` deliberately
+                    # moves note_tick BACKWARDS so a second voice can be written, so the
+                    # value left at the end of the loop is not the bar's length -- only
+                    # the running maximum is.
+                    if note_tick > measure_max_tick:
+                        measure_max_tick = note_tick
+
+                # Advance by what this bar ACTUALLY contains, not by its nominal length.
+                # Forcing every measure to ts_num*(4/ts_den)*divisions inserted a phantom
+                # gap after any SHORT bar -- a pickup/anacrusis, which is routine on
+                # MuseScore -- pushing everything after it late by (nominal - pickup).
+                # Measured on 4/4 at 120bpm with a one-beat pickup: expected onsets
+                # 0,1,2,3,4... came out 0,4,5,6,7..., so every note after the lead-in was
+                # 3 beats (1.5s) late. Auto-align could not rescue it either, because it
+                # pins the pickup note and lets the body of the song drift instead.
+                measure_dur = measure_max_tick - measure_start_tick
+                if measure_dur <= 0:
+                    # A bar holding no notes, rests or forwards at all. Fall back to the
+                    # nominal length so it cannot collapse to zero time.
+                    measure_dur = int(ts_num * (4.0 / ts_den) * divisions)
                 abs_tick = measure_start_tick + measure_dur
 
             total = len(perc_notes)
@@ -30835,7 +31836,11 @@ demucs.separate.main()
                         self._sm_log(w)
                     self._sm_log("  These are not errors in ParaKit — they reflect how the original\n"
                                  "  sheet music was notated. Use the MIDI Editor to fix lane assignments.")
-                self._sm_log(f"   {name:20s}: {count}")
+            # (A stray `self._sm_log(f"   {name:20s}: {count}")` sat here, outside the
+            # per-instrument loop ~35 lines above. It re-printed that loop's LAST
+            # instrument row once more using the leaked loop variables, so every
+            # conversion log ended with a duplicate count line that read like a real
+            # tally entry.)
             if skipped:
                 remaps  = {k: v for k, v in skipped.items() if '→' in str(k)}
                 dropped = {k: v for k, v in skipped.items() if '→' not in str(k)}
@@ -30902,6 +31907,27 @@ demucs.separate.main()
                     v >>= 7
                 return bytes(reversed(r))
 
+            # Resolve the meter this file will advertise. The header used to be the
+            # literal bytes([4, 2, 24, 8]) -- a hardcoded 4/4 -- so a 6/8 score came out
+            # 4/4 AND the Advanced "Override Time Sig" control did nothing whatsoever in
+            # this mode, while Help promises it "changes how the MIDI header is written".
+            # Basic mode always honoured both; only this path, the DEFAULT one, ignored
+            # them, so the user's fix-it step silently changed nothing.
+            _hdr_num, _hdr_den = hdr_ts or (4, 4)
+            if ts_num_override and ts_den_override:
+                try:
+                    _hdr_num, _hdr_den = int(ts_num_override), int(ts_den_override)
+                except ValueError:
+                    pass
+            if not (1 <= _hdr_num <= 255) or _hdr_den < 1 or (_hdr_den & (_hdr_den - 1)):
+                # A MIDI meta-event stores the denominator as its log2, so it must be a
+                # power of two. Anything else cannot be encoded -- say so rather than
+                # writing a garbage byte.
+                self._sm_log(f"  ⚠  {_hdr_num}/{_hdr_den} cannot be written to a MIDI "
+                             f"header (the denominator must be a power of 2) — using 4/4.")
+                _hdr_num, _hdr_den = 4, 4
+            self._sm_log(f"  MIDI header time signature: {_hdr_num}/{_hdr_den}")
+
             def midi_header():
                 return b'MThd' + struct.pack('>IHHH', 6, 1, 2, tpb)
 
@@ -30910,7 +31936,9 @@ demucs.separate.main()
                 data += encode_varlen(0)
                 data += b'\xFF\x51\x03' + struct.pack('>I', tempo_us)[1:]
                 data += encode_varlen(0)
-                data += b'\xFF\x58\x04' + bytes([4, 2, 24, 8])
+                data += b'\xFF\x58\x04' + bytes([_hdr_num,
+                                                 int(math.log2(_hdr_den)),
+                                                 24, 8])
                 sorted_evts = sorted(events_list, key=lambda e: e[0])
                 prev_tick = 0
                 for secs, note, vel in sorted_evts:
@@ -30932,6 +31960,14 @@ demucs.separate.main()
             if self.sm_save_file_var.get():
                 os.makedirs(output_dir, exist_ok=True)
                 midi_path = os.path.join(output_dir, f"{song_name}.mid")
+                # Ask before replacing someone else's chart. The output folder persists
+                # across sessions, so two scores sharing a basename used to overwrite
+                # each other in silence. Declining saves alongside instead of cancelling
+                # the conversion the user already waited for.
+                if os.path.exists(midi_path) and not self._sm_confirm_overwrite(midi_path):
+                    midi_path = self._sm_free_path(midi_path)
+                    self._sm_log(f"  Kept the existing file — saving as: "
+                                 f"{os.path.basename(midi_path)}")
                 with open(midi_path, 'wb') as f:
                     f.write(midi_bytes)
                 self._sm_log(f"\n✓ MIDI saved to: {midi_path}")
@@ -32378,7 +33414,23 @@ demucs.separate.main()
             key = hashlib.sha1(path.encode("utf-8")).hexdigest()
             out_png = os.path.join(YT_ART_CACHE_DIR, key + ".png")
             if os.path.isfile(out_png):
-                return out_png
+                # The cache file name is a hash of the PATH ALONE, and this
+                # codebase already knows a path is an address, not an identity
+                # (see the v4.7.26 art-undo fold in _yt_do_delete: yt-dlp names
+                # by title, so re-downloading the same track lands on the exact
+                # same path). A stale hit then showed the PREVIOUS song's cover
+                # on the new row, with no error and no way for the user to tell.
+                # Serve the cached PNG only while it is at least as new as the
+                # audio it was rendered from; otherwise fall through and
+                # re-render over it. Re-embedding art also bumps the audio's
+                # mtime, which is exactly when the thumbnail should be redrawn.
+                # Unreadable stat -> keep the old serve-the-cache behaviour
+                # (audit fix 2026-08-02).
+                try:
+                    if os.path.getmtime(out_png) >= os.path.getmtime(path):
+                        return out_png
+                except Exception:
+                    return out_png
             data = None
             # 1) Embedded cover art (the common case for ParaKit FLAC downloads).
             try:
@@ -32419,17 +33471,43 @@ demucs.separate.main()
             return None
 
     # ── Download-completion hook (called via root.after from the worker) ─────
-    def _yt_newest_audio_in(self, out_dir, fmt):
+    def _yt_newest_audio_in(self, out_dir, fmt, not_before=None):
+        """Newest matching audio file in out_dir, optionally restricted to files
+        written at or after `not_before`.
+
+        F1 (breaker 2026-07-31): without that bound this returned the newest audio
+        file in the folder REGARDLESS of age, so a run where yt-dlp printed no
+        [ExtractAudio] Destination line — e.g. "has already been downloaded" —
+        resolved to a completely unrelated earlier download. The caller then wrote
+        the REQUESTED video's title/artist/cover onto that file's library row,
+        silently relabelling song A with song B's metadata. Bounding by the download
+        start makes the honest outcome "couldn't locate the file" instead.
+
+        The 2 s slack absorbs coarse filesystem timestamp granularity (FAT32 is 2 s);
+        it is far too small to re-admit a file from an earlier download."""
         try:
             import glob
             exts = set([(fmt or "").lower(), "flac", "wav"])
             exts.discard("")
+            def _mtime(p):
+                # A file that vanished between the glob and here must sort LAST and
+                # fail the age test, never raise — this whole function is wrapped in
+                # a bare except, so an exception here would silently disable the
+                # fallback entirely instead of skipping one candidate.
+                try:
+                    return os.path.getmtime(p)
+                except Exception:
+                    return -1.0
+
             cands = []
             for ext in exts:
                 cands.extend(glob.glob(os.path.join(out_dir, f"*.{ext}")))
+            if not_before:
+                floor = not_before - 2.0
+                cands = [p for p in cands if _mtime(p) >= floor]
             if not cands:
                 return None
-            return max(cands, key=lambda p: os.path.getmtime(p))
+            return max(cands, key=_mtime)
         except Exception:
             return None
 
@@ -32441,7 +33519,12 @@ demucs.separate.main()
         """
         final = path
         if not final or not os.path.isfile(final):
-            final = self._yt_newest_audio_in(out_dir, fmt)
+            # Bound the fallback to THIS download (F1). _yt_start_time is cleared by
+            # done(), which can run before this after()-marshalled hook, so read the
+            # uncleared copy first.
+            _started = (getattr(self, "_yt_last_dl_started", None)
+                        or getattr(self, "_yt_start_time", None))
+            final = self._yt_newest_audio_in(out_dir, fmt, not_before=_started)
         if not final or not os.path.isfile(final):
             try:
                 self._yt_log("Library: couldn't locate the downloaded file to add it.")
@@ -34049,6 +35132,9 @@ demucs.separate.main()
                     "deno-x86_64-pc-windows-msvc.zip")
 
         dest = _external_path("deno.exe", for_writing=True)
+        # Extraction target (F4): a corrupt/partial binary must never occupy `dest`,
+        # because the runtime check is os.path.isfile-only and would report it ready.
+        tmp_dest = dest + ".part"
         os.makedirs(os.path.dirname(dest), exist_ok=True)
 
         def _upd(msg, color="#b388ff"):
@@ -34097,21 +35183,35 @@ demucs.separate.main()
                     _upd("✗  deno.exe not found in archive — try Node.js instead.",
                          "#ff6b81")
                     return
-                with z.open(deno_member) as src, open(dest, "wb") as f:
+                # F4 (breaker 2026-07-31): extract to a SIDECAR, validate, then
+                # promote atomically. This used to write straight to `dest`, so a
+                # CRC failure or interrupted copy past the 1 MB mark left a corrupt
+                # deno.exe sitting at the final path — and the runtime check only
+                # tests os.path.isfile, so the app then reported "Deno detected" AND
+                # disabled the Get Deno button, blocking the only in-app way to
+                # repair it while every signature-solve failed. (z.open() verifies
+                # the member CRC as it reads, so a corrupt member raises here and
+                # never reaches os.replace.)
+                with z.open(deno_member) as src, open(tmp_dest, "wb") as f:
                     shutil.copyfileobj(src, f)
 
-            if os.path.getsize(dest) < 1024 * 1024:
-                os.remove(dest)
+            if os.path.getsize(tmp_dest) < 1024 * 1024:
+                os.remove(tmp_dest)
                 _upd("✗  Extracted file looks invalid — try again or install Node manually.",
                      "#ff6b81")
                 return
 
+            os.replace(tmp_dest, dest)      # only a validated binary reaches dest
             self.root.after(0, self._yt_check_runtime_status)
 
         except Exception as e:
+            # Remove the sidecar UNCONDITIONALLY — the old handler only deleted a
+            # partial file under 1 MB, which is exactly the case that was already
+            # harmless. `dest` is deliberately left alone: if a working deno.exe was
+            # already installed, a failed re-download must not destroy it.
             try:
-                if os.path.isfile(dest) and os.path.getsize(dest) < 1024 * 1024:
-                    os.remove(dest)
+                if os.path.isfile(tmp_dest):
+                    os.remove(tmp_dest)
             except Exception:
                 pass
             _upd(f"✗  Download failed: {e}", "#ff6b81")
@@ -34199,6 +35299,11 @@ demucs.separate.main()
         # so the very first log line carries an accurate [mm:ss] prefix.
         import time as _t
         self._yt_start_time = _t.time()
+        # F1 (breaker 2026-07-31): a SECOND copy that done() does not clear.
+        # _yt_start_time is set to None in done(), and _yt_on_download_complete runs
+        # via after(0, ...), so it can be gone by the time the completion hook needs
+        # to know when this download began. See _yt_newest_audio_in.
+        self._yt_last_dl_started = self._yt_start_time
         self.yt_progress_bar.start(12)
         self.yt_timer_lbl.configure(text="⏱  00:00")
         self._timer_start(self.yt_timer_lbl)
@@ -34311,6 +35416,14 @@ demucs.separate.main()
             "--audio-quality", "0",
             "-o", out_template,
             "--no-playlist",
+            # Stamp the file with the DOWNLOAD time, not the video's upload date
+            # (2026-08-01). Older yt-dlp builds default to the remote mtime, which
+            # would date a fresh download years in the past -- and _yt_newest_audio_in
+            # now rejects candidates older than the download start, so the library
+            # add would silently fail with "couldn't locate the downloaded file".
+            # Auto-update is opt-in, so old builds are a real population. Accepted
+            # and harmless on every yt-dlp version.
+            "--no-mtime",
         ]
 
         # JS runtime for YouTube signature solving — yt-dlp v2025+ only
@@ -34853,6 +35966,17 @@ demucs.separate.main()
         return sorted(best.values(), key=lambda c: c.get("score", 0), reverse=True)
 
     def _am_fetch_worker_impl(self, query):
+        # Clear the PREVIOUS search's result before this one starts.
+        #
+        # _am_last_meta was only assigned AFTER the MusicBrainz request returned, and the
+        # canvas is only ever cleared inside _am_show_art_preview, which runs only on the
+        # success path. So a search that errored (MusicBrainz rate-limits at ~1 req/s) or
+        # found no art left the previous song's cover on screen AND left _am_last_meta
+        # holding its art_bytes/art_path — so "Apply art from thumbnail" and "Save
+        # Image..." silently acted on the earlier song. In the no-art case the status even
+        # began with a tick while the wrong cover sat above it.
+        self._am_last_meta = None
+        self.root.after(0, lambda: self._am_clear_art_preview())
         try:
             import urllib.request, urllib.parse, json
 
@@ -34948,6 +36072,18 @@ demucs.separate.main()
             # but the deferred root.after lambda runs later (was a NameError).
             _err = f"✗  Error: {e}"
             self.root.after(0, lambda m=_err: self.am_meta_result_var.set(m))
+
+    def _am_clear_art_preview(self):
+        """Empty the art canvas. Main thread only.
+
+        Exists so a search that fails or finds nothing can leave the panel EMPTY rather
+        than showing the previous song's cover, which used to sit there looking like a
+        result for the query that had just failed."""
+        try:
+            self.am_art_canvas.delete("all")
+            self._am_art_image = None
+        except Exception:
+            pass
 
     def _am_show_art_preview(self, image_data):
         """Show a thumbnail of the fetched art in the canvas."""
@@ -35210,6 +36346,19 @@ demucs.separate.main()
                 self.am_trim_status_var.set(
                     f"✗  Start time ({start_ms/1000:.1f}s) is beyond "
                     f"audio length ({audio_ms/1000:.1f}s)")
+                return
+            # Start and Duration are free-text entries, and only the start was checked.
+            # A zero or negative Duration made audio[start:end] an EMPTY segment, which
+            # pydub exports quite happily -- so a header-only .ogg was written and
+            # reported as "✓ Saved -5.0s clip", and "Send clip to Song Creator" would
+            # then wire that silence into an export.
+            if dur_ms <= 0:
+                self.am_trim_status_var.set(
+                    f"✗  Duration must be greater than 0 (got {dur_ms/1000:.1f}s)")
+                return
+            if start_ms < 0:
+                self.am_trim_status_var.set(
+                    f"✗  Start time cannot be negative (got {start_ms/1000:.1f}s)")
                 return
 
             end_ms   = start_ms + dur_ms
@@ -35525,6 +36674,9 @@ demucs.separate.main()
             # Auto Fetch Audio button: resolve the drums stem + full mix that
             # match the loaded chart's file name (same search as the MIDI Editor).
             "auto_fetch_audio": self._spec_auto_fetch_audio,
+            # Overwrite/Export MIDI just rewrote a file on disk. The MIDI Editor
+            # may be holding that same path in memory (breaker H6, 2026-07-29).
+            "midi_written": self._spec_on_midi_written,
         }
         try:
             self._spectral_tab = SpectralTab(parent, hooks=hooks)
@@ -35660,7 +36812,23 @@ demucs.separate.main()
         ratio 0.46 vs proper corr 0.03 / ratio 1.76. Cheap: one ~30 s mono
         excerpt each (cached per path pair). Returns False on any failure so the
         default stays the current backing+drums behaviour."""
-        key = (song_path, drums_path)
+        # Key on CONTENT, not just the address: a path is not an identity here.
+        # Stem Splitter writes to deterministic names (<song>/drums.wav), so a
+        # re-split lands on the exact same two paths — and this verdict decides
+        # whether Practice/Preview play the full mix ALONE or backing+drums.
+        # A path-only key served the OLD split's answer for the NEW audio, which
+        # is either the doubled-drums crackle this function exists to prevent or
+        # a silently dropped drums stem. (path, mtime) is the same discipline as
+        # _sc_meta_cache / _stem_lib_meta_cache / _me_sound_cache
+        # (audit fix 2026-08-02). Unreadable stat -> 0.0, i.e. no worse than the
+        # old behaviour.
+        def _stamp(p):
+            try:
+                st = os.stat(p)
+                return (st.st_mtime, st.st_size)
+            except Exception:
+                return (0.0, 0)
+        key = (song_path, drums_path, _stamp(song_path), _stamp(drums_path))
         cache = getattr(self, "_pp_double_cache", None)
         if cache is None:
             cache = self._pp_double_cache = {}
@@ -35878,6 +37046,18 @@ demucs.separate.main()
                     snd = pygame.sndarray.make_sound(trimmed)
                     sounds.setdefault(bus, []).append(snd)
                     ready.append((bus, snd))
+            if not ready:
+                # Buses WERE requested (stem paths exist — the deliberate
+                # zero-stem clock-only session already returned True above)
+                # but NOTHING decoded, e.g. soundfile has no decoder for the
+                # format (m4a/aac) or every track trimmed to zero. This used
+                # to fall through to `return True` with zero channels
+                # playing: Preview/Practice ran a moving playhead over total
+                # silence with no warning. Fail by return value instead —
+                # the same contract _spec_mix_play honors — so consumers
+                # take their documented silent-clock fallback HONESTLY
+                # (audit fix 2026-08-02).
+                return False
             # Fire play() in one tight loop to minimise skew (mirrors ME layered).
             master = float(self._pp_bus_gain.get("master", 1.0))
             for bus, snd in ready:
@@ -36955,12 +38135,13 @@ demucs.separate.main()
               "  Why: the auto-detector will always have some mistakes. This is where\n"
               "  you fix them — remove false hits, add missing ones, reclassify wrong\n"
               "  instruments.\n\n"
-              "STEP 3.5 →  Preview/Practice Track  (optional but recommended)\n"
-              "  Watch your chart fall exactly as it will in Paradiddle.\n"
+              "STEP 3.5 →  Preview  (optional but recommended)\n"
+              "  Watch your chart fall exactly as it will in Paradiddle, and fix what\n"
+              "  you spot — switch on the ✎ Edit chip to move, add or delete notes.\n"
               "  Why: lets you catch timing and feel issues before converting.\n\n"
-              "  Want to play along? Use the Practice subtab's 'Launch New Practice "
-              "  (BETA)' button to open the new mini-game window with real-time "
-              "  scoring, keyboard controls, and optional MIDI drum-kit input.\n\n"
+              "  Want to play along? Practice is the next tab along: pick the song and\n"
+              "  press Play for real-time scoring, keyboard controls, and optional\n"
+              "  MIDI drum-kit input.\n\n"
               "STEP 4 →  Song Tester  (recommended)\n"
               "  Verify BPM and offset alignment before converting.\n"
               "  Why: catches sync problems early. Some warnings after manual edits\n"
@@ -37872,10 +39053,11 @@ demucs.separate.main()
               "    - If a Drums audio stem is loaded in MIDI Editor stem\n"
               "      slot 1 (Drums), its path is copied into Song Creator's\n"
               "      Drum Audio field.\n\n"
-              "  Unsaved MIDI edits are written to disk before the handoff,\n"
-              "  so Song Creator always sees your latest notes. In 'Save as\n"
-              "  copy' mode you'll be asked to pick a copy path first; in\n"
-              "  'Modify original' mode the changes go to the loaded file.\n\n"
+              "  If you have unsaved MIDI edits, ParaKit offers to save them\n"
+              "  first so Song Creator sees your latest notes — declining\n"
+              "  cancels the handoff rather than sending stale ones. In 'Save\n"
+              "  as copy' mode you'll be asked to pick a copy path; in 'Modify\n"
+              "  original' mode the changes go to the loaded file.\n\n"
               "  You still need to:\n"
               "    - Add the backing audio (Song Audio / Full Mix) manually —\n"
               "      ParaKit doesn't assume which stem ships as the in-game\n"
@@ -38059,7 +39241,7 @@ demucs.separate.main()
                  "Playback speed controls:\n"
                  "  -0.1x / +0.1x — slow down or speed up playback in 0.1x steps.\n"
                  "  Maximum speed is 1.0x (normal). Minimum is 0.1x.\n"
-                 "  Speed: label shows current rate. ↺ Reset returns to 1.0x.\n"
+                 "  The 'Review Speed' label shows the current rate. ↺ Reset returns to 1.0x.\n"
                  "  Speed changes do NOT change pitch — only tempo is affected.\n"
                  "  Slowing to 0.3x or lower is useful for finding exact hit timestamps.\n"
                  "  No delay when changing speed or pressing play/pause.\n\n"
@@ -38357,10 +39539,11 @@ demucs.separate.main()
         # RIGHT COLUMN — Problems, Tools & Reference
         # ══════════════════════════════════════════════════════════════════════
 
-        # ── Spectral Comparison (NEW — first in the right column for visibility) ──
+        # ── Spectral Comparison (first in the right column for visibility) ──
+        # No "New!" badge: it shipped in 4.8.0 and carrying the badge forward just
+        # teaches users that the marker means nothing.
         s = section("📊  Spectral Comparison (Tab 7)", right, expanded=False,
-                    summary="NEW — did the detector chart it right?  Overlay the chart on the drums stem and flag MISS / PHANTOM.",
-                    badge="⭐ New!")
+                    summary="Did the detector chart it right?  Overlay the chart on the drums stem and flag MISS / PHANTOM.")
         entry(s,
               "Answers one question: did the detector chart it right?  Load a\n"
               "drums stem and the detected chart, press Compare, and the tab\n"
@@ -38398,34 +39581,42 @@ demucs.separate.main()
               "Spectrogram view adjusts brightness, top frequency and colormap.")
 
         # ── Preview/Practice Track ───────────────────────────────────────────
-        s = section("📺  Preview/Practice Track (Tab 12)", right)
+        s = section("▶  Preview (Tab 12)", right)
         entry(s,
-              "Preview subtab — visual reference only:\n"
-              "  Load a MIDI file to watch your chart fall exactly as it will in\n"
-              "  Paradiddle. No scoring, no input — just a clean visual check.\n\n"
+              "Preview — watch your chart fall, and edit it in place:\n"
+              "  Load a chart to see it fall exactly as it will in Paradiddle. Switch\n"
+              "  on the ✎ Edit chip to add, move and delete notes directly on the\n"
+              "  canvas; Undo and Redo cover every edit. There is no scoring here —\n"
+              "  that is Practice, on the next tab.\n\n"
               "Audio fields:\n"
-              "  Full Mix Audio — complete song\n"
-              "  Drum Audio — drums-only stem for toggling\n"
-              "  Toggle button — switches tracks during playback\n\n"
+              "  Audio — the song\n"
+              "  Drumless audio — a drums-free backing, if you have one\n\n"
               "Controls:\n"
-              "  ▶ / ⏸ / ⏹         — play, pause, stop\n"
-              "  Scrubber           — click or drag to seek\n"
-              "  Offset (s)          — shift notes earlier/later\n"
-              "  ✓ Apply Offset      — redraw after changing offset\n"
-              "  ↺ Reload Notes     — re-parse the MIDI\n"
-              "  Zoom buttons       — higher = more notes visible\n"
-              "  🗑 Clear All       — reset all fields\n\n"
-              "Note density bar:\n"
-              "  The thin bar above the canvas shows note density as a heatmap.\n"
-              "  Click it to seek to that position.")
+              "  ▶ / ⏸              — play, pause\n"
+              "  Scrubber            — click or drag to seek\n"
+              "  Audio offset        — nudge the audio against the chart, in ms\n"
+              "  Loop / Set A / Set B — repeat a section while you work on it\n"
+              "  Speed               — slower or faster without changing pitch\n"
+              "  Zoom / Fall / Note size / Grid — how the highway looks\n"
+              "  Demo track          — load a built-in chart to try the tab\n"
+              "  Clear               — empty the canvas\n\n"
+              "Import / Export:\n"
+              "  Import reads .mid, .rlrr or a parakit-chart .json; Export writes a\n"
+              "  General-MIDI drum .mid.\n\n"
+              "Unsaved edits are protected — loading the demo, importing another chart,\n"
+              "clearing, or receiving a chart from another tab will all ask first.\n\n"
+              "'Shortcuts & gestures' in the tab lists every keyboard and mouse binding,\n"
+              "including the edit-mode mouse actions.")
         note(s,
              "Songs with a drum-free intro: the canvas will be empty for the first few "
              "seconds while the audio plays — this is completely normal. Notes only start "
              "appearing when the first drum hit is due.")
         entry(s,
-              "Practice subtab — the NEW Practice mini-game (BETA):\n\n"
-              "  This is a separate window that opens when you click 'Launch New "
-              "  Practice (BETA)'. It is NOT the same as the in-app Preview canvas.\n\n"
+              "Practice (Tab 13) — play along and get scored:\n\n"
+              "  Practice is its own tab, right after Preview. Pick a song from its\n"
+              "  library and press Play: the chart falls in time with the audio and\n"
+              "  every hit is graded. Preview is the one you edit in; Practice is the\n"
+              "  one you play.\n\n"
               "What it does:\n"
               "  • Real-time falling notes from your actual chart — timed to the audio\n"
               "  • Keyboard input: A=Hi-Hat, W=Crash, S=Snare, D/F/C=Toms, R=Ride,\n"
@@ -38473,13 +39664,16 @@ demucs.separate.main()
               "  • Portrait monitors (e.g. 1440×2560) work as a first-class layout\n"
               "  • High-DPI displays render crisply at 125% / 150% / 200% scaling\n\n"
               "Troubleshooting:\n"
-              "  If the new Practice window doesn't open:\n"
-              "    → Try unchecking 'Use legacy Practice mini-game' in Visual Settings\n"
-              "    → Make sure pygame is installed (pip install pygame-ce)\n"
-              "    → Check the MIDI Controls dialog if you want to play with a real drum kit")
-        warn(s, "The Preview subtab is visual reference only — no scoring. The new Practice "
-                "mini-game window adds scoring, keyboard input, MIDI drum-kit input, and a "
-                "results screen. Always test on the Quest for the definitive feel.")
+              "  Practice is a tab inside ParaKit — there is no separate window to open\n"
+              "  and nothing extra to install.\n"
+              "    → No sound? Link audio to the song, or just play: the built-in drum\n"
+              "      synth sounds the chart on its own.\n"
+              "    → Playing with a real kit? Set it up in the MIDI Controls dialog.\n"
+              "    → Hits feel consistently early or late? Run Calibrate latency and\n"
+              "      tap along with the click it plays.")
+        warn(s, "Preview and Practice do different jobs: Preview is where you watch a chart "
+                "and edit it; Practice is where you play it and get scored. Always test on "
+                "the Quest for the definitive feel.")
 
         s = section("🎹  MIDI Drum Kit Input (BETA)", right)
         entry(s,
@@ -38490,9 +39684,9 @@ demucs.separate.main()
               "lane).\n\n"
               "To use it:\n"
               "  1. Plug your MIDI drum kit into your PC via USB.\n"
-              "  2. Go to the Preview/Practice Track tab.\n"
-              "  3. Open the Practice subtab — the MIDI panel on the right shows\n"
-              "     your connection status and a launcher button for setup.\n"
+              "  2. Go to the Practice tab.\n"
+              "  3. The MIDI panel shows your connection status and a button for\n"
+              "     setup.\n"
               "  4. Click 'Open MIDI Controls' (or the MIDI Input button at top).\n"
               "  5. Pick your device from the dropdown.\n"
               "  6. Hit pads on your kit — each strike should pulse the matching\n"
@@ -38693,7 +39887,11 @@ demucs.separate.main()
               "  yt-dlp.exe must be placed next to ParaKit.exe or in Requirements\\.\n"
               "  Download it free from: https://github.com/yt-dlp/yt-dlp/releases/latest\n"
               "  ffmpeg.exe must also be present next to ParaKit.exe or in Requirements\\\n"
-              "  (it ships with ParaKit).\n\n"
+              "  (it ships with ParaKit).\n"
+              "  A JavaScript runtime is also needed — YouTube requires one to work out\n"
+              "  the download. If ParaKit reports 'No JS runtime detected', use the\n"
+              "  'Get Deno' button on this tab and it will install one for you; Node.js\n"
+              "  already on your system works too.\n\n"
               "How to use:\n"
               "  1.  Paste a YouTube URL into the URL field\n"
               "  2.  Choose an output folder\n"
@@ -38712,7 +39910,7 @@ demucs.separate.main()
               "  FLAC — lossless, best quality for Stem Splitter input (~30MB/song)\n"
               "  WAV  — uncompressed, same quality as FLAC but much larger files")
         entry(s,
-              "New in v4.4.61-1 — Send to Stem Splitter + Downloaded Songs library:\n"
+              "Send to Stem Splitter + the Downloaded Songs library:\n"
               "  - After a download finishes, click 'Send to Stem Splitter' to\n"
               "    load that file into the Stem Splitter and jump straight there.\n"
               "  - The Downloaded Songs library (left of the log) lists every\n"
@@ -40244,14 +41442,23 @@ demucs.separate.main()
     def _midi_save_lane_overrides(self):
         """Persist `_midi_user_lane_overrides` to config so they survive
         across sessions. Called by the Controls & Learn Mode dialog whenever
-        a learn-capture or reset happens."""
+        a learn-capture or reset happens.
+
+        Returns True when the write LANDED. save_config returns False on a
+        failed write (disk full / read-only / locked config) and never raises
+        for that, so the old discard-and-swallow could not tell the dialog
+        anything — every Learn capture rendered its new mapping as if it were
+        permanent, and it silently reverted to the default on the next launch.
+        Same gate as the Manual Note Manager's _save_lane / _hh_save / _reset
+        (audit fix 2026-08-02)."""
         try:
             overrides = getattr(self, "_midi_user_lane_overrides", {}) or {}
             # Serializable form — JSON wants lists, not sets
             clean = {k: list(v) for k, v in overrides.items() if v}
-            save_config({"midi_input.lane_overrides": clean})
+            return bool(save_config({"midi_input.lane_overrides": clean}))
         except Exception as exc:
             print(f"[MIDI] failed to save lane overrides: {exc}")
+            return False
 
     def _midi_get_lane_notes(self, lane_name):
         """Return the effective MIDI-note list for a lane: user override if
@@ -40908,14 +42115,19 @@ demucs.separate.main()
         # the dialog can offer "add another note" / "reset to default"
         # as separate controls if the user wants multi-note mappings).
         overrides[lane_name] = [note_int]
-        self._midi_save_lane_overrides()
+        _saved = self._midi_save_lane_overrides()
         # Clear the learn target so subsequent hits route normally
         self._midi_learn_target_lane = None
-        # Refresh dialog UI if open
+        # Refresh dialog UI if open. The readout is gated on the write actually
+        # landing: the capture applies THIS session either way, but bare
+        # "note 47" read as permanent for a mapping that would be gone next
+        # launch (audit fix 2026-08-02).
         status_vars = getattr(self, "_midi_dialog_learn_status_vars", None)
         if status_vars and lane_name in status_vars:
             try:
-                status_vars[lane_name].set(f"note {note_int}")
+                status_vars[lane_name].set(
+                    f"note {note_int}" if _saved
+                    else f"note {note_int}  (not saved — this session only)")
             except Exception:
                 pass
 
@@ -41224,14 +42436,19 @@ demucs.separate.main()
 
             def _reset_lane(target=lane_name, var=notes_var):
                 overrides = getattr(self, "_midi_user_lane_overrides", None)
+                _saved = True
                 if overrides and target in overrides:
                     overrides.pop(target, None)
-                    self._midi_save_lane_overrides()
-                # Refresh display from defaults
+                    _saved = self._midi_save_lane_overrides()
+                # Refresh display from defaults. Same gate as the Learn capture:
+                # an unwritten reset comes back on the next launch, so don't
+                # show a bare default mapping as if it stuck.
                 defaults = list(
                     self.VIZ_LANES_MIDI_IN.get(target, []))
-                var.set(", ".join(str(n) for n in defaults)
+                _txt = (", ".join(str(n) for n in defaults)
                         if defaults else "(unmapped)")
+                var.set(_txt if _saved
+                        else _txt + "  (not saved — this session only)")
                 # If this lane was the learn target, clear it
                 if self._midi_learn_target_lane == target:
                     self._midi_learn_target_lane = None
@@ -41348,13 +42565,25 @@ demucs.separate.main()
             if not confirmed:
                 return
             self._midi_user_lane_overrides = {}
-            self._midi_save_lane_overrides()
+            _saved = self._midi_save_lane_overrides()
             self._midi_learn_target_lane = None
             # Refresh every lane's display
             for ln_name, var in status_vars_per_lane.items():
                 defaults = list(self.VIZ_LANES_MIDI_IN.get(ln_name, []))
                 var.set(", ".join(str(n) for n in defaults)
                         if defaults else "(unmapped)")
+            # An unwritten "Reset All" is the loudest version of this bug — the
+            # dialog shows every lane back at its default while the customized
+            # mappings are still on disk and return on the next launch. This one
+            # gets a modal, not a suffix (audit fix 2026-08-02).
+            if not _saved:
+                messagebox.showwarning(
+                    "Mappings Not Saved",
+                    "The lane mappings were reset for this session, but the "
+                    "config file could not be written — your previous "
+                    "customizations will come back the next time ParaKit "
+                    "starts.\n\nCheck disk space / permissions and try again.",
+                    parent=dlg)
 
         ttk.Button(btn_row, text="↺  Reset All Mappings",
                    command=_reset_all_overrides).pack(side=tk.LEFT)
@@ -41932,12 +43161,19 @@ demucs.separate.main()
                 "This clears your best streak, total hits, and total "
                 "session count. This cannot be undone."):
                 return
+            # save_config returns False on a failed write (it never raises for
+            # that), so the old except-branch could not catch a write failure
+            # and the status claimed "reset" while the stats survived on disk.
             try:
-                save_config({"practice.stats": {}})
+                ok = bool(save_config({"practice.stats": {}}))
+            except Exception:
+                ok = False
+            if ok:
                 self._global_status_var.set("Practice stats reset.")
                 self.root.after(3000, lambda: self._global_status_var.set(""))
-            except Exception as exc:
-                self._global_status_var.set(f"No saved stats found — nothing to reset. ({exc})")
+            else:
+                self._global_status_var.set(
+                    "Could not reset Practice stats — config write failed.")
                 self.root.after(5000, lambda: self._global_status_var.set(""))
 
         ttk.Button(_ps, text="Reset Practice stats",
@@ -43257,10 +44493,29 @@ demucs.separate.main()
                                for ch in range(y.shape[0])])
             else:
                 y = librosa.effects.time_stretch(y, rate=speed)
-            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            # F5 (breaker 2026-07-31): this writes the WHOLE song time-stretched to a
+            # float WAV — a 4-minute track at 0.5x is ~160 MB. It used to be an
+            # anonymous tempfile that was NEVER deleted: only the newest path was
+            # remembered, so every speed change orphaned the previous file forever,
+            # nothing cleaned up at exit, and the startup sweep had no pattern that
+            # could match a generic %TEMP%\tmpXXXX.wav. Two changes: retire the
+            # previous cache file before replacing it, and give the file a
+            # parakit_viz_stretch_ prefix so _sweep_stale_a2m_temp CAN reclaim any
+            # that a crash or kill leaves behind.
+            _prev = self._viz_stretched_path
+            tmp = tempfile.NamedTemporaryFile(
+                prefix="parakit_viz_stretch_", suffix=".wav", delete=False)
             tmp.close()
             sf.write(tmp.name, y.T if y.ndim == 2 else y, sr)
             self._viz_stretched_path = tmp.name
+            if _prev and _prev != tmp.name:
+                # Best-effort: on Windows the mixer may still hold the old file open.
+                # The startup sweep is the backstop for whatever cannot be removed now.
+                try:
+                    if os.path.exists(_prev):
+                        os.remove(_prev)
+                except Exception:
+                    pass
             self._viz_stretched_speed = speed
             self._viz_stretched_src = audio_path
             return tmp.name
@@ -43929,6 +45184,25 @@ demucs.separate.main()
         if not midi:
             messagebox.showwarning("No MIDI", "Load a MIDI in the editor first.")
             return
+        # Preview loads the chart from DISK (_send_to_preview -> import_chart), so
+        # unsaved editor edits silently did not appear while the docstring above
+        # promised "current state" (breaker H7, 2026-07-29). Mirror the sibling
+        # _me_send_to_creator: offer to save, and ABORT if declined rather than
+        # sending a file that does not match what the editor is showing. _me_save
+        # carries its own lossy-overwrite confirm, so nothing is overwritten
+        # without the user seeing the target path.
+        if self.me_edit_started:
+            if not messagebox.askyesno(
+                    "Save MIDI First",
+                    "You have unsaved MIDI Editor changes.\n\n"
+                    "Preview loads the chart from the saved file, so those edits "
+                    "will NOT appear.\n\nSave before sending to Preview?\n\n"
+                    "No cancels the send rather than opening a stale chart."):
+                return
+            saved_path = self._me_save(show_message=False)
+            if not saved_path:      # cancelled, lossy-confirm declined, or write failed
+                return
+            midi = saved_path
         self._send_to_preview(midi=midi, audio=audio, drums=drum)   # v4.9.0
 
     def _tester_send_to_visualizer(self):
@@ -44427,8 +45701,13 @@ demucs.separate.main()
                 if text is None:
                     raise ValueError(f"Could not decode .rlrr: {rlrr_path}")
                 rlrr_data = json.loads(text)
+                # "events" may legitimately be absent (an empty chart), and an entry may
+                # lack "time". Indexing blind raised a bare KeyError that surfaced as a
+                # raw traceback in the report rather than a readable diagnosis.
                 note_events = sorted([float(e["time"])
-                                      for e in rlrr_data["events"]])
+                                      for e in (rlrr_data.get("events") or [])
+                                      if isinstance(e, dict)
+                                      and isinstance(e.get("time"), (int, float))])
                 # Use rlrr BPM if available
                 if rlrr_data.get("bpmEvents"):
                     midi_bpm = rlrr_data["bpmEvents"][0]["bpm"]
@@ -44488,6 +45767,20 @@ demucs.separate.main()
                 y=y, sr=sr, units='frames', backtrack=True)
             audio_onsets = librosa.frames_to_time(onset_frames, sr=sr)
             self._tester_log(f"  Audio onsets detected: {len(audio_onsets)}")
+            # Every alignment step below does np.min(np.abs(audio_onsets - t)), which
+            # raises "zero-size array reduction" on an empty onset list -- so silent,
+            # near-silent or unreadable audio dumped a raw traceback into the report
+            # instead of the one thing the Song Tester exists to tell you. Stop here
+            # and say which side is empty.
+            if len(audio_onsets) == 0:
+                self._tester_log(
+                    "\n⚠  No onsets were found in this audio, so there is nothing to "
+                    "align the chart against.", "#ffb74d")
+                self._tester_log(
+                    "   Check that the audio is the right file and is not silent — a "
+                    "drums-only stem for a section with no drums will also do this.",
+                    "#888888")
+                return
             self._tester_log(f"  Audio duration: {audio_duration:.1f}s\n")
 
             # ── BPM check ─────────────────────────────────────────────────────
@@ -44555,6 +45848,19 @@ demucs.separate.main()
             section_results = []
             worst_drift = 0.0
 
+            # Every note can land past the end of the audio -- wrong or truncated audio
+            # for this chart -- and the filter above then leaves this array EMPTY, so
+            # [-1] raised IndexError. The tester even prints its DURATION MISMATCH
+            # warning first and then crashed, which is precisely the case it exists to
+            # diagnose. Say so instead.
+            if note_times_shifted.size == 0:
+                self._tester_log(
+                    "\n⚠  Every note lands past the end of this audio, so there is no "
+                    "overlap to measure.", "#ffb74d")
+                self._tester_log(
+                    "   The audio is most likely the wrong file for this chart, or a "
+                    "shorter cut of it — check the duration reported above.", "#888888")
+                return
             for start in range(0, int(note_times_shifted[-1]) + 1, 20):
                 end = start + 20
                 section = note_times_shifted[
@@ -44664,8 +45970,29 @@ demucs.separate.main()
                 if _text is None:
                     raise ValueError(f"Could not decode .rlrr: {rlrr_path}")
                 _rd = json.loads(_text)
-                for e in _rd["events"]:
-                    name = e["name"].replace("_1", "").replace("_2", "")
+                # Index-based charts carry instrumentIndex instead of name -- the
+                # practice engine has always accepted both, and e["name"] here raised a
+                # bare KeyError on a perfectly valid .rlrr. Resolve the index against
+                # the chart's own instrument list, exactly as the engine does.
+                _insts = _rd.get("instruments")
+                _insts = _insts if isinstance(_insts, list) else []
+                for e in (_rd.get("events") or []):
+                    if not isinstance(e, dict):
+                        continue
+                    _nm = e.get("name")
+                    if not isinstance(_nm, str):
+                        _ii = e.get("instrumentIndex")
+                        if isinstance(_ii, bool):
+                            _ii = None
+                        elif isinstance(_ii, float) and _ii.is_integer():
+                            _ii = int(_ii)
+                        if isinstance(_ii, int) and 0 <= _ii < len(_insts):
+                            _cand = _insts[_ii]
+                            _nm = (_cand.get("name") if isinstance(_cand, dict)
+                                   else _cand if isinstance(_cand, str) else None)
+                    if not isinstance(_nm, str):
+                        continue
+                    name = _nm.replace("_1", "").replace("_2", "")
                     inst_counts[name] = inst_counts.get(name, 0) + 1
             else:
                 note_to_inst = {
@@ -44805,9 +46132,17 @@ demucs.separate.main()
                         if start <= shifted < end and t not in flagged_notes:
                             flagged_notes[t] = 'drift'
 
-            # Store everything the fix functions will need
+            # Store everything the fix functions will need.
+            # chart_sig (audit fix 2026-08-02): the content signature of the
+            # chart AT TEST TIME (_a2m_chart_sig, worker-safe pure file I/O).
+            # Re-conversion, an editor Save, and Spectral Overwrite all rewrite
+            # midi_path with no invalidation here, and Auto-Fix's offset/drift
+            # half applied this run's analysis to whatever bytes are on disk
+            # LATER. The apply/open paths compare signatures and refuse/warn on
+            # mismatch instead of silently fixing the wrong chart.
             self._tester_last_results = {
                 "midi_path":     midi_path,
+                "chart_sig":     self._a2m_chart_sig(midi_path),
                 "audio_path":    audio_path,
                 "note_events":   note_events,
                 "audio_onsets":  audio_onsets,
@@ -45153,6 +46488,38 @@ demucs.separate.main()
             self.root.after(0, self.ogg_progress.stop)
             return
 
+        # pydub imports perfectly well WITHOUT ffmpeg -- it only shells out at
+        # decode/encode time -- so the ImportError branch above could never fire for the
+        # actual "no FFmpeg installed" case, and the dialog it guards, with the download
+        # link already written, was unreachable. What a user on a fresh machine got
+        # instead was one "[WinError 2] The system cannot find the file specified" per
+        # file: wording that reads as "your input file is missing", and no mention of
+        # the thing they need to install. Detect it up front and show the guidance that
+        # was always sitting here.
+        #
+        # Honour AudioSegment.converter, not just PATH: frozen builds point pydub at a
+        # bundled ffmpeg.exe next to the .exe (see _configure_bundled_ffmpeg), and
+        # checking PATH alone would wrongly refuse to convert on exactly those installs.
+        _conv = getattr(AudioSegment, "converter", None) or "ffmpeg"
+        _have_ffmpeg = bool(
+            (os.path.isfile(_conv) if os.path.isabs(str(_conv)) else shutil.which(str(_conv)))
+            or shutil.which("ffmpeg"))
+        if not _have_ffmpeg:
+            self._ogg_log("✗  FFmpeg was not found — no files were converted.")
+            self.root.after(0, lambda: messagebox.showerror(
+                "FFmpeg Not Found",
+                "Converting to .ogg needs FFmpeg, and it could not be found on "
+                "this system.\n\n"
+                "Install it, then restart ParaKit:\n"
+                "https://www.gyan.dev/ffmpeg/builds/\n\n"
+                "(Download a release build, unzip it, and add its bin folder to "
+                "your PATH.)"
+            ))
+            self.root.after(0, lambda: self.ogg_convert_btn.configure(
+                state="normal", text="🔄  Convert to .ogg"))
+            self.root.after(0, self.ogg_progress.stop)
+            return
+
         try:
             # Create output subfolder
             out_dir = os.path.join(output_base, ".ogg Conversions Here")
@@ -45207,7 +46574,28 @@ demucs.separate.main()
                 _claimed.add(os.path.normcase(out_path))
                 try:
                     audio = AudioSegment.from_file(filepath)
-                    audio.export(out_path, format="ogg", codec="libvorbis")
+                    # pydub opens the DESTINATION with 'wb+' before it launches the
+                    # encoder, so an encode-stage failure -- an ffmpeg build without
+                    # libvorbis, a full disk -- truncates the user's previous good .ogg
+                    # to zero bytes while the run reports nothing but "Failed". The
+                    # v4.7.26 work above deliberately lets a re-run replace the bare
+                    # stem.ogg, which means the destination IS the user's earlier file:
+                    # re-converting a batch to refresh it could destroy every output.
+                    # Encode to a sibling temp and swap, so a failure can only ever
+                    # leave the existing file untouched. (Decode-stage failures were
+                    # already safe -- pydub decodes fully before opening the
+                    # destination -- but the encode stage is the one that fails on a
+                    # bad ffmpeg build, which is the common case.)
+                    _tmp_out = out_path + ".part"
+                    try:
+                        audio.export(_tmp_out, format="ogg", codec="libvorbis")
+                        os.replace(_tmp_out, out_path)
+                    finally:
+                        if os.path.exists(_tmp_out):
+                            try:
+                                os.remove(_tmp_out)
+                            except OSError:
+                                pass
                     self._ogg_log(f"  ✓ Saved: {os.path.basename(out_path)}")
                     success_count += 1
                     converted_paths.append(out_path)
@@ -45224,19 +46612,15 @@ demucs.separate.main()
             if success_count > 0:
                 self._yt_ogg_scan_set = None
 
-            # Check if we should skip the popup (user chose "don't show again" on MP3 warning)
-            cfg = load_config()
-            skip_warning = cfg.get("ogg_skip_mp3_warning", False)
-            had_mp3 = any(f.lower().endswith(".mp3") for f in files)
-
-            if skip_warning and had_mp3:
-                # Silent mode — show completion popup with path info
-                self.root.after(0, lambda: messagebox.showinfo(
-                    "Conversion Complete",
-                    f"{success_count} file(s) converted to .ogg.\n\n"
-                    f"Saved to:\n{out_dir}"
-                ))
-            elif success_count > 0:
+            # The branch that used to sit here read cfg["ogg_skip_mp3_warning"] — a key
+            # NOTHING in this app has ever written. The only MP3-warning preference is
+            # rlrr_skip_mp3_warning, set by the Song Creator's popup, and this tab shows
+            # no MP3 warning at all. So the condition was False on every run and the
+            # branch was unreachable, while reading like a live "did the user opt out?"
+            # check. Removed rather than re-pointed at the Song Creator's key: that
+            # would silently change which dialog users see based on a choice they made
+            # somewhere else. The elif below showed a near-identical dialog anyway.
+            if success_count > 0:
                 self.root.after(0, lambda: messagebox.showinfo(
                     "Conversion Complete",
                     f"{success_count} file(s) converted successfully!\n\n"
@@ -46472,36 +47856,53 @@ demucs.separate.main()
         success = 0
         failed  = 0
 
-        self._batch_log(f"=== Batch Conversion - {total} song(s) ===\n")
-        _batch_cfg = load_config()
-        fmt = _batch_cfg.get("export_format", "paradiddle")
-        ch_base_cfg = _batch_cfg.get("ch_output_folder", "").strip()
+        # try/finally added 2026-08-01 (round-3 P2-5). Nothing wrapped this body, and
+        # the per-slot helper's own try starts AFTER several Tk reads, so a raise here
+        # killed the worker thread silently: the progress bar span forever and the
+        # button stayed on "Converting..." with no error anywhere. The folder-batch
+        # path (_batch_folder_do_convert) already had exactly this guard; the slot
+        # path never got it. The finally restores the UI on EVERY exit.
+        try:
+            self._batch_log(f"=== Batch Conversion - {total} song(s) ===\n")
+            _batch_cfg = load_config()
+            fmt = _batch_cfg.get("export_format", "paradiddle")
+            ch_base_cfg = _batch_cfg.get("ch_output_folder", "").strip()
 
-        for slot_num, slot in queue:
-            ok = self._batch_convert_one_slot(
-                slot_num=slot_num, slot=slot, output_base=output_base,
-                creator=creator, fmt=fmt, ch_base_cfg=ch_base_cfg,
-                folder_title=None)
-            if ok:
-                success += 1
+            for slot_num, slot in queue:
+                ok = self._batch_convert_one_slot(
+                    slot_num=slot_num, slot=slot, output_base=output_base,
+                    creator=creator, fmt=fmt, ch_base_cfg=ch_base_cfg,
+                    folder_title=None)
+                if ok:
+                    success += 1
+                else:
+                    failed += 1
+
+            self._batch_log(f"{'='*50}")
+            self._batch_log(f"Batch complete: {success} succeeded, {failed} failed.")
+            self._batch_log(f"Output: {output_base}")
+            self._batch_log(f"{'='*50}")
+
+            msg = f"{success}/{total} songs converted successfully."
+            if failed:
+                self.root.after(0, lambda: messagebox.showwarning(
+                    "Batch Complete (with errors)", msg + f"\n{failed} failed - check the log."))
             else:
-                failed += 1
-
-        self._batch_log(f"{'='*50}")
-        self._batch_log(f"Batch complete: {success} succeeded, {failed} failed.")
-        self._batch_log(f"Output: {output_base}")
-        self._batch_log(f"{'='*50}")
-
-        msg = f"{success}/{total} songs converted successfully."
-        if failed:
-            self.root.after(0, lambda: messagebox.showwarning(
-                "Batch Complete (with errors)", msg + f"\n{failed} failed - check the log."))
-        else:
-            self.root.after(0, lambda: messagebox.showinfo("Batch Complete!", msg))
-
-        self.root.after(0, self.batch_progress.stop)
-        self.root.after(0, lambda: self.batch_convert_btn.configure(
-            state="normal", text="🎵  Convert All Songs"))
+                self.root.after(0, lambda: messagebox.showinfo("Batch Complete!", msg))
+        except Exception as _be:
+            # Say what happened rather than dying quietly on a worker thread.
+            _m = f"{type(_be).__name__}: {_be}"
+            try:
+                self._batch_log(f"\n✗  Batch stopped by an unexpected error: {_m}")
+            except Exception:
+                pass
+            self._bg_message("Batch Failed",
+                             f"The batch stopped unexpectedly:\n{_m}\n\n"
+                             f"{success} of {total} song(s) finished before it stopped.")
+        finally:
+            self.root.after(0, self.batch_progress.stop)
+            self.root.after(0, lambda: self.batch_convert_btn.configure(
+                state="normal", text="🎵  Convert All Songs"))
 
     # ── Phase 2 (v4.3.0 roadmap) ─────────────────────────────────────────────
     # Per-slot conversion helper — the SOLE batch-side caller of `build_rlrr`.
@@ -47821,15 +49222,47 @@ demucs.separate.main()
             self.log(f"\nUsing manual BPM: {bpm}, offset: {offset:+.3f}s")
 
         # Build file lists
-        song_tracks = [os.path.basename(audio_path)]
-        drum_tracks = [os.path.basename(drum_audio_path)] if drum_audio_path else []
+        #
+        # Every track lands in ONE folder under its own basename, and the list below and
+        # the copies further down each derived that name independently. Two sources that
+        # merely SHARE a basename -- song audio `s1\audio.wav` plus an extra stem
+        # `s2\audio.wav` -- therefore resolved to the same destination: the second copy
+        # overwrote the first ON DISK and the .rlrr listed "audio.wav" twice, so the real
+        # song audio was gone from the pack and Paradiddle was told to layer the
+        # surviving stem over itself. Allocate each destination name ONCE here and copy
+        # under the same names, so the manifest and the folder cannot disagree.
+        _dest_names, _used_names = {}, set()
+
+        def _dest_name(src):
+            """Unique filename for `src` inside output_dir. Stable per source path, so
+            asking twice never allocates a second name (and never copies twice)."""
+            key = os.path.normcase(os.path.abspath(src))
+            if key in _dest_names:
+                return _dest_names[key]
+            base = os.path.basename(src)
+            stem, ext = os.path.splitext(base)
+            cand, n = base, 2
+            while cand.lower() in _used_names:
+                cand = f"{stem} ({n}){ext}"
+                n += 1
+            _used_names.add(cand.lower())
+            _dest_names[key] = cand
+            return cand
+
+        # Reserve the cover's fixed name FIRST -- it is written as album<ext> regardless
+        # of its source name, so it is the one destination a track must never be given.
+        if cover_path and os.path.exists(cover_path):
+            _used_names.add(f"album{os.path.splitext(cover_path)[1].lower()}")
+
+        song_tracks = [_dest_name(audio_path)]
+        drum_tracks = [_dest_name(drum_audio_path)] if drum_audio_path else []
         for _stem in getattr(self, "_single_extra_stems", []):
             _p = _stem["var"].get().strip()
             if _p and os.path.exists(_p):
                 if _stem["is_song_var"].get():
-                    song_tracks.append(os.path.basename(_p))
+                    song_tracks.append(_dest_name(_p))
                 else:
-                    drum_tracks.append(os.path.basename(_p))
+                    drum_tracks.append(_dest_name(_p))
         # Only include cover if the file actually exists — missing cover causes
         # Paradiddle to refuse loading the song entirely
         if cover_path and os.path.exists(cover_path):
@@ -47905,19 +49338,26 @@ demucs.separate.main()
             with open(rlrr_path, 'w', newline='\r\n') as f:
                 json.dump(rlrr, f, indent=4)
 
-            shutil.copy2(audio_path, output_dir)
+            # Copy under the SAME names the manifest above was built from. Passing
+            # output_dir and letting shutil keep the basename is what allowed two
+            # different sources to collide on one destination.
+            shutil.copy2(audio_path, os.path.join(output_dir, _dest_name(audio_path)))
             if drum_audio_path and os.path.exists(drum_audio_path):
-                shutil.copy2(drum_audio_path, output_dir)
+                shutil.copy2(drum_audio_path,
+                             os.path.join(output_dir, _dest_name(drum_audio_path)))
             if cover_path and os.path.exists(cover_path):
                 cover_ext = os.path.splitext(cover_path)[1].lower()
                 shutil.copy2(cover_path, os.path.join(output_dir, f"album{cover_ext}"))
             for _stem in getattr(self, "_single_extra_stems", []):
                 _p = _stem["var"].get().strip()
                 if _p and os.path.exists(_p):
-                    shutil.copy2(_p, output_dir)
+                    shutil.copy2(_p, os.path.join(output_dir, _dest_name(_p)))
             if preview_clip_path and os.path.exists(preview_clip_path):
-                shutil.copy2(preview_clip_path, output_dir)
-                self.log(f"  Preview clip included: {os.path.basename(preview_clip_path)}")
+                # Not named in the .rlrr, but it shares the folder, so it must not be
+                # allowed to land on a track's name either.
+                _pv_name = _dest_name(preview_clip_path)
+                shutil.copy2(preview_clip_path, os.path.join(output_dir, _pv_name))
+                self.log(f"  Preview clip included: {_pv_name}")
             self._last_rlrr_folder = output_dir
 
         # Clone Hero export
@@ -48047,7 +49487,12 @@ demucs.separate.main()
         # queued log() inserts drain (FIFO) — otherwise the exported file
         # would miss the tail lines once log() defers via after(0).
         if self.export_log_var.get():
-            log_filename = f"{title}_{difficulty}_log.txt"
+            # sanitize_fs_component, like every other name built here. The raw title
+            # went straight into a path, so a perfectly ordinary title containing a
+            # slash ("AC/DC Thunder") aimed the write at a subfolder that does not
+            # exist: FileNotFoundError, swallowed into one grey "(Log export failed)"
+            # line, and no .txt. The song folder beside it was already sanitized.
+            log_filename = f"{sanitize_fs_component(title)}_{difficulty}_log.txt"
             log_path = os.path.join(output_dir, log_filename)
 
             def _export_log_after_drain(log_path=log_path, log_filename=log_filename):

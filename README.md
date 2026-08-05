@@ -11,11 +11,42 @@
 >of holding work back for it, features ship in v4 as they're ready. **v4 support continues regardless of
 >when v5 arrives** — this is not an end-of-life countdown.
 
-> **Version in this release:** `4.9.8`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.9.10`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
 > 📄 **Prefer plain text, or reading outside GitHub?** A Notepad-friendly **[`README.txt`](README.txt)** and a separate, full **[`CHANGELOG.txt`](CHANGELOG.txt)** are now included in the repo — the same info without the Markdown clutter.
+
+---
+
+## ⚠️ Read this first — which ParaKit is this?
+
+ParaKit is mid–transition between two generations, and it matters for what you can do here:
+
+| | **ParaKit v4.x (this release)** | **ParaKit v5 (future)** |
+|---|---|---|
+| UI framework | **Tkinter / TTK** | **PySide6 / Qt** |
+| Status | The **complete, stable, shipping** app | **Not in this release** — see the note at the top of this page |
+| Themeable with UI Studio? | **No** | Yes (UI Studio is built for v5) |
+
+**UI Studio** — the visual UI/layout designer — is built for the **v5 (PySide6)** rebuild
+and is **not compatible** with this v4.x (Tkinter) app. It is **not included in this
+release** because it can't run without the v5 code. You **cannot** use UI Studio to re-theme or edit
+this v4.x app — but once it ships, you'll be able to use it to design for v5 or build your
+own custom ParaKit from source.
+
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan.
+
+---
+
+### Start here
+
+| If you want to… | Go to |
+|---|---|
+| **Install and run it** | [Download & run](#️-download--run-parakit-copy-paste-setup) — copy-paste setup |
+| **See how the pieces fit together** | **[System Chart](docs/SYSTEM_CHART.html)** — the pipeline, all 14 tabs, what's risky to change. Download and open in a browser |
+| **Know what's in the repo** | [What's in this repository](#whats-in-this-repository) |
+| **Fix something that won't run** | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) |
 
 ---
 
@@ -113,31 +144,15 @@ pile up or there are significant fixes. I will also compile the v5 rebuild when 
 
 ---
 
-## ⚠️ Read this first — which ParaKit is this?
-
-ParaKit is mid–transition between two generations, and it matters for what you can do here:
-
-| | **ParaKit v4.x (this release)** | **ParaKit v5 (future)** |
-|---|---|---|
-| UI framework | **Tkinter / TTK** | **PySide6 / Qt** |
-| Status | The **complete, stable, shipping** app | Early rebuild, barely started — **not in this release** |
-| Themeable with UI Studio? | **No** | Yes (UI Studio is built for v5) |
-
-**UI Studio** — the visual UI/layout designer — is built for the **v5 (PySide6)** rebuild
-and is **not compatible** with this v4.x (Tkinter) app. It is **not included in this
-release** because it can't run without the v5 code, which isn't ready yet. UI Studio and
-v5 will arrive in a **later follow-up**. You **cannot** use UI Studio to re-theme or edit
-this v4.x app — but once it ships, you'll be able to use it to design for v5 or build your
-own custom ParaKit from source.
-
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan.
-
----
 
 *NOTE: *The screenshots show "MIDI Unsupported" that is just because they were not loaded in a supported browser yet, I took the screenshots
 in Firefox before I had fixed the MIDI config, see below for details, although Chrome and Edge work best for MIDI inputs**
 
 ## Recent Changes
+
+<details>
+<summary><b>Open the release-by-release log</b> — newest first. The full history is in <a href="CHANGELOG.txt"><code>CHANGELOG.txt</code></a>.</summary>
+
 
 *Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
 
@@ -228,9 +243,11 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.9.8`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.9.10`  •  **Runtime:** Python **3.12** (required)
 
 ---
+
+</details>
 
 ## What's in this repository
 
@@ -279,6 +296,7 @@ so anyone can run it from source, learn from it, fix it, or build their own vers
 |---|---|
 | **`CHANGELOG.txt`** | Full version history — also the source of the app's in-app **What's New** |
 | **`README.txt`** | Plain-text companion to this file |
+| **`docs/SYSTEM_CHART.html`** | **System Chart** — a single-page technical reference: the five-stage pipeline, all 14 tabs, where the non-tab features live, what gets downloaded and when, how updating works, how the source is laid out, and which parts are risky to change. Download it and open it in a browser; no install, nothing to run. Start here if you want to modify or build on ParaKit |
 | **`docs/`** | Building from source, troubleshooting, roadmap |
 | **`screenshots/`** | Images used by this README |
 | **`parakit.ico`** · **`parakit_header_logo.png`** · **`parakit_logo_FINAL.png`** · **`dot_*.png`** | App icon and interface images |
@@ -504,6 +522,7 @@ source and compiling a standalone `.exe`.
 
 | Version | Summary |
 |---|---|
+| **v4.9.10**<br>2026-08-01 | <ul><li>**Fixed — Review Issues could correct the wrong notes.** The window remembered what it found by position, so if you deleted, sorted or undid anything before pressing Auto Fix, every position had shifted and it acted on whatever note had moved into that slot. It remembers the notes themselves now, and says to rescan if the chart has changed too much.</li><li>**Fixed — two tabs could overwrite each other's work.** Spectral Comparison's Overwrite and the MIDI Editor's Save could both write the same file, and whichever you used second silently discarded the other's corrections.</li><li>**Fixed — unsaved edits were lost without warning.** Sending a chart to Preview loaded the saved file, so unsaved edits silently did not appear; Preview also replaced an edited chart on load, import or clear without asking. Both prompt now.</li><li>**Fixed — the stem separator setting could be ignored.** Audio → MIDI read your Neural Stem Isolation choice while the conversion was already running, on a different thread. If that read failed the conversion carried on as though it were off — producing a different chart, with no warning. It is read once at the start now, and the buttons lock during a run like every other detection setting.</li><li>**Fixed — settings that did not stick.** The detection engine could be silently reverted at launch to an older saved profile's value, and the older value written back over the newer one. Ride, kick, separator and debug were missing from saved profiles, and kick and debug were not saved anywhere at all. Genre profiles promised to remember five settings and saved three.</li><li>**Fixed — per-song settings could overwrite each other.** Two files with the same name in different folders, or the same song as .wav and .flac, shared one entry. Each gets its own now; anything already saved still loads.</li><li>**Fixed — Practice's latency calibration could store the wrong value with the wrong sign.** The old test clicked twice a second, so any real delay past a quarter-second matched the *next* click: a 300 ms delay was stored as -150 ms, pushing your timing further out while every tap looked like it matched. Bluetooth headphones sit in exactly that range. The test now uses a slower, deliberately uneven click and refuses to apply a result it cannot measure, naming what it saw.</li><li>**Fixed — the Song Tester crashed on the problems it exists to find,** and its highlights now actually land in the editor.</li><li>**Fixed — a failed .ogg conversion no longer destroys the previous file,** album art could come from the wrong song, and a failed model download no longer deletes the model you already had.</li><li>**Fixed — tap tempo was wrong at changed playback speeds.** Tapping along to a 120 BPM song at half speed wrote 30 BPM, and that value feeds the tempo map.</li><li>**Fixed — the MIDI Extractor's folder batch silently ran the wrong thing** after a single file had been picked, and an unreadable file killed the run with the window stuck on "Running...".</li><li>**Fixed — success messages that were never checked.** Several confirmations said a setting had been saved whether or not the write succeeded; two log exports did nothing at all on an unwritable folder, with no error.</li><li>**Fixed — audio kept playing after Preview closed,** stem-split leftovers were not cleaned up, and an unexpected error in batch conversion left the progress bar spinning forever.</li><li>**Help and labels corrected** — Help described a tab that no longer exists, several controls did nothing, and a few labels described behaviour the app had outgrown.</li></ul> |
 | **v4.9.8**<br>2026-07-31 | <ul><li>**Fixed — difficulty tiers stacked on top of each other when you auditioned them.** Reducing a chart to Medium, saving, comparing, then reducing to Hard produced a Hard chart *sparser than the Medium it came from* — 103 notes where reducing straight to Hard gives 172, against Medium's own 107 — and the status line reported it as a normal Hard chart. Comparing finishes by loading the reduced chart as the working chart, and that load cleared the record of what the original was, so the next reduction measured against the already-thinned chart. The original is now restored as the baseline after a comparison, so every tier is cut from the full chart no matter how many you try first.</li><li>**Fixed — the MIDI Editor could draw the previous song's waveform.** Loading a new stem could leave the old song's waveform under the new song's name. Notes are aligned against that waveform, so the picture used for lining up a chart could quietly belong to a different song.</li><li>**Fixed — the Chart Troubleshooter's duplicate and long-break checks were reading their windows as seconds instead of milliseconds.** The duplicate check was meant to look within 20 ms and the break check within 500 ms. At 120 BPM a 20-*second* window spans about 160 sixteenth notes, so nearly every note sharing a lane with any neighbor was reported as a duplicate, the 500-second break check never fired at all, and long charts scanned far more slowly than they should have.</li><li>**Fixed — one drawing error during MIDI Editor playback ended playback for the rest of the session.** The view stopped updating while the audio kept playing, the editor never noticed the song had ended, and a playback optimization was left switched on that no other tab could clear. Drawing errors are now contained: playback keeps running, the view recovers on the next frame, and a one-time notice appears in the status line.</li><li>**Reactive Notes now remembers your choice.** The checkbox and its Style dropdown persist between launches — v4.9.7 made the new glow the default, so anyone who preferred **Flash Notes (Classic Style)** had to pick it again on every start.</li></ul> |
 | **v4.9.7**<br>2026-07-29 | <ul><li>**Picking a chart in the MIDI Editor now opens it.** Choosing a MIDI filled in the path but drew nothing until **Load MIDI** was pressed, so on a cold start the editor sat empty and looked broken. Browse, drag-and-drop and the recents menu all open the chart straight away now. This only happens when the editor is empty — with a chart already open nothing loads until **Load MIDI** / **Reload** is pressed, so unsaved edits are never swapped out from underneath you.</li><li>**Reactive Notes: a new glow style, now the default.** Notes used to blank solid white as the playhead crossed them, which meant losing track of which drum it was at the moment it mattered. A note now flares to a brighter version of its own lane color and throws a soft halo that fades out behind it, so it stays identifiable while it lights up. The original white flash is unchanged and still available as **Flash Notes (Classic Style)** in a Style dropdown under the Reactive Notes checkbox.</li></ul> |
 | **v4.9.6**<br>2026-07-28 | <ul><li>**Fixed — converting a FULL MIX no longer wrecks the chart.** Feeding Audio → MIDI a whole song instead of a drums-only stem roughly *doubled* the kick lane and lost most of the hi-hats. The cause was routing, not detection: the drum separator splits drums into their parts and has nowhere to put bass or vocals, so the bass was pushed into the drum stems and its low end landed on kick. ParaKit now recognises a full mix and splits it **first**, then hands the drums stem to the separator. Measured against 334 human-charted songs the corrected route scores 0.835 where the old one scored 0.418. Splitting the song yourself in the Stem Splitter is still the best chart — but converting a full mix is no longer a trap.</li><li>**NEW — difficulty reduction moved into the MIDI Editor.** Thinning a chart to Easy, Medium or Hard used to happen invisibly while the song was built, so the only way to see the result was to import the finished file. There is now a **Difficulty** button on the MIDI Editor toolbar: pick a difficulty, then apply it to the open chart (Ctrl+Z undoes it), save it as a separate chart file, or save it and load it back with the original behind it as a ghost overlay to compare the two in one click. Choosing a different difficulty afterwards re-targets from the original chart rather than thinning what is already thinned. The old *Enable difficulty-based note reduction* checkbox in the Song Creator tabs is gone — difficulty there is a label only.</li><li>**"Remove cross-stem bleed kicks" now describes what it is actually for.** Some "kicks" the detector finds are really the bass guitar leaking into the drums track, and this pass compares each kick against the song's bass, vocals and other parts to find them. It only deletes clear-cut cases and flags the rest in the MIDI Editor. Still EXPERIMENTAL and still needs the full mix — but with the routing fix above that no longer costs you chart quality, and it reuses the split instead of separating the song twice.</li><li>**Practice no longer claims Mute-on-Miss is working when it cannot.** The in-session dock now shows it as unavailable instead of silently doing nothing.</li><li>**Fixed — the dependency list in the repo root was the wrong one.** It listed the in-progress v5 rebuild's requirements, so a fresh install could pull packages ParaKit v4 does not use.</li><li>**Fixed — long tooltips ran off the edge of the screen** instead of wrapping.</li><li>**Fixed — two temp-folder leaks** in the new full-mix split; a failed split used to leave several full-length audio files behind every time.</li></ul> |
