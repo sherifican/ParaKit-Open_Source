@@ -1499,9 +1499,20 @@ PFV_BLOCKING_SEVERITY = "error"
 # Pinned template schema — see PLAN_v4.3.0_roadmap.md Phase 2 step 3.
 BATCH_TEMPLATE_SCHEMA_VERSION = 1
 
-# Strings the template's `detection.genre` field is allowed to take. Must match
-# the keys the active `_a2m_genre_params` switch already accepts; re-grep at
-# implementation time. (Source of truth: ParaKit v4.0.py `_a2m_genre_params`.)
+# ⚠ NOT ENFORCED — this set validates nothing today (corrected 2026-08-05).
+# Its own definition is its ONLY reference in this file; the "reject anything else
+# loud per plan step 3" the schema comments describe was never wired up. A reader
+# meeting this constant reasonably assumes template genres are checked. They are not.
+#
+# It is also WRONG as a description of what the switch accepts: `punk` is listed here
+# and resolves to zero overrides in `_a2m_genre_params`, i.e. a template selecting it
+# gets plain defaults. So did every typo, silently, until the unknown-genre notice was
+# added at the lookup site — which is where the real handling now lives and is the
+# thing to read, not this.
+#
+# Kept rather than deleted because it is the correct starting list if template
+# validation is ever implemented, and deleting it would lose that. Do not cite it as a
+# guarantee; `_a2m_genre_params`'s `overrides` dict is the source of truth.
 BATCH_TEMPLATE_VALID_GENRES = {"auto", "raw", "pop_rock", "metal", "punk", "funk"}
 
 # `mapping.name` — only `rhythm_game` is wired up today. The plan keeps this
@@ -5849,7 +5860,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.10"
+    VERSION = "4.9.11"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -6291,6 +6302,15 @@ class MidiToRlrrApp:
         # GitHub or click the button still hear about updates. Quiet on failure
         # and when up-to-date; only prompts when a newer version is available.
         self.root.after(3000, self._check_for_update)
+        # v4.9.11 — warm the drum-synth voice bank in the background, well after the
+        # window is up and interactive. The render used to happen INSIDE the Preview
+        # tab's constructor and cost 1.40 s of every launch (27% of startup) for audio
+        # most sessions never play. It is numpy DSP with no Tk or pygame state, so it
+        # runs on a worker and the Sounds are built back on this thread; see
+        # _pp_synth_warm_async. 2500 ms rather than after_idle deliberately: idle
+        # arrives almost immediately here and the point is to be out of the way of the
+        # first interaction, not merely out of the constructor.
+        self.root.after(2500, self._pp_synth_warm_async)
         # v4.9.2 — the old v4.5.5.1 one-time "check your supporting files" modal
         # (which explained the pre-4.5.5.1 updater bug that pulled only the main
         # .py) was REMOVED here 2026-07-23, along with the update-popup inline
@@ -15130,9 +15150,19 @@ demucs.separate.main()
         self.a2m_genre_var = tk.StringVar(value="auto")
         genre_frame = ttk.Frame(settings_frame)
         genre_frame.grid(row=6, column=1, columnspan=2, sticky="w", pady=(4, 4))
+        # v4.9.11 — "Auto" and "No adjustment" were TWO RADIOS FOR ONE BEHAVIOUR.
+        # Both `auto` and `raw` return zero overrides from _a2m_genre_params, so they
+        # produce byte-identical charts, while the labels promised otherwise: "let the
+        # detector decide" describes adaptive genre selection that does not exist
+        # anywhere in the code, and offering "pure defaults" as the alternative implied
+        # the other one was something else.
+        #
+        # The duplicate radio is gone and the survivor says what it does. The VALUE
+        # `raw` is still accepted everywhere — saved configs, per-song settings and
+        # batch templates carrying it keep working and resolve to these same defaults —
+        # so nothing a user has stored breaks; only the redundant choice disappears.
         genres = [
-            ("Auto — let the detector decide",                      "auto"),
-            ("No adjustment — pure defaults (for experimenting)",   "raw"),
+            ("No genre adjustment — default detection",             "auto"),
             ("Pop / Pop-Punk & Rock",                               "pop_rock"),
             ("Metal / Hard Rock / Post-Hardcore",                   "metal"),
             ("Funk / Soul / R&B",                                   "funk"),
@@ -17660,6 +17690,25 @@ demucs.separate.main()
             },
         }
 
+        # v4.9.11 — AN UNKNOWN GENRE USED TO BE SILENT. `overrides.get(genre, {})`
+        # returns defaults for any string at all, so a batch template carrying
+        # `"metall"`, or any key removed from this switch later, ran with no tuning
+        # and reported success. BATCH_TEMPLATE_VALID_GENRES exists to catch exactly
+        # that and is wired to NOTHING (its own definition is its only reference), so
+        # the guard a reader assumes is there has never run.
+        #
+        # This does not raise: it sits on the conversion path, defaults are a genuinely
+        # safe result, and killing a batch over a typo would be worse than the typo.
+        # But it is no longer silent — an unrecognised genre says so, names what it
+        # actually used, and lists what it would have accepted.
+        if genre not in overrides:
+            try:
+                self._a2m_log(
+                    "NOTE: genre %r is not recognised — running with DEFAULT detection "
+                    "parameters, no genre adjustment applied. Known: %s"
+                    % (genre, ", ".join(sorted(overrides))))
+            except Exception:
+                pass
         params = dict(defaults)
         params.update(overrides.get(genre, {}))
         return params
@@ -37310,6 +37359,14 @@ demucs.separate.main()
             # voiceRecipes() (parakit_synth_voices sidecar), cached as pygame
             # Sounds at the live mixer rate, 3 velocity layers per voice.
             "synth_ensure_rendered": self._pp_synth_ensure,
+            # v4.9.11 — synth_probe answers "will synth playback work?" in ~7 ms by
+            # exercising the pipeline on ONE voice, where synth_ensure_rendered answers
+            # it by rendering all 42 and costs 1.40 s. The tabs only ever needed the
+            # question answered, not the bank present, so they ask this instead and the
+            # bank is warmed off-thread. synth_ensure_rendered is UNCHANGED and still
+            # the on-demand path inside _pp_synth_play; a standalone tab with no
+            # synth_probe hook falls back to it exactly as before.
+            "synth_probe": self._pp_synth_probe,
             "synth_play": self._pp_synth_play,
             "synth_set_muted": (lambda m:
                                 setattr(self, "_pp_synth_muted", bool(m))),
@@ -37364,6 +37421,143 @@ demucs.separate.main()
         except Exception:
             self._pp_synth_bank = None
             return False
+
+    def _pp_synth_probe(self):
+        """Cheap capability check for the drum-synth: is the bank RENDERABLE?
+
+        Measured 2026-08-05: `_pp_synth_ensure` costs 1.40 s because it renders all
+        14 voices x 3 brightness layers up front, and the Preview tab called it from
+        its __init__ -- so every launch paid it whether or not anyone opened Preview,
+        let alone pressed play. That was 27% of a 5.3 s startup, and the largest single
+        item in it. It is not UI work; no widget waits on it.
+
+        This answers the only question the caller actually had -- "will synth playback
+        work?" -- by rendering ONE cheap voice instead of all 42 (kick/layer-0, 7 ms
+        against 1,395 ms, a 200x reduction). The full bank is warmed in the background
+        by `_pp_synth_warm_async` and, failing that, rendered on demand by
+        `_pp_synth_play`'s existing `if not bank` fallback, so nothing can be silently
+        left without it.
+
+        Deliberately NOT implemented by having the probe return an optimistic True: an
+        audit on 2026-08-02 fixed exactly that bug -- `_synth_ready` was unconditionally
+        True in the embedded app and could never go False. A probe that cannot report
+        failure would re-introduce it in a new place. This one really does exercise the
+        pipeline end to end, pygame and mixer and psv and make_sound; it just does it
+        once instead of 42 times.
+
+        Returns True when synth playback is expected to work. Never raises.
+        """
+        try:
+            import pygame
+            self._yt_preview_ensure_mixer()
+            init = pygame.mixer.get_init()
+            rate = init[0] if init else 44100
+            try:
+                if pygame.mixer.get_num_channels() < 64:
+                    pygame.mixer.set_num_channels(64)
+            except Exception:
+                pass
+            if (getattr(self, "_pp_synth_bank", None)
+                    and getattr(self, "_pp_synth_bank_rate", None) == rate):
+                return True
+            import parakit_synth_voices as psv
+            # One voice, one layer, discarded. The cheapest end-to-end exercise of
+            # every stage the real render uses.
+            pygame.sndarray.make_sound(
+                psv.to_stereo_i16(psv.render_voice(psv.VOICES[0], psv.LAYERS[0],
+                                                   sr=rate)))
+            return True
+        except Exception:
+            return False
+
+    def _pp_synth_warm_async(self):
+        """Render the full voice bank OFF the Tk thread, install it ON the Tk thread.
+
+        The numpy DSP in `parakit_synth_voices` is the expensive half and holds no Tk
+        or pygame state, so it moves to a worker cleanly. `make_sound` needs the
+        initialised mixer, so the arrays come back through `after()` and the Sounds are
+        built on the main thread -- the queue-and-marshal pattern, not a thread touching
+        audio objects behind Tk's back.
+
+        Deferring WITHOUT this would not have been a fix. It would have moved a 1.4 s
+        stall from startup to the first note played, which is a worse place for it:
+        at startup a splash is expected, mid-playback a freeze is a defect.
+
+        Idempotent and self-cancelling: re-entry while warming is a no-op, a bank
+        already rendered at the current rate short-circuits, and any failure leaves the
+        existing on-demand path in `_pp_synth_play` untouched.
+        """
+        if getattr(self, "_pp_synth_warming", False):
+            return
+        try:
+            import pygame
+            init = pygame.mixer.get_init()
+            rate = init[0] if init else 44100
+            if (getattr(self, "_pp_synth_bank", None)
+                    and getattr(self, "_pp_synth_bank_rate", None) == rate):
+                return
+            import parakit_synth_voices as psv
+        except Exception:
+            return
+
+        self._pp_synth_warming = True
+
+        def _install(rendered, rate_at_render):
+            # Back on the Tk thread. Re-check the rate: a stem load or the ME layered
+            # path can re-init the mixer while we were rendering, and Sounds built for
+            # a stale rate play at the wrong pitch (the trap _pp_synth_ensure documents).
+            try:
+                self._pp_synth_warming = False
+                cur = pygame.mixer.get_init()
+                if (cur[0] if cur else 44100) != rate_at_render:
+                    return
+                if getattr(self, "_pp_synth_bank", None):
+                    return
+                bank = {}
+                for name, layers in rendered.items():
+                    bank[name] = [pygame.sndarray.make_sound(psv.to_stereo_i16(m))
+                                  for m in layers]
+                self._pp_synth_bank = bank
+                self._pp_synth_bank_rate = rate_at_render
+                self._pp_synth_muted = bool(getattr(self, "_pp_synth_muted", False))
+            except Exception:
+                self._pp_synth_bank = None
+
+        # QUEUE + POLL, never `root.after()` from the worker. Tk's interpreter is not
+        # thread-safe and `after` scheduled off the main thread does not reliably fire:
+        # the first version of this did exactly that and the bank never arrived -- 25 s
+        # of waiting, 0 of 14 voices, silent. Caught by the verification below rather
+        # than by anything raising, which is the point of having run it.
+        import queue as _queue
+        q = _queue.Queue(maxsize=1)
+
+        def _work():
+            try:
+                q.put(("ok", psv.render_all(sr=rate), rate))
+            except Exception:
+                try:
+                    q.put(("fail", None, rate))
+                except Exception:
+                    pass
+
+        def _poll():
+            try:
+                kind, rendered, rate_at_render = q.get_nowait()
+            except _queue.Empty:
+                if getattr(self, "_pp_synth_warming", False):
+                    self.root.after(120, _poll)
+                return
+            if kind == "ok":
+                _install(rendered, rate_at_render)
+            else:
+                self._pp_synth_warming = False
+
+        try:
+            threading.Thread(target=_work, name="pk-synth-warm",
+                             daemon=True).start()
+            self.root.after(120, _poll)
+        except Exception:
+            self._pp_synth_warming = False
 
     def _pp_synth_play(self, voice, vel=100):
         """Play one drum-synth voice at MIDI velocity ``vel``. Layer pick +

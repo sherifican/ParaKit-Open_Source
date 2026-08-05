@@ -1980,7 +1980,24 @@ class PreviewTab(ttk.Frame):
         # embedded app and the flag could never go False (audit fix 2026-08-02).
         # Only an explicit False counts as not-ready; a MISSING hook
         # (standalone) still yields False exactly as before.
-        ok, ready = self._hook_call("synth_ensure_rendered")
+        # v4.9.11 — ASK, do not RENDER. This used to call synth_ensure_rendered, which
+        # renders 14 voices x 3 layers before returning: 1.40 s on every launch, paid
+        # whether or not this tab was ever opened, and measured as 27% of a 5.3 s
+        # startup -- the single largest item in it, and not UI work at all.
+        #
+        # The question here has only ever been "will synth playback work?", so it asks
+        # exactly that. `synth_probe` exercises the whole pipeline on ONE voice (~7 ms)
+        # and the host warms the real bank off-thread; _pp_synth_play still renders on
+        # demand if neither has happened, so the bank cannot go missing.
+        #
+        # The ok/ready contract below is UNCHANGED and still load-bearing: only an
+        # explicit False counts as not-ready, a missing hook yields False. Standalone
+        # (no host hooks at all) has no synth_probe either, so it falls through to
+        # synth_ensure_rendered and behaves exactly as it did before this change.
+        if "synth_probe" in self.hooks:
+            ok, ready = self._hook_call("synth_probe")
+        else:
+            ok, ready = self._hook_call("synth_ensure_rendered")
         self._synth_ready = bool(ok) and ready is not False
 
         self._load_initial_state()

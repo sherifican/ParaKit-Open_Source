@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.10  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.11  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -26,6 +26,32 @@
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
 
+------------------------------------------------------------------------------
+  v4.9.11   --   2026-08-05
+------------------------------------------------------------------------------
+  A faster start, and a genre setting that no longer says things that aren't so.
+
+  PARAKIT NOW OPENS ABOUT A SECOND AND A HALF SOONER
+  Every launch spent 1.4 seconds building the Preview tab's synthesised drum
+  kit -- all fourteen voices at three volumes -- before the window appeared,
+  whether or not you ever opened Preview or pressed play. That work now happens
+  quietly in the background a couple of seconds after the app is already up and
+  usable, and the sounds are ready long before you can reach them. Nothing about
+  playback changed; it just stopped happening while you were waiting.
+
+  THE GENRE LIST HAD TWO CHOICES THAT DID THE SAME THING
+  "Auto -- let the detector decide" and "No adjustment -- pure defaults" produced
+  identical charts: neither applied any genre tuning, and nothing in ParaKit was
+  ever detecting your genre. There is now one honest option, "No genre adjustment
+  -- default detection", alongside Pop/Rock, Metal and Funk. If you had either of
+  the old settings saved, it still works and still means the same thing.
+
+  A MISTYPED GENRE IN A BATCH TEMPLATE USED TO GO UNNOTICED
+  Templates take a genre name, and anything unrecognised -- a typo like
+  "metall" -- quietly fell back to default detection while the run reported
+  success. The log now says the genre was not recognised, which settings were
+  used instead, and which names it accepts. Conversions are not interrupted:
+  defaults are a safe result, and a typo should not cost you a batch.
 ------------------------------------------------------------------------------
   v4.9.10   --   2026-08-01
 ------------------------------------------------------------------------------
