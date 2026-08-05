@@ -442,10 +442,10 @@ ParaKit shells out to several tools that are **not** Python packages:
 These are distributed separately as the **`Requirements.zip` bundle** (≈174 MB — too large to
 include in the Git repo). **Download it here → [Requirements.zip (LimeWire)](https://limewire.com/d/HrcqC#lS73gPUpJa)**
 
-I have also uploaded the Jarredou model alongside the Reqs on the LimeWire page since the original repo for it is down.
-There are mirrors on HuggingFace but I don't wanna force people to dig thru the giant repo + read thru the 600+ page report.
+I have also uploaded the Jarredou model alongside the Reqs on the LimeWire page. However the app now has a download button that downloads the model straight from HuggingFace and automatically places it where it needs to go.
 
-Extract it, then place the files next to `ParaKit v4.0.py`, or keep them in the included
+If you downloaded it from LimeWire,
+ extract it, then place the files next to `ParaKit v4.0.py`, or keep them in the included
 `Requirements\` subfolder beside it. They're kept out of the Git tree on purpose — large
 binaries with their own licenses, well over GitHub's per-file size limit. Leave yt-dlp's
 auto-update on so it stays current with YouTube changes.
