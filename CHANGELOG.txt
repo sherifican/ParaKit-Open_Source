@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.11  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.12  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,63 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.12   --   2026-08-05
+------------------------------------------------------------------------------
+  Converted charts now have real dynamics, and the genre presets are gone.
+
+  YOUR CHARTS HAD NO LOUD OR QUIET NOTES AT ALL
+  Every kick ParaKit detected was written at exactly the same volume as every
+  other kick, and the same was true of every snare, every hi-hat, every cymbal.
+  A chart of a delicate brushed verse and a chart of a full-power chorus came
+  out identical in dynamics, because there were none. Each hit is now given a
+  volume taken from how hard that drum was actually struck, read from the same
+  audio analysis detection already performs -- so it costs nothing in speed and
+  changes no note's position or identity.
+
+  A song that genuinely is played flat -- programmed drums, a machine-tight
+  take -- still comes out flat. The volume is measured against the rest of that
+  same song rather than stretched to fill a range, so ParaKit will not invent
+  expression that was never played.
+
+  GHOST AND ACCENT NOTES IN CLONE HERO EXPORTS NOW ACTUALLY APPEAR
+  The "Enable Ghost/Accent Notes" option has been switched on by default for a
+  long time and could never have done anything to a chart ParaKit made. Accents
+  mark notes above a certain volume and ghosts mark notes below one, and because
+  every detected note carried the same fixed volume, no note ever reached either
+  mark. The option only ever worked on charts imported from elsewhere. With real
+  per-hit volumes it now marks the accents and ghost notes in your own
+  conversions too.
+
+  THE GENRE PRESETS HAVE BEEN REMOVED
+  Audio to MIDI no longer asks you to pick a genre. Detection uses one
+  configuration for every song.
+
+  The presets had been tuned on recordings of drums played on their own, but
+  conversion runs on a drum track separated out of a finished mix -- audio that
+  carries artefacts a solo recording simply does not have, which is exactly what
+  a loosened detection setting is most likely to mistake for a drum hit. So the
+  tuning could never have revealed the problem it was most likely to cause.
+
+  Pop/Rock and Funk went first; Funk had loosened a noise filter fivefold on
+  precisely the audio that filter exists to handle. Metal was held back and
+  measured properly across 48 songs: it added around 90% more snare notes, and
+  it did that on every kind of music alike rather than on metal in particular,
+  which is the opposite of what a genre setting is for. Punk had been dropped
+  earlier because lo-fi production and fast irregular tempos defeat automatic
+  detection at any threshold.
+
+  Looking into the idea itself turned up no drum-transcription system anywhere
+  that changes detection thresholds by genre, and put the best imaginable case
+  for doing so at roughly twenty notes on a thousand-note chart -- against a
+  downside with no limit.
+
+  Saved settings, per-song settings and batch templates that name a genre still
+  load and simply use default detection, and the log says so when they do. For a
+  song that needs a different touch, use Onset Sensitivity and the Advanced
+  settings, which act on the song in front of you rather than on an assumption
+  about its genre.
 
 ------------------------------------------------------------------------------
   v4.9.11   --   2026-08-05

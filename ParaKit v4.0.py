@@ -1513,7 +1513,29 @@ BATCH_TEMPLATE_SCHEMA_VERSION = 1
 # Kept rather than deleted because it is the correct starting list if template
 # validation is ever implemented, and deleting it would lose that. Do not cite it as a
 # guarantee; `_a2m_genre_params`'s `overrides` dict is the source of truth.
-BATCH_TEMPLATE_VALID_GENRES = {"auto", "raw", "pop_rock", "metal", "punk", "funk"}
+# Genres that ONCE DID SOMETHING and no longer do. Distinct from a typo, and the
+# distinction is the whole reason this map exists: a user whose saved config says
+# `funk` picked a real option that a later build removed, so "not recognised" would
+# blame them for our change and bury the fact that their charts now come out
+# differently. Both resolve to defaults; only the message differs.
+#
+# ⛔ Values are RETIRED, never REJECTED. Old configs, per-song settings and batch
+# templates carrying these keep loading — breaking them would punish users for a
+# decision that was ours.
+#
+# Each entry states WHY, because a retirement recorded as a bare verdict invites one
+# round of "should we bring it back?" per reader. Recorded with its mechanism, none.
+_A2M_RETIRED_GENRES = {
+    "pop_rock": "tuned on solo drum recordings, never measured on a separated stem",
+    "funk":     "loosened the snare noise filter fivefold on separator output, "
+                "on evidence gathered from audio that had no separator artifacts",
+    "punk":     "lo-fi production and irregular tempos defeat spectral detection "
+                "at any threshold",
+    "metal":    "measured on 48 songs: it added ~90% more snare notes on the default "
+                "engine and did so on every genre alike, not just metal",
+}
+
+BATCH_TEMPLATE_VALID_GENRES = {"auto", "raw", "metal"} | set(_A2M_RETIRED_GENRES)
 
 # `mapping.name` — only `rhythm_game` is wired up today. The plan keeps this
 # field for forward compatibility; reject anything else loud per plan step 3.
@@ -4148,6 +4170,78 @@ def _a2m_hybrid_merge(adtof_onsets, alt_onsets, merge_mode="hybrid"):
     return result
 
 
+def _a2m_hit_velocities(times, D_full, freqs, sr, band_lo, band_hi,
+                        hop=512, v_mid=82, slope=3.0,
+                        db_lo=-20.0, db_hi=12.0):
+    """Per-hit MIDI velocity from the attack energy already in the STFT.
+
+    Detection used to emit ONE CONSTANT PER CLASS — kick 100, snare 100,
+    floor tom 90, hi-hat 80, crash 100, ride 80, mid tom 90. Every kick in a
+    song was velocity 100, so a generated chart carried no dynamics at all.
+    That also made the Clone Hero Ghost/Accent export a guaranteed no-op on
+    anything ParaKit produced: accents fire on ``vel > 100`` and ghosts on
+    ``vel < 50``, and NO class constant was above 100 or below 50. The
+    checkbox defaults to ON, so the option had been shipping as a control
+    that could not affect a generated chart.
+
+    Each hit is scored against ITS OWN class's median attack energy, in dB:
+
+        vel = v_mid + slope * dB(energy / class_median)
+
+    Relative-to-median rather than percentile-ranked, and the difference is
+    the whole point: a machine-programmed track whose hits are genuinely
+    uniform lands every hit ON the median, so every hit gets ``v_mid`` and no
+    ghost or accent is emitted. Percentile ranking would rank a dead-flat
+    lane just as eagerly as a dynamic one and spray ghosts and accents across
+    a song that has none — manufacturing dynamics is a worse failure here
+    than the flat velocities being fixed, because it is not visibly wrong.
+
+    Returns a list[int] in 1..127 of exactly ``len(times)``, or **None** when
+    the spectrogram is unusable. Callers MUST fall back to their previous
+    per-class constant on None: degrading to the old behaviour is correct,
+    while substituting a default would write silence-shaped velocities.
+    """
+    import numpy as np
+
+    n = len(times)
+    if n == 0:
+        return []
+    if D_full is None or freqs is None:
+        return None
+    try:
+        S = np.asarray(D_full)
+        f = np.asarray(freqs, dtype=float)
+        if S.ndim != 2 or S.shape[0] != f.shape[0] or S.shape[1] < 1:
+            return None
+        band = (f >= float(band_lo)) & (f <= float(band_hi))
+        if not band.any():
+            return None
+        n_frames = S.shape[1]
+        band_energy = S[band, :].sum(axis=0)
+        # Attack window = the onset frame plus the next two. A drum transient
+        # peaks at or just after the detected time, and the frame index can
+        # land one early at hop=512 (~11.6 ms), so reading a single frame
+        # under-reads exactly the loud hits that should become accents.
+        vals = np.empty(n, dtype=float)
+        for i, t in enumerate(times):
+            fr = int(float(t) * sr / hop)
+            a = max(0, min(n_frames - 1, fr))
+            b = max(0, min(n_frames, fr + 3))
+            vals[i] = float(band_energy[a:b].max()) if b > a else 0.0
+        pos = vals[vals > 0]
+        if pos.size == 0:
+            return None
+        med = float(np.median(pos))
+        if not np.isfinite(med) or med <= 0.0:
+            return None
+        db = 20.0 * np.log10(np.maximum(vals, 1e-9) / med)
+        db = np.clip(db, float(db_lo), float(db_hi))
+        vel = np.rint(float(v_mid) + float(slope) * db)
+        return [int(max(1, min(127, int(v)))) for v in vel]
+    except Exception:
+        return None
+
+
 def _a2m_remove_generated_flams(snare_times, floor_tom_times, tom_mid_times,
                                   all_times_for_isolation=None):
     """
@@ -5860,7 +5954,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.11"
+    VERSION = "4.9.12"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -15161,18 +15255,59 @@ demucs.separate.main()
         # `raw` is still accepted everywhere — saved configs, per-song settings and
         # batch templates carrying it keep working and resolve to these same defaults —
         # so nothing a user has stored breaks; only the redundant choice disappears.
-        genres = [
-            ("No genre adjustment — default detection",             "auto"),
-            ("Pop / Pop-Punk & Rock",                               "pop_rock"),
-            ("Metal / Hard Rock / Post-Hardcore",                   "metal"),
-            ("Funk / Soul / R&B",                                   "funk"),
-        ]
-        for label, value in genres:
-            ttk.Radiobutton(genre_frame, text=label,
-                            variable=self.a2m_genre_var,
-                            value=value).pack(anchor="w")
+        # 2026-08-05 — Pop/Rock and Funk RETIRED. Neither was ever measured on a
+        # separated drum stem, which is what detection actually runs on: both were
+        # tuned against the Groove MIDI Dataset (solo drums recorded to a click), so
+        # the tuning material contained none of the separation artifacts a loosened
+        # threshold admits. Funk dropped `snare_wire_thresh` 0.30 → 0.06 — a fivefold
+        # loosening of the gate whose job is rejecting non-snare noise, on the input
+        # most likely to carry it.
+        #
+        # Research (two independent legs, 2026-08-05) put the ceiling for threshold
+        # tuning at roughly 1-3 F-points — about 20 notes on a 1000-note chart — and
+        # found no published system using genre-conditioned threshold presets at all.
+        # A bounded small upside against an unbounded downside is a bad trade, and
+        # neither preset could show it had ever paid.
+        #
+        # Metal was kept one round longer than the other two, to be measured rather
+        # than assumed — it was the only preset with a stated acoustic mechanism.
+        # It was then measured, and RETIRED on the result (2026-08-05, 48 packs with
+        # native drum stems, both engines, `tools/metal_preset_measure.py`):
+        #
+        #   spectral engine (the DEFAULT):  +89.6% snare notes, median track +86.7%,
+        #                                   40 of 46 tracks past a ±35% sanity bound,
+        #                                   20 tracks more than DOUBLED, worst +676%
+        #   ML / Hybrid engine:             +11.2%, because the ML model proposes
+        #                                   3.8x more snares than the spectral layer
+        #                                   and swamps it
+        #   removed by metal:               0 — a lower delta is strictly more permissive
+        #
+        # Its claim was that metal snares hide under guitar bleed, so a metal-specific
+        # sensitivity boost recovers them. What it actually produced was a UNIVERSAL
+        # near-doubling on every genre in the corpus, INCLUDING on metal (Sidewinder
+        # +116%, Stream of Consciousness +106%, Panic Attack +180%). A preset whose
+        # effect does not depend on the genre it names is not a genre preset.
+        #
+        # ⚠ What was NOT shown: that the extra notes are wrong. There is no clean
+        # reference to check them against — ParaDB Expert charts carry confirmed
+        # ad-lib poisoning at an unknown rate. The retirement rests on the VOLUME and
+        # on the absence of any evidence the preset ever helped, not on a quality claim.
+        #
+        # No radio buttons remain. One always-selected radio is not a choice, and
+        # leaving it would imply a genre system still exists behind it. `a2m_genre_var`
+        # stays at "auto" so every saved config, per-song setting and batch template
+        # keeps loading exactly as before.
         ttk.Label(settings_frame,
-                  text="Presets are starting points. If one gives strange results, try another preset, No adjustment, or manual tuning.",
+                  text=("Genre presets have been removed. Detection now uses one tuned "
+                        "configuration for every song.\n\n"
+                        "They were tuned on solo drum recordings, but conversion runs on "
+                        "separated drum stems — audio the tuning material never contained. "
+                        "Measured against real songs, they changed charts far more than "
+                        "intended and did so identically regardless of genre, with nothing "
+                        "showing the extra notes were correct.\n\n"
+                        "Saved settings and batch templates that name a genre still load; "
+                        "they use default detection. Use Onset Sensitivity and the Advanced "
+                        "settings to tune a difficult song."),
                   style="Sub.TLabel", foreground="#b388ff",
                   justify=tk.LEFT, wraplength=700).grid(
                   row=7, column=0, columnspan=3, sticky="w", pady=(0, 4))
@@ -15182,11 +15317,23 @@ demucs.separate.main()
         _, genre_tips = self._make_collapsible_tips(
             genre_tips_row, title="Genre preset details", start_open=False)
         ttk.Label(genre_tips,
-                  text="Auto / No adjustment: raw defaults, no overrides.\n"
-                       "Pop / Pop-Punk & Rock: kick threshold raised, snare more sensitive, tom filters loosened.\n"
-                       "Metal / Hard Rock / Post-Hardcore: snare detection more sensitive to handle guitar bleed.\n"
-                       "Funk / Soul / R&B: snare and kick more sensitive for ghost notes and syncopation, tom filters loosened, kick sub threshold lowered.\n\n"
-                       "Punk & Hardcore was removed because lo-fi production, fast irregular tempos, and dense cymbal playing make auto-detection unreliable regardless of preset.",
+                  text="Detection uses one configuration for every song. There are no genre presets.\n\n"
+                       "Why they were removed:\n"
+                       "Conversion runs on a separated drum stem, but every preset had been tuned on solo drum "
+                       "recordings — audio that cannot contain the artifacts separation introduces, which is the "
+                       "one thing a loosened detection threshold is most likely to let through. So the tuning could "
+                       "not have revealed the problem it was most likely to cause.\n\n"
+                       "Pop / Pop-Punk & Rock and Funk / Soul / R&B went first. Funk loosened a noise filter fivefold "
+                       "on exactly the audio that filter guards against, and neither had ever been checked against a "
+                       "real conversion.\n\n"
+                       "Metal was kept back one round and measured properly, across 48 songs. It added around 90% more "
+                       "snare notes — and did it on every kind of music alike, not just metal, which is the opposite of "
+                       "what a genre preset is for. Nothing indicated the extra notes belonged there.\n\n"
+                       "Punk & Hardcore had been dropped earlier: lo-fi production, fast irregular tempos and dense "
+                       "cymbal work defeat automatic detection whatever the thresholds.\n\n"
+                       "Research into the idea itself found no drum-transcription system anywhere that switches "
+                       "detection thresholds by genre, and put the best case for doing so at roughly twenty notes on a "
+                       "thousand-note chart. Old settings that name a genre still load and simply use default detection.",
                   style="Sub.TLabel", foreground="#b388ff",
                   justify=tk.LEFT, wraplength=700).pack(anchor="w")
 
@@ -17584,15 +17731,47 @@ demucs.separate.main()
     def _a2m_genre_params(self, genre):
         """Return a dict of detection threshold overrides for the given genre.
 
-        Each key maps to a parameter used somewhere in _a2m_do_convert.
-        Values marked TODO will be filled in once validated through testing.
+        ⛔ AS OF 2026-08-05 THIS RETURNS THE DEFAULTS FOR EVERY GENRE. All four
+        presets that ever shipped have been retired; `overrides` is empty and
+        that is the finished state, not a gap. The function is kept because the
+        `genre` argument still flows through saved configs, per-song settings and
+        batch templates, and because retired names must resolve rather than fail.
 
-        Current confirmed values:
-          metal: snare_delta_mult = 0.5  (lower than default 0.9 — metal snare
-                 band is noisy from guitar bleed, needs more sensitive onset detection)
+        Why they went, since a bare verdict invites one round of "should we bring
+        them back?" per reader:
 
-        All other genres currently return defaults — do NOT change values here
-        until they have been tested and confirmed against real stems.
+          * Every preset was tuned on the Groove MIDI Dataset or on single songs
+            — SOLO DRUMS RECORDED TO A CLICK. Conversion runs on Demucs-separated
+            stems, which carry demixing artifacts a solo recording cannot contain.
+            The tuning corpus was structurally incapable of showing the failure
+            these presets most risked: a loosened gate admitting artifacts as
+            hits. That is not "untested" — it is tested by an instrument blind to
+            the defect.
+          * `funk` dropped `snare_wire_thresh` 0.30 → 0.06, a fivefold loosening
+            of the threshold that rejects non-snare noise, on the input most
+            likely to carry it.
+          * `metal` was kept back one round and MEASURED (48 packs with native
+            drum stems, both engines, `tools/metal_preset_measure.py`): +89.6%
+            snare notes on the default spectral engine, median track +86.7%, 20
+            tracks more than doubled — and indiscriminate across genres, metal
+            included. A preset whose effect does not depend on the genre it names
+            is not a genre preset.
+          * Two independent research legs found NO published transcription system
+            using genre-conditioned detection thresholds, and put the ceiling for
+            such tuning at ~1–3 F-points — roughly 20 notes on a 1000-note chart.
+
+        ⚠ What was NOT established: that the notes those presets added were
+        wrong. There is no clean reference to check against, because ParaDB
+        Expert charts carry confirmed ad-lib poisoning at an unknown rate. The
+        retirements rest on measured VOLUME plus the absence of any evidence of
+        benefit — never on a quality claim we could not support.
+
+        ⛔ Before adding a preset here: it needs a measurement, not a mechanism
+        story. `metal` had the best mechanism story of the four and still failed.
+
+        ⚠ This docstring has been wrong before — it once claimed "all other
+        genres currently return defaults" while `pop_rock` and `funk` carried
+        overrides for months. `overrides` below is the source of truth.
         """
         # ── Default params (used when genre = "auto" or not yet tuned) ────────
         defaults = {
@@ -17633,61 +17812,28 @@ demucs.separate.main()
             "auto": {},  # no overrides — use defaults
             "raw":  {},  # identical to auto — pure defaults, no genre logic
 
-            "pop_rock": {
-                # Tuned against: "Caught in the Middle" — Paramore (FLAC stem)
-                # Issues found: kick over-detected (554 hits vs ~200 expected),
-                # toms completely absent (0 hits), snare under-detected (155 hits).
-                #
-                # Pop-punk kick drum on clean stems has a very strong sub fundamental.
-                # Raising kick_sub_dom_thresh filters out non-kick low-end events
-                # (tom bleed, snare resonance) that were inflating the kick count.
-                #
-                # Tightened against Groove MIDI Dataset rock/pop material
-                # (318 tracks, 280 min) — F-DET-007. Threshold lowered from 1.6
-                # to 1.5 for broader compatibility across rock sub-genres.
-                "kick_sub_dom_thresh":  1.5,
+            # ⛔ `pop_rock` and `funk` were RETIRED 2026-08-05 and their override
+            # blocks DELETED, not commented out. A commented-out preset is a preset
+            # somebody uncomments — the values would come back without the reason
+            # they left. What they contained is recorded in _A2M_RETIRED_GENRES and
+            # in git; if either returns it returns with a measurement attached.
 
-                # Snare on clean pop-punk stems is loud and clear.
-                # Lowering delta_mult makes onset detection more sensitive → more hits.
-                "snare_delta_mult":     0.7,
-
-                # Toms were getting 0 hits — exclusion zone thresholds too tight.
-                # Loosening rsub and rwire allows more tom candidates through.
-                "tom_rsub_max":         0.55,
-                "tom_rwire_max":        0.45,
-
-                # Rock/pop fills use toms more than default assumes.
-                "tom_delta_mult":       1.0,
-            },
-
-            "metal": {
-                # CONFIRMED: metal snare band is saturated with guitar bleed,
-                # needs more sensitive onset detection to find snare hits
-                "snare_delta_mult": 0.5,
-
-                # TODO: validate these against metal FLAC stems
-                # "kick_sub_dom_thresh": 1.2,  # metal kicks are very sub-heavy
-                # "crash_strength_pct": 85,    # metal has more frequent loud cymbal hits
-            },
-
-            "funk": {
-                # Funk drumming: busy ghost-note snares, syncopated kick,
-                # frequent open-hat accents, tom fills.
-                # Tuned against Groove MIDI Dataset funk subset (77 sessions,
-                # 82 min, 4 drummers) — F-DET-007.
-                "snare_delta_mult":     0.65,  # more sensitive for ghost notes
-                "cymbal_delta_mult":    1.4,   # open-hat / ride accents
-                "tom_delta_mult":       1.0,   # fills are common
-                "tom_rsub_max":         0.55,  # looser tom filters (same as pop_rock)
-                "tom_rwire_max":        0.45,
-                "snare_wire_thresh":    0.06,  # ghost notes have less wire energy
-            },
-
-            "punk": {
-                # Removed from UI — punk/hardcore is too lo-fi and irregular
-                # for reliable spectral detection regardless of thresholds.
-                # Falls back to defaults if somehow selected.
-            },
+            # ⛔ EMPTY, and that is the finished state rather than a gap waiting to be
+            # filled. Every genre preset has now been retired — see _A2M_RETIRED_GENRES
+            # for which and why. `metal` was the last, kept one round longer than the
+            # others specifically to be measured; it was, and it failed (48 songs,
+            # +89.6% snare notes on the default engine, indiscriminate across genres).
+            #
+            # `auto` and `raw` remain as ACCEPTED VALUES, not as tuning: both mean
+            # "no overrides", which is what every genre now resolves to. Retired names
+            # are not listed here either — an empty block would put them back in the
+            # unknown-genre notice's "Known:" list and advertise them as live choices.
+            #
+            # Before adding a preset here: the ceiling on threshold tuning is ~1-3
+            # F-points (two independent research legs, 2026-08-05), no published system
+            # uses genre-conditioned threshold presets, and all four presets that ever
+            # shipped were tuned on audio that could not contain the failure they most
+            # risked. A new one needs a measurement first, not a mechanism story.
         }
 
         # v4.9.11 — AN UNKNOWN GENRE USED TO BE SILENT. `overrides.get(genre, {})`
@@ -17701,7 +17847,22 @@ demucs.separate.main()
         # safe result, and killing a batch over a typo would be worse than the typo.
         # But it is no longer silent — an unrecognised genre says so, names what it
         # actually used, and lists what it would have accepted.
-        if genre not in overrides:
+        # A RETIRED genre is not a typo and must not be reported as one. A user whose
+        # saved config still says `funk` chose a real option that this build removed;
+        # telling them it "is not recognised" blames them for our change and hides
+        # the fact that their charts will now come out differently than before.
+        # Both land on defaults — the distinction is entirely in what the log says,
+        # which is the only part the user ever sees.
+        if genre in _A2M_RETIRED_GENRES:
+            try:
+                self._a2m_log(
+                    "NOTE: the %r preset was removed in this version (%s). Running with "
+                    "DEFAULT detection parameters — your saved setting still loads, it "
+                    "just no longer changes anything."
+                    % (genre, _A2M_RETIRED_GENRES[genre]))
+            except Exception:
+                pass
+        elif genre not in overrides:
             try:
                 self._a2m_log(
                     "NOTE: genre %r is not recognised — running with DEFAULT detection "
@@ -19254,11 +19415,37 @@ demucs.separate.main()
             conf_lookup = {}   # {round(t,4): confidence} — for ML shading in editor
 
             def _add_events(times, midi_note, vel, conf_arr=None):
+                """`vel` is either ONE constant for the whole lane or a
+                per-hit sequence of exactly len(times). A sequence of the
+                WRONG length is treated as absent — indexing off the end, or
+                writing the list object itself, would land a non-int in a
+                MIDI velocity field and fail at export rather than here."""
+                seq = None
+                base = 90
+                if isinstance(vel, (list, tuple)):
+                    if len(vel) == len(times):
+                        seq = vel
+                else:
+                    base = int(vel)
                 for i, t in enumerate(times):
                     tk_val = secs_to_ticks(float(t))
-                    events.append((tk_val, midi_note, vel))
+                    events.append((tk_val, midi_note,
+                                   int(seq[i]) if seq is not None else base))
                     if conf_arr is not None and i < len(conf_arr):
                         conf_lookup[(round(float(t), 4), midi_note)] = float(conf_arr[i])
+
+            def _vel_for(times, lo_hz, hi_hz, fallback):
+                """Per-hit velocities for one lane, or `fallback` (the old
+                per-class constant) if they cannot be computed. Total by
+                design: D_full/freqs are assigned unconditionally upstream,
+                but a velocity path that can raise would take down a
+                conversion that used to succeed."""
+                try:
+                    v = _a2m_hit_velocities(times, D_full, freqs, sr,
+                                            lo_hz, hi_hz, hop=hop)
+                except Exception:
+                    return fallback
+                return v if v is not None else fallback
 
             # Build per-class confidence arrays for ML/Hybrid results
             def _conf_for(class_name, times_arr):
@@ -19272,16 +19459,26 @@ demucs.separate.main()
                 # times after Hybrid merge, so only attach when lengths match
                 return c if len(c) == len(times_arr) else None
 
-            _add_events(kick_times,      36, 100, _conf_for("kick",      kick_times))
-            _add_events(snare_times,     38, 100, _conf_for("snare",     snare_times))
-            _add_events(floor_tom_times, 41,  90, _conf_for("floor_tom", floor_tom_times))
-            _add_events(hihat_times,     42,  80, _conf_for("hihat",     hihat_times))
-            _add_events(crash_times,     49, 100, _conf_for("crash",     crash_times))
-            _add_events(ride_times,      51,  80, _conf_for("ride",      ride_times))
+            # Per-hit velocity. The band per lane is where that
+            # instrument's attack energy lives, so the level read tracks how
+            # hard THAT drum was hit rather than how loud the mix is: sub for
+            # kick, body for snare and toms, high end for the cymbals. Each
+            # falls back to its previous constant if the STFT is unusable.
+            _add_events(kick_times,      36, _vel_for(kick_times,        20,   120, 100), _conf_for("kick",      kick_times))
+            _add_events(snare_times,     38, _vel_for(snare_times,      150,  1000, 100), _conf_for("snare",     snare_times))
+            _add_events(floor_tom_times, 41, _vel_for(floor_tom_times,   60,   250,  90), _conf_for("floor_tom", floor_tom_times))
+            _add_events(hihat_times,     42, _vel_for(hihat_times,     5000, 12000,  80), _conf_for("hihat",     hihat_times))
+            _add_events(crash_times,     49, _vel_for(crash_times,     3000, 12000, 100), _conf_for("crash",     crash_times))
+            _add_events(ride_times,      51, _vel_for(ride_times,      3000, 12000,  80), _conf_for("ride",      ride_times))
+            _tom_vels = _vel_for(tom_mid_times, 100, 400, 90)
+            _tom_seq = (_tom_vels if (isinstance(_tom_vels, list)
+                                      and len(_tom_vels) == len(tom_mid_times))
+                        else None)
             for i, t in enumerate(tom_mid_times):
                 note_n = 48 if i % 2 == 0 else 45
                 tk_val = secs_to_ticks(float(t))
-                events.append((tk_val, note_n, 90))
+                events.append((tk_val, note_n,
+                               int(_tom_seq[i]) if _tom_seq is not None else 90))
                 c = _conf_for("tom_mid", tom_mid_times)
                 if c is not None and i < len(c):
                     conf_lookup[(round(float(t), 4), note_n)] = float(c[i])
@@ -27730,7 +27927,24 @@ demucs.separate.main()
         self.a2m_frame_var.set(s.get("frame", 0.3))
         self.a2m_mode_var.set(s.get("mode", "auto"))
         if "genre" in s:
-            self.a2m_genre_var.set(s["genre"])
+            # A saved genre whose radio no longer exists would leave the WHOLE radio
+            # group with nothing selected — Tk selects a Radiobutton only on an exact
+            # value match, so a retired value shows as a blank group that reads as a
+            # bug rather than as a removal. Land it on `auto`, which is now what the
+            # retired preset actually does, and say so instead of silently rewriting
+            # the user's stored choice.
+            _g = s["genre"]
+            if _g in _A2M_RETIRED_GENRES:
+                try:
+                    self._a2m_log(
+                        "NOTE: this song was saved with the %r preset, which was removed "
+                        "(%s). Switched to No genre adjustment — the result is the same, "
+                        "because that is what %r now does."
+                        % (_g, _A2M_RETIRED_GENRES[_g], _g))
+                except Exception:
+                    pass
+                _g = "auto"
+            self.a2m_genre_var.set(_g)
         if "engine" in s:
             self.a2m_engine_var.set(s["engine"])
             self._a2m_update_engine_ui()
