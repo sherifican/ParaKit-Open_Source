@@ -142,6 +142,118 @@ def check_memory_stores():
     return 0
 
 
+def check_index_matches_manifest(root):
+    """FAIL if the bytes git would COMMIT are not the bytes the manifest describes.
+
+    Added 2026-08-04, because the 4.9.10 staging passed this gate while staged to ship a
+    broken update. `rlrr_parse.py` had been fixed on disk and `update_manifest.json`
+    regenerated from it -- and neither was ever `git add`-ed. The index therefore held
+    the PRE-fix file in both locations while the manifest advertised the POST-fix hash.
+    Commit that and the repo serves old bytes under a new hash: the updater downloads
+    them, the post-download hash verify fails, and every updating user is told their
+    install is DAMAGED by a release that looked green at every stage.
+
+    It got through because every other check in this file measures the WORKING TREE.
+    `collect()` reads files from disk; gen_update_manifest hashes files from disk; the
+    e2e rehearsal builds its fixtures from `git write-tree`, which is the index, but it
+    runs against whatever was staged at the time. Nothing compared disk to index, so the
+    bytes that actually get committed were examined by nothing automated. It was caught
+    by hand, on a second look, because a byte count seemed off.
+
+    THE HASHER MATTERS. gen_update_manifest normalises CRLF->LF before hashing
+    (tools/gen_update_manifest.py `_sha256`, mirrored in the app) so the manifest matches
+    what GitHub serves from an LF blob. A raw byte compare here reports every CRLF
+    working-tree file as broken and buries the two that genuinely are -- that exact wrong
+    answer was produced twice while diagnosing this. So this imports the generator's own
+    `_sha256` rather than reimplementing it, and self-tests that it is EOL-insensitive AND
+    still content-sensitive before trusting a single verdict from it.
+
+    SKIPS CLEANLY outside a git checkout, so the tool stays runnable by anyone.
+    """
+    import subprocess
+    import importlib.util
+    import tempfile
+    from pathlib import Path
+
+    root = Path(root)
+    man_path = root / "update_manifest.json"
+    gen_path = root / "tools" / "gen_update_manifest.py"
+    if not man_path.is_file() or not gen_path.is_file():
+        print("  - index vs manifest      SKIPPED (no manifest/generator here)")
+        return 0
+
+    def git(*a):
+        return subprocess.run(("git", "-C", str(root)) + a,
+                              capture_output=True)
+
+    if git("rev-parse", "--git-dir").returncode != 0:
+        print("  - index vs manifest      SKIPPED (not a git checkout)")
+        return 0
+
+    spec = importlib.util.spec_from_file_location("_pk_gen", gen_path)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+
+    def h(blob):
+        fh = tempfile.NamedTemporaryFile(delete=False)
+        fh.write(blob)
+        fh.close()
+        try:
+            return gen._sha256(Path(fh.name))
+        finally:
+            os.unlink(fh.name)
+
+    # A checker that cannot be shown to distinguish the cases is not evidence.
+    if not (h(b"a\r\nb\r\n") == h(b"a\nb\n") and h(b"a\nb\n") != h(b"a\nc\n")):
+        print("  ! index vs manifest      GATE FAIL — the generator's hasher is not "
+              "EOL-insensitive-and-content-sensitive; this check cannot be trusted.")
+        return 1
+
+    man = json.loads(_read(str(man_path)))
+    entries = man.get("files", [])
+    not_staged, mismatched, unstaged_edit = [], [], []
+
+    for ent in entries:
+        rel = (ent.get("path") or "").replace("\\", "/")
+        want = ent.get("sha256")
+        if not rel or not want:
+            continue
+        r = git("show", ":" + rel)
+        if r.returncode != 0:
+            not_staged.append(rel)          # in the manifest, absent from the index
+            continue
+        if h(r.stdout) != want:
+            mismatched.append(rel)          # committed bytes != what the manifest claims
+
+    # A tracked shipping file edited but not staged is the same defect one step earlier:
+    # the manifest may still match disk while the commit carries something else.
+    d = git("diff", "--name-only", "--")
+    if d.returncode == 0:
+        dirty = {ln for ln in d.stdout.decode("utf-8", "replace").split("\n") if ln}
+        shipping = {(e.get("path") or "").replace("\\", "/") for e in entries}
+        unstaged_edit = sorted(dirty & shipping)
+
+    problems = len(not_staged) + len(mismatched) + len(unstaged_edit)
+    if not problems:
+        print("  - index vs manifest      %d entries; committed bytes match the manifest"
+              % len(entries))
+        return 0
+
+    print("  ! index vs manifest      GATE FAIL — what would be COMMITTED is not what "
+          "the manifest describes.")
+    for rel in not_staged[:6]:
+        print("      not in the index (never `git add`-ed): %s" % rel)
+    for rel in mismatched[:6]:
+        print("      staged bytes do not match the manifest hash: %s" % rel)
+    for rel in unstaged_edit[:6]:
+        print("      shipping file modified but not staged: %s" % rel)
+    if problems > 18:
+        print("      ... %d more" % (problems - 18))
+    print("      Fix: `git add` the shipping files, regenerate the manifest if any of "
+          "them changed, then re-run this gate and the update rehearsal.")
+    return 1
+
+
 def main():
     root = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROOT
     surfaces = collect(root)
@@ -159,8 +271,12 @@ def main():
     # Version agreement is necessary, not sufficient. Run every remaining check and
     # report them all rather than short-circuiting on the first pass.
     rc = check_memory_stores()
-    if rc:
-        return rc
+    rc_idx = check_index_matches_manifest(root)
+    # Report BOTH before returning. Short-circuiting on the first failure hides the
+    # second, and a release stopped twice in a row for one problem at a time is how a
+    # gate gets run once and then worked around.
+    if rc or rc_idx:
+        return rc or rc_idx
     print("GATE PASS")
     return 0
 
