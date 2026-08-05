@@ -321,6 +321,14 @@
   settings. Each file now gets its own; anything already saved still loads.
 
 ------------------------------------------------------------------------------
+  v4.9.9   --   withdrawn, never released
+------------------------------------------------------------------------------
+  This version was staged but never released. The change it carried was measured
+  against the previous behaviour, performed worse, and was reverted before any
+  public build existed -- so this history goes from v4.9.8 straight to v4.9.10.
+  No update was missed.
+
+------------------------------------------------------------------------------
   v4.9.8   --   2026-07-31
 ------------------------------------------------------------------------------
   Four bugs in the MIDI Editor and the Chart Troubleshooter, and a setting
