@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.12  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)      4.9.12.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,26 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.12.1   --   2026-08-10
+------------------------------------------------------------------------------
+  Kick notes go back to a single volume.
+
+  4.9.12 gave every detected note a volume read from the audio. For the kick
+  that reading is taken from the 20-120 Hz band, which is also where the bass
+  guitar sits, so what looked like kick dynamics was largely the bass line
+  moving underneath it. A quiet kick under a loud bass note came out loud, and
+  a firm kick under a rest came out quiet. Ghost and accent marks derived from
+  it followed the bass rather than the drumming.
+
+  Kick notes are therefore written at one fixed volume again. Snare, hi-hat,
+  crash, ride and toms keep the per-hit volumes 4.9.12 introduced -- their
+  frequency bands are not shared with another instrument in the same way, and
+  their dynamics measured correctly.
+
+  Nothing else changes: no note moves, no note is added or removed, and
+  detection is untouched.
 
 ------------------------------------------------------------------------------
   v4.9.12   --   2026-08-05
