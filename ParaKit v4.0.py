@@ -19464,7 +19464,7 @@ demucs.separate.main()
             # hard THAT drum was hit rather than how loud the mix is: sub for
             # kick, body for snare and toms, high end for the cymbals. Each
             # falls back to its previous constant if the STFT is unusable.
-            _add_events(kick_times,      36, _vel_for(kick_times,        20,   120, 100), _conf_for("kick",      kick_times))
+            _add_events(kick_times,      36, 100, _conf_for("kick",      kick_times))
             _add_events(snare_times,     38, _vel_for(snare_times,      150,  1000, 100), _conf_for("snare",     snare_times))
             _add_events(floor_tom_times, 41, _vel_for(floor_tom_times,   60,   250,  90), _conf_for("floor_tom", floor_tom_times))
             _add_events(hihat_times,     42, _vel_for(hihat_times,     5000, 12000,  80), _conf_for("hihat",     hihat_times))
