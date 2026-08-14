@@ -6,8 +6,12 @@ Responsibilities
 1. parse_midi(path)  -> (est_by_class {lane: sorted np.array of onset secs},
                          notes [NoteRec(time, pitch, velocity, lane)...])
    Reads every drum note, maps its GM pitch -> ParaKit lane via the SAME
-   GM_DRUM_MAP as tools/detection_harness/loaders.py (so it round-trips the
-   detector's own output and ParaDB ground truth identically).
+   GM_DRUM_MAP the detection-research harness's loader used (so it round-trips
+   the detector's own output and ParaDB ground truth identically). ⛔ That
+   harness is NOT in this repo — an earlier revision cited
+   `tools/detection_harness/loaders.py` as if it were openable here; it never
+   was (see the provenance note atop parakit_cleanup/passes.py). The map below
+   is the live authority.
 
 2. apply_cleanup(notes, cleaned_est, do_cymbal, do_kick) -> new note list
    Rewrites the note list to match the cleaned onset dict while PRESERVING each
@@ -176,10 +180,45 @@ def apply_cleanup(notes, cleaned_est, do_cymbal=True, do_kick=True):
     # duplicate onsets in a lane are matched one-for-one.
     kick_keep = _onset_multiset(cleaned_est.get("kick", [])) if do_kick else None
     cym_pools = None
+    cym_assign = {}
     if do_cymbal:
         cym_pools = {lane: _onset_multiset(cleaned_est.get(lane, [])) for lane in CYM_LANES}
+        # ⛔ TWO PASSES, AND THE ORDER OF THEM IS THE WHOLE FIX. "Prefer keeping the
+        # same lane" used to be evaluated one note at a time while walking the list,
+        # which made it FIRST-COME-FIRST-SERVED: an earlier note that could not stay
+        # put grabbed the first lane with a free slot, and that slot was sometimes
+        # the one a LATER note needed in order to stay where it already was.
+        #
+        # Concretely, a hi-hat and a crash struck together - among the most ordinary
+        # things in a drum chart - relabelled to ride+crash came out as crash+ride:
+        # the hi-hat took the crash's slot, and the crash, having none left, was
+        # pushed into ride. Lane COUNTS were right, so every count-based check passed,
+        # while each surviving note carried the other one's velocity and the crash
+        # moved lanes for no reason. In VR a lane is a physical object in space, so
+        # that is a wrong arm movement plus a wrong loudness, on a note the cleanup
+        # had no opinion about.
+        #
+        # Pass A: every note that CAN keep its own lane claims that slot first, so
+        # the preference is global rather than positional. Pass B: whatever is left
+        # over takes whatever remains. Notes that were genuinely relabelled are
+        # unaffected; this only stops them from displacing notes that were not.
+        idxs = [i for i, n in enumerate(notes) if n.lane in CYM_LANES]
+        for i in idxs:                                   # pass A - stay put
+            key = round(notes[i].time / _MATCH_TOL)
+            if cym_pools[notes[i].lane].get(key, 0) > 0:
+                cym_pools[notes[i].lane][key] -= 1
+                cym_assign[i] = notes[i].lane
+        for i in idxs:                                   # pass B - the movers
+            if i in cym_assign:
+                continue
+            key = round(notes[i].time / _MATCH_TOL)
+            for lane in CYM_LANES:
+                if cym_pools[lane].get(key, 0) > 0:
+                    cym_pools[lane][key] -= 1
+                    cym_assign[i] = lane
+                    break
 
-    for n in notes:
+    for i, n in enumerate(notes):
         if do_kick and n.lane == "kick":
             key = round(n.time / _MATCH_TOL)
             if kick_keep.get(key, 0) > 0:
@@ -189,24 +228,21 @@ def apply_cleanup(notes, cleaned_est, do_cymbal=True, do_kick=True):
             continue
 
         if do_cymbal and n.lane in CYM_LANES:
-            key = round(n.time / _MATCH_TOL)
-            new_lane = None
-            # Prefer keeping the same lane if this onset still lives there.
-            if cym_pools[n.lane].get(key, 0) > 0:
-                new_lane = n.lane
-            else:
-                for lane in CYM_LANES:
-                    if cym_pools[lane].get(key, 0) > 0:
-                        new_lane = lane
-                        break
+            # Lane already decided by the two-pass assignment above; the pools were
+            # consumed there, so nothing is decremented here.
+            new_lane = cym_assign.get(i)
             if new_lane is None:
                 # Onset not found in any cymbal lane (should not happen — cymbal
                 # is a count-preserving relabel). Keep the note as-is to avoid
                 # silently dropping it.
                 out.append(NoteRec(n.time, n.pitch, n.velocity, n.lane))
                 continue
-            cym_pools[new_lane][key] -= 1
-            out.append(NoteRec(n.time, LANE_TO_PITCH[new_lane], n.velocity, new_lane))
+            # A note that kept its lane keeps its ORIGINAL pitch: the cleanup had no
+            # opinion about it, and re-stamping the canonical pitch here would flatten
+            # e.g. a hi-hat read at 46 to 42 on a note nothing acted on — the same
+            # class of gratuitous rewrite write_midi's docstring warns about for toms.
+            pitch = n.pitch if new_lane == n.lane else LANE_TO_PITCH[new_lane]
+            out.append(NoteRec(n.time, pitch, n.velocity, new_lane))
             continue
 
         # untouched lane
@@ -227,7 +263,8 @@ def write_midi(path, notes, ticks_per_beat=DEFAULT_TPB, tempo=DEFAULT_TEMPO):
     original pitch intact. We must NOT re-canonicalize here — folding e.g. a
     surviving tom_mid note read at pitch 45 to the lane's canonical 48 would be a
     pitch change on a lane the cleanup never acts on (it destroys the app's 48/45
-    tom alternation, ParaKit v4.0.py:12629-12630) and is invisible to the
+    tom alternation — the `_tom_alt_idx % 2` pitch pick in the app's convert
+    worker; symbol anchor, the line number this cited drifted) and is invisible to the
     faithfulness gate (45 and 48 both re-read as tom_mid)."""
     mid = mido.MidiFile(ticks_per_beat=ticks_per_beat)
     track = mido.MidiTrack()

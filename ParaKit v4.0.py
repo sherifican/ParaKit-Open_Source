@@ -154,6 +154,80 @@ def load_config():
     return {}
 
 
+def copy_cover_as_album_png(cover_path, ch_dir, log=None):
+    """Put the user's cover into a Clone Hero folder as `album.png` — and make
+    the name true.
+
+    ⛔ WHY: the CH export sites used to `shutil.copy2` whatever file the user
+    picked straight onto the name `album.png`, so a chosen .jpg landed as JPEG
+    bytes under a name that claims PNG. The name is a format claim — anything
+    that trusts the extension (image tools, other games' loaders, the user
+    opening it in an editor) gets lied to, and whether Clone Hero itself renders
+    it depends on its loader sniffing content instead of believing the name.
+    The auto-fetched-art branch right next to one of these sites already did
+    the correct thing (decode + save as real PNG); the user-picked-file branch
+    simply never got the same treatment.
+
+    A real .png copies through byte-identical. Anything else is decoded and
+    saved as actual PNG. If Pillow is missing or the image is unreadable, fall
+    back to the old byte-copy — a mislabeled cover beats no cover — but SAY SO
+    in the log instead of leaving the mismatch silent.
+    """
+    dest = os.path.join(ch_dir, "album.png")
+    if os.path.splitext(cover_path)[1].lower() != ".png":
+        try:
+            from PIL import Image as _AlbumImage
+            _img = _AlbumImage.open(cover_path)
+            if _img.mode == "CMYK":     # PNG has no CMYK
+                _img = _img.convert("RGB")
+            _img.save(dest, format="PNG")
+            if log:
+                log(f"  Converted {os.path.basename(cover_path)} → album.png (real PNG)")
+            return dest
+        except Exception as _e:
+            if log:
+                log(f"  ⚠ Could not convert {os.path.basename(cover_path)} to PNG "
+                    f"({_e}); copying as-is — album.png will not actually be a PNG")
+    shutil.copy2(cover_path, dest)
+    return dest
+
+
+def write_rlrr_atomic(path, rlrr):
+    """Write a .rlrr chart with the same tmp+fsync+os.replace discipline as
+    `save_config`, so a write that dies partway can no longer destroy a chart.
+
+    ⛔ WHY: both chart-export sites opened the FINAL path with "w", which
+    truncates before json.dump streams a byte. Re-exporting over an existing
+    chart (the ordinary "tweak a setting and convert again" loop) therefore
+    destroyed the old chart the moment the write began — a crash, a full disk,
+    or an unserializable value mid-dump left a truncated file where a playable
+    chart used to be, and there is no backup to fall back to. os.replace is
+    atomic on NTFS: until the tmp file is complete and fsynced, the old chart
+    is untouched; afterwards the swap is all-or-nothing.
+
+    Output bytes are IDENTICAL to the old inline writes (text mode,
+    newline="\\r\\n", indent=4, default ensure_ascii) — this changes when the
+    bytes land, never what they are. The tmp sits in the chart's own directory
+    because os.replace cannot cross volumes. On failure the tmp is removed and
+    the exception re-raised for the caller's existing error handling; the
+    previous chart, if any, is left byte-identical.
+    """
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", newline="\r\n") as f:
+            json.dump(rlrr, f, indent=4)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def save_config(data):
     """Merge `data` into the live config; never overwrites unrelated keys.
 
@@ -3745,6 +3819,44 @@ A2M_POST_CYMBAL_HIHAT_PATTERN_NEIGHBOR_BEATS = 0.75
 A2M_POST_CYMBAL_HIHAT_TO_CRASH_MAX_HIHATS = 2
 A2M_SNARE_CYMBAL_STACK_SEC = 0.035
 
+# Snare-cymbal stack DELETION, measured net-harmful 2026-08-10 and switched off.
+# See `_a2m_suppress_snare_cymbal_stacks` for the numbers. Flag rather than dead
+# code so re-enabling is one edit and the evidence sits next to it.
+A2M_SNARE_CYMBAL_STACK_DELETE = False
+
+# Drop detected snares whose per-hit velocity lands under this. 0 disables.
+# Measured over 48 packs / 103,397 detected notes
+# (`tools/phantom_snare_predictors_2026-08-10.py`), then RE-MEASURED on a curated
+# subset (`tools/velocity_threshold_clean_subset_2026-08-10.py`).
+#   trade at 30, 28 CLEAN packs:  ~5.6 spurious removed per charted note lost
+#   trade at 30, all 48 packs:    9.4:1  ← DO NOT QUOTE THIS ONE
+# ⚠ The all-48 figure is inflated by roughly 40% and the honest number is the
+# clean one. On a pack whose chart disagrees with its audio a CORRECT detection
+# is scored spurious, which pads the numerator and shrinks the denominator at the
+# same time — the SUSPECT packs post the highest ratios of all despite having the
+# least trustworthy labels. Any future comparison must be against ~5.6, or it
+# will be measuring contamination and calling it improvement.
+# The best-ratio grid point is 25 for both lanes on both populations, but 25->30
+# still removes notes at ~4:1, so 30 buys more phantoms at a rate that is still
+# clearly worth it. Loosening further does fall away fast.
+A2M_SNARE_GHOST_DROP_VEL = 30
+
+# Same idea for kick, and it is the bigger lever by volume: 1,467 spurious notes
+# removed for 195 charted ones lost across all 48 packs, about 2.5x the snare
+# filter's absolute yield, because kick has the most detected notes (47,507) and
+# a high base phantom rate (7.07%).
+#   trade at 25, 28 CLEAN packs:  ~5.7 spurious removed per charted note lost
+#   trade at 25, all 48 packs:    7.52:1  ← DO NOT QUOTE THIS ONE
+# ⚠ Same contamination caveat as the snare constant above: the all-48 number is
+# inflated by roughly 24%. Compare future work against ~5.7.
+# Nothing at all is deleted below 22, so 25 sits at the knee.
+# ⚠ This velocity is a DETECTION signal only and must never reach the chart —
+# the kick lane is non-monotonic (ghost 4.28x phantom-enriched, accent 4.55x,
+# clean middle), so "quiet kick => suspicious" holds while "loud kick =>
+# trustworthy" does not. Ghost/accent marks derived from it would be noise,
+# which is why `_add_events` still emits the flat constant for kick.
+A2M_KICK_GHOST_DROP_VEL = 25
+
 # ── Alt-detector subprocess wrapper constants (F-DET-005) ──────────────────
 A2M_ALT_DETECTOR_SCHEMA_VERSION = 1
 A2M_ALT_DETECTOR_TIMEOUT_SECONDS = 300
@@ -4664,6 +4776,29 @@ def _a2m_suppress_snare_cymbal_stacks(hihat_times, crash_times, ride_times, snar
     beat = 60.0 / bpm_val if bpm_val > 0 else 0.5
     window = min(A2M_SNARE_CYMBAL_STACK_SEC, max(0.024, beat * 0.080))
 
+    # ⛔ DELETION OFF since 2026-08-10 — measured net-harmful, and the premise
+    # was never what was wrong with it.
+    #
+    # Measured across 48 packs (`tools/phantom_snare_predictors_2026-08-10.py`):
+    # this fired on 22 of them and removed 63 cymbals. Its snare-is-real
+    # assumption is CORRECT — 0 of the 63 triggering snares was a phantom and 59
+    # were charted snares. But 57 of the 63 cymbals it deleted were CHARTED
+    # cymbals, i.e. it destroyed a real cymbal about nine times for every
+    # uncharted one. A snare landing together with a hi-hat and a crash is
+    # mostly ordinary drumming, not detector bleed, so there was nothing here to
+    # clean up. The 35 ms window was never the defect; deleting was.
+    #
+    # Restoring deletion means beating 57-real-lost-for-6-bogus-removed. Note
+    # the small absolute scale (63 notes over 48 packs) — this was never a big
+    # lever in either direction, which is also why it went unnoticed.
+    if not A2M_SNARE_CYMBAL_STACK_DELETE:
+        return (
+            np.asarray(hihats, dtype=float),
+            np.asarray(crashes, dtype=float),
+            np.asarray(rides, dtype=float),
+            {"hihat": 0, "ride": 0, "crash": 0, "window_ms": int(round(window * 1000))},
+        )
+
     classes = [
         ("hihat", hihats, 1),
         ("ride", rides, 2),
@@ -5418,6 +5553,9 @@ try:
         CLASS_TO_MIDI,
         LANE_NAMES,
         extract_notes_from_rlrr,
+        parse_rlrr,
+        event_time,
+        event_velocity,
         write_ground_truth_mid,
         write_mid_with_metadata,
     )
@@ -5443,6 +5581,73 @@ _RLRR_SUPPLEMENTAL_CLASS_NOTE = {
     "BP_China":   49,   # china     -> Crash lane (owner: china = crash, unified)
     "BP_Splash":  55,   # splash    -> Crash lane (GM 55; in _CH_NOTE_MAP + editor Crash lane)
 }
+
+
+def _extract_notes_from_rlrr_supplemented(rlrr_path):
+    """`extract_notes_from_rlrr` + the supplemental cymbal families.
+
+    ⛔ THE MIDI EXTRACTOR WAS SILENTLY DROPPING NOTES. `_RLRR_SUPPLEMENTAL_CLASS_NOTE`
+    exists because real ParaDB charts use china, 13" crash and splash, which
+    `CLASS_TO_MIDI` does not know. Two loaders consult it as a fallback
+    (`_load_rlrr_as_me_notes`, `_load_rlrr_as_viz_notes`). The MIDI Extractor does
+    not: it calls the imported `extract_notes_from_rlrr`, which drops any event
+    `CLASS_TO_MIDI` cannot map, and the user gets a .mid missing those hits with no
+    error. Measured on a five-event probe (kick, china, splash, 13" crash, 17"
+    crash): 2 notes extracted, 3 dropped.
+
+    Found by audit 2026-08-09. The fix stays OUT of `rlrr_parse.CLASS_TO_MIDI` on
+    purpose - the comment above records that the map is deliberately kept to the
+    8-lane ground-truth design, and the research corpus has its own synced copy.
+    This wrapper adds the families for the USER-FACING extraction only, using the
+    app's own note assignments, so all three .rlrr readers now agree.
+
+    Returns the same (notes, meta, err) contract, notes sorted by time.
+    """
+    notes, meta, err = extract_notes_from_rlrr(rlrr_path)
+    if err and not notes:
+        # A real parse failure. The "no mappable notes" case is NOT fatal here:
+        # a chart made entirely of china would report exactly that, and it is
+        # precisely the chart this wrapper exists to rescue.
+        if "No mappable drum notes" not in err:
+            return notes, meta, err
+    try:
+        _meta2, events, instruments, _ = parse_rlrr(rlrr_path)
+    except Exception:
+        # Supplementing is best-effort: the primary result already stands, and a
+        # second read failing must not turn a working extraction into an error.
+        return notes, meta, err
+    if not meta:
+        meta = _meta2
+    extra = []
+    for e in events:
+        # Mirrors event_to_class, then falls back on the raw name - identical to
+        # the probe in _load_rlrr_as_me_notes so the three readers cannot drift.
+        name_val = str(e.get("name") or "") if "name" in e else ""
+        cls = ""
+        if "name" in e:
+            for c in CLASS_TO_MIDI:
+                if name_val.startswith(c):
+                    cls = c
+                    break
+        else:
+            _i = e.get("instrumentIndex", -1)
+            if isinstance(_i, int) and 0 <= _i < len(instruments):
+                cls = instruments[_i].get("class", "") or ""
+        if CLASS_TO_MIDI.get(cls):
+            continue        # already returned by extract_notes_from_rlrr
+        _probe = name_val if "name" in e else cls
+        for _pfx, _mn in _RLRR_SUPPLEMENTAL_CLASS_NOTE.items():
+            if _probe.startswith(_pfx):
+                try:
+                    _v = min(127, max(1, int(round(event_velocity(e) * 127))))
+                    extra.append((event_time(e), _mn, _v))
+                except Exception:
+                    pass
+                break
+    if not extra:
+        return notes, meta, err
+    out = sorted(list(notes) + extra, key=lambda n: n[0])
+    return out, meta, ""
 
 _MIDI_EXT_DIFFS = ["Easy", "Medium", "Hard", "Expert", "Expert+"]
 
@@ -5708,7 +5913,7 @@ class MidiExtractorPanel:
         self._single_notes = []
         self._frame.update_idletasks()
 
-        notes, meta, err = extract_notes_from_rlrr(rlrr_path)
+        notes, meta, err = _extract_notes_from_rlrr_supplemented(rlrr_path)
         if err:
             self._preview_var.set(f"Preview error: {err}")
             return
@@ -5815,7 +6020,7 @@ class MidiExtractorPanel:
             notes  = self._single_notes
 
             if not notes:
-                notes, _, err = extract_notes_from_rlrr(path)
+                notes, _, err = _extract_notes_from_rlrr_supplemented(path)
                 if err:
                     self._frame.after(0, lambda: self._log_write(f"ERR {err}\n", "err"))
                     return
@@ -5896,7 +6101,7 @@ class MidiExtractorPanel:
     # ── Core extraction (worker thread) ──────────────────────────────────────
 
     def _extract_one_batch(self, rlrr_path: Path, out_path: Path):
-        notes, meta, err = extract_notes_from_rlrr(rlrr_path)
+        notes, meta, err = _extract_notes_from_rlrr_supplemented(rlrr_path)
         if err:
             return False, f"{rlrr_path.name}: {err}"
         try:
@@ -5954,7 +6159,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.12.1"
+    VERSION = "4.9.13"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -7160,8 +7365,9 @@ class MidiToRlrrApp:
             if audio_files.get("album_art"):
                 src_art = audio_files["album_art"]
                 try:
-                    shutil.copy2(src_art,
-                                  os.path.join(ch_dir, "album.png"))
+                    # Converts non-PNG sources to a real PNG; the raw copy2 this
+                    # replaced put JPEG bytes under the name album.png.
+                    copy_cover_as_album_png(src_art, ch_dir, _log)
                     _log(f"  Copied album art: "
                          f"{os.path.basename(src_art)} → album.png")
                 except Exception as e:
@@ -15176,10 +15382,17 @@ demucs.separate.main()
 
         # Notice shown when pure ML mode is active — spectral settings inactive
         # Uses row=99 to float above the Detection Engine block without shifting existing rows
+        # ⛔ The notice must name EVERY inert control, or it functions as a
+        # whitelist: naming two of the three told a pure-ML user that Kick
+        # Sensitivity still worked. It does not — `frame_thresh` is consumed only
+        # by the spectral kick layer (`detect_onsets`), whose output pure ML
+        # overrides wholesale. ("Genre" left the list when the preset system was
+        # retired and its selector was removed from this tab.)
         self._a2m_spectral_notice = ttk.Label(
             settings_frame,
-            text="ℹ  The settings above (Onset Sensitivity, Detection Mode, Genre) have no "
-                 "effect in ML mode. They only apply to Spectral and Hybrid engines.",
+            text="ℹ  The settings above (Onset Sensitivity, Kick Sensitivity, Detection "
+                 "Mode) have no effect in ML mode. They only apply to Spectral and "
+                 "Hybrid engines.",
             style="Sub.TLabel", foreground="#b388ff",
             justify=tk.LEFT, wraplength=520)
         self._a2m_spectral_notice.grid(
@@ -15238,12 +15451,13 @@ demucs.separate.main()
                   text="Auto tries both methods and picks the one with a more realistic snare/kick ratio.",
                   style="Sub.TLabel").grid(row=5, column=0, columnspan=3, sticky="w", pady=(0, 6))
 
-        # Genre selector
-        ttk.Label(settings_frame, text="Genre:").grid(
-            row=6, column=0, sticky="w", padx=(0, 10), pady=(4, 4))
+        # ⛔ No "Genre:" caption and no selector frame any more. The radios were
+        # removed when the preset system was retired, but the row-6 label and the
+        # empty frame stayed gridded — a caption pointing at nothing, which reads
+        # as a broken control rather than a removed one. The variable itself must
+        # survive (pinned to "auto"): per-song settings, batch templates and the
+        # startup snapshot all read/write it.
         self.a2m_genre_var = tk.StringVar(value="auto")
-        genre_frame = ttk.Frame(settings_frame)
-        genre_frame.grid(row=6, column=1, columnspan=2, sticky="w", pady=(4, 4))
         # v4.9.11 — "Auto" and "No adjustment" were TWO RADIOS FOR ONE BEHAVIOUR.
         # Both `auto` and `raw` return zero overrides from _a2m_genre_params, so they
         # produce byte-identical charts, while the labels promised otherwise: "let the
@@ -15337,12 +15551,21 @@ demucs.separate.main()
                   style="Sub.TLabel", foreground="#b388ff",
                   justify=tk.LEFT, wraplength=700).pack(anchor="w")
 
-        # Remember settings per genre toggle
+        # Remember-settings toggle. ⛔ The old label said "per genre … when you
+        # switch genres" — an action that cannot happen since the preset system
+        # was retired and `a2m_genre_var` became permanently "auto". The
+        # MECHANISM survived the retirement and is genuinely useful (the save
+        # fires from the Onset/Kick/Mode traces, captures engine + ML threshold
+        # + dedup too, and restores under the one remaining genre), so the
+        # label now describes what the control does rather than the system it
+        # was built for. Config key unchanged for compatibility.
         self.a2m_remember_settings_var = tk.BooleanVar(
             value=load_config().get("a2m_remember_settings", False))
         ttk.Checkbutton(settings_frame,
-                        text="Remember settings per genre  "
-                             "(saves onset/threshold/mode/engine/dedup when you switch genres)",
+                        text="Remember detection settings  "
+                             "(Onset & Kick Sensitivity, Detection Mode, engine, ML "
+                             "threshold and dedup gaps are saved as you adjust them "
+                             "and restored automatically)",
                         variable=self.a2m_remember_settings_var,
                         command=lambda: save_config({
                             "a2m_remember_settings": self.a2m_remember_settings_var.get()
@@ -15395,9 +15618,9 @@ demucs.separate.main()
                         self.a2m_ml_thresh_var.set(s["ml_threshold"])
                     # Restore per-engine dedup stored values
                     if "dedup_spectral" in s:
-                        self._a2m_dedup_stored["spectral"].update(s["dedup_spectral"])
+                        self._a2m_dedup_update("spectral", s["dedup_spectral"])
                     if "dedup_hybrid" in s:
-                        self._a2m_dedup_stored["hybrid"].update(s["dedup_hybrid"])
+                        self._a2m_dedup_update("hybrid", s["dedup_hybrid"])
                     # Reload sliders for whichever mode is now active
                     self._a2m_switch_dedup_mode(
                         new_mode=self._a2m_dedup_mode_var.get(), auto=False)
@@ -15817,10 +16040,23 @@ demucs.separate.main()
             # cluster more than other drums, so a wider kick gap de-bunches kicks
             # out of the box. Mirrored in the per-instrument list + the default
             # (per-instrument OFF) path in _a2m_start.
+            #
+            # ⛔ NO "ride" ENTRY. v4.7.12 removed the Ride SLIDER as a dead control
+            # (its gap is consumed only inside `if ride_detect:`, and ride_detect
+            # is hard-forced False) but left the VALUE here — so it kept flowing
+            # into the stored dicts, both `a2m_dedup_*` config keys, the per-genre
+            # store and the settings snapshot: a live-looking "ride": 30.0 in the
+            # user's config file that no control edits and no code consumes. Same
+            # class as the retired gate_to_ride constant. The runtime `dedup_gaps`
+            # dict still gets a "ride" key from its hard-coded list (falling back
+            # to the global gap), so re-enabling ride_detect cannot KeyError. Old
+            # configs / genre stores / snapshots carrying "ride" are filtered on
+            # entry by _a2m_dedup_update — a plain .update() would have let the
+            # dead key ride back in through any of the three restore paths.
             "spectral": {"global": 30.0, "kick": 55.0, "snare": 30.0, "hihat": 20.0,
-                         "crash": 30.0,  "ride": 30.0,  "floor_tom": 30.0, "tom": 30.0},
+                         "crash": 30.0,  "floor_tom": 30.0, "tom": 30.0},
             "hybrid":   {"global": 30.0, "kick": 55.0, "snare": 20.0, "hihat": 12.0,
-                         "crash": 25.0,  "ride": 20.0,  "floor_tom": 20.0, "tom": 20.0},
+                         "crash": 25.0,  "floor_tom": 20.0, "tom": 20.0},
         }
         self._a2m_dedup_stored = {
             "spectral": dict(self._a2m_dedup_presets["spectral"]),
@@ -15994,6 +16230,27 @@ demucs.separate.main()
             "it leaves.\n\n"
             "Kick lane only; never adds or moves notes. Needs the source audio present.")
 
+        self.a2m_note_dynamics_var = tk.BooleanVar(
+            value=load_config().get("a2m_note_dynamics", False))
+        note_dynamics_cb = ttk.Checkbutton(
+            adv_frame,
+            text="Vary note volume to match the playing  (off by default)",
+            variable=self.a2m_note_dynamics_var)
+        note_dynamics_cb.pack(anchor="w", pady=(6, 0))
+        self._add_tooltip(
+            note_dynamics_cb,
+            "OFF (default): every note is written at one fixed volume.\n"
+            "ON: each note gets a volume read from how hard that drum was\n"
+            "actually struck, so quiet passages and hard-hit accents differ.\n\n"
+            "Off by default because it is easier to add dynamics to a flat\n"
+            "chart than to flatten a chart you did not want varied — undoing\n"
+            "it afterwards means editing every note's volume by hand.\n\n"
+            "Kick is never varied either way. Its volume has to be read from\n"
+            "the 20-120 Hz range, which is also where the bass guitar sits, so\n"
+            "the reading followed the bass rather than the drumming.\n\n"
+            "Clone Hero ghost and accent notes are marked from these volumes,\n"
+            "so with this OFF your conversions carry neither — the same as\n"
+            "every ParaKit release before note dynamics were added.")
         self.a2m_remove_flams_var = tk.BooleanVar(
             value=load_config().get("a2m_remove_flams", True))
         remove_flams_cb = ttk.Checkbutton(
@@ -16279,6 +16536,8 @@ demucs.separate.main()
             self.a2m_post_classify_cymbals_var.set(_a2m_cfg["a2m_post_classify"])
         if "a2m_remove_flams" in _a2m_cfg:
             self.a2m_remove_flams_var.set(_a2m_cfg["a2m_remove_flams"])
+        if "a2m_note_dynamics" in _a2m_cfg:
+            self.a2m_note_dynamics_var.set(_a2m_cfg["a2m_note_dynamics"])
         if "a2m_cleanup_pass" in _a2m_cfg:
             self.a2m_cleanup_pass_var.set(_a2m_cfg["a2m_cleanup_pass"])
         if "a2m_cleanup_cymbal" in _a2m_cfg:
@@ -16301,6 +16560,8 @@ demucs.separate.main()
             {"a2m_post_classify": self.a2m_post_classify_cymbals_var.get()}))
         self.a2m_remove_flams_var.trace_add("write", lambda *_: save_config(
             {"a2m_remove_flams": self.a2m_remove_flams_var.get()}))
+        self.a2m_note_dynamics_var.trace_add("write", lambda *_: save_config(
+            {"a2m_note_dynamics": self.a2m_note_dynamics_var.get()}))
         self.a2m_cleanup_pass_var.trace_add("write", lambda *_: save_config(
             {"a2m_cleanup_pass": self.a2m_cleanup_pass_var.get()}))
         self.a2m_cleanup_cymbal_var.trace_add("write", lambda *_: save_config(
@@ -16547,20 +16808,49 @@ demucs.separate.main()
         _last_settings = load_config().get("a2m_last_settings")
         if isinstance(_last_settings, dict):
             _cfg_now = load_config()
+            # ⛔ 2026-08-09 — THE 08-03 FIX PATCHED THE INSTANCE, NOT THE CLASS. This
+            # map was written by listing "the nine" and stopping, and an audit found
+            # two more controls with the same unconditional own-key trace_add:
+            # Tom sensitivity (`a2m_tom_sensitivity`, :16106) and the Stem Separator
+            # slot (`a2m_separator_slot`, :15869). Same corruption as before: the
+            # delayed snapshot overwrote the fresher dedicated key, the control's
+            # trace fired, and the STALE value was written back to disk. These two
+            # fired for EVERY user with a snapshot — the genre channel below at
+            # least requires an opt-in.
             _owns_dedicated_key = {
                 "engine": "a2m_engine",
                 "ml_threshold": "a2m_ml_threshold",
                 "post_classify": "a2m_post_classify",
                 "remove_flams": "a2m_remove_flams",
+                "note_dynamics": "a2m_note_dynamics",
                 "cymbal_resolver": "a2m_cymbal_resolver",
                 "cleanup_pass": "a2m_cleanup_pass",
                 "cleanup_cymbal": "a2m_cleanup_cymbal",
                 "cleanup_kick": "a2m_cleanup_kick",
                 "cleanup_bleed": "a2m_cleanup_bleed",
+                "tom_sensitivity": "a2m_tom_sensitivity",
+                "separator_slot": "a2m_separator_slot",
             }
             _fresh = {k: v for k, v in _last_settings.items()
                       if not (k in _owns_dedicated_key
                               and _owns_dedicated_key[k] in _cfg_now)}
+            # ⛔ AND A THIRD PERSISTENCE CHANNEL THE MAP CANNOT EXPRESS. onset /
+            # frame / mode are saved on every change too — not under an `a2m_<key>`
+            # but into `a2m_genre_settings[genre]` via the `_save_genre_settings`
+            # trace. Applying their snapshot copies at startup fires that trace and
+            # files the stale values under the current genre BEFORE the loop reaches
+            # the snapshot's own "genre" key — whose restore then reads the store it
+            # just corrupted. Drop them whenever the genre restore will run and has
+            # an entry to restore from: the per-genre store is written on every
+            # change, so it is never the older of the two. When the target genre has
+            # no entry (or "genre" is absent and no restore will fire), the snapshot
+            # is their sole carrier and must keep them — dropping unconditionally
+            # would reset those sliders at every launch for genre-feature non-users.
+            _genre_store = _cfg_now.get("a2m_genre_settings")
+            if (isinstance(_genre_store, dict)
+                    and _last_settings.get("genre") in _genre_store):
+                for _k in ("onset", "frame", "mode"):
+                    _fresh.pop(_k, None)
             if _fresh:
                 self.root.after(80, lambda s=_fresh: self._a2m_apply_settings_snapshot(s))
 
@@ -17364,6 +17654,30 @@ demucs.separate.main()
 
         results = {}
         conf_results = {}   # parallel dict — peak confidence per onset
+        # ⛔ THE SLIDER HAS A DEAD ZONE AND THE LOG NEVER SAID SO. `denseOutput` is a
+        # per-frame sigmoid: measured across zeros / ones / uniform / gaussian input
+        # it stays strictly inside (0, 1) (min 4.4e-5, max 0.946), and on real audio
+        # min 1.2e-5. So `curve[i] > effective_thresh` is ALWAYS TRUE once the
+        # effective threshold reaches 0, and ALWAYS FALSE once it reaches 1 — in
+        # either case the number the user is dragging stops being a threshold.
+        #
+        # The class boosts are large and negative (kick/snare -0.45, hihat -0.42,
+        # crash/ride -0.40, toms -0.12) while the slider runs 0.10..0.95, so the
+        # bottom of its travel is saturated for every lane, at a different point per
+        # lane. Measured on a real drum stem, 45 s: kick returns 498 notes at slider
+        # 0.10, 0.25 AND 0.45 — byte-identical, the control does nothing — then 74 at
+        # 0.50. Snare 628/628/628 then 36. Toms are the mirror image: controllable
+        # only in 0.10..0.25 and already at ZERO by 0.45, so at the shipped default
+        # the ML arm contributes no toms at all.
+        #
+        # This is the same class as the retired `gate_to_ride` constant and the
+        # `ride_floor` reachability bound: a value that looks like a setting and, over
+        # part of its range, behaves like nothing. Remapping the slider would change
+        # detected output on every conversion, so it is a retune to be validated and
+        # not a fix to be slipped in here. What is fixed here is the SILENCE: a
+        # degenerate threshold now says so in the log instead of looking like a
+        # working control that happens to be very sensitive.
+        _degenerate = []
         for idx, name in enumerate(CLASS_NAMES):
             if name == "kick" and not kick_detect:
                 results[name]      = np.array([])
@@ -17378,7 +17692,30 @@ demucs.separate.main()
                 threshold=effective_thresh)
             results[name]      = times
             conf_results[name] = confs
-            log_fn(f"    ML {name:10s}: {len(times):4d} hits")
+            if effective_thresh <= 0.0:
+                _note = "  ⚠ threshold <= 0: every peak passes, slider inert here"
+                _degenerate.append((name, "inert", effective_thresh))
+            elif effective_thresh >= 1.0:
+                _note = "  ⚠ threshold >= 1: no peak can pass, lane forced empty"
+                _degenerate.append((name, "empty", effective_thresh))
+            else:
+                _note = ""
+            log_fn(f"    ML {name:10s}: {len(times):4d} hits   "
+                   f"(threshold {effective_thresh:+.2f}){_note}")
+        if _degenerate:
+            _inert = [n for n, k, _t in _degenerate if k == "inert"]
+            _empty = [n for n, k, _t in _degenerate if k == "empty"]
+            log_fn("  ⚠  ML sensitivity is out of range for "
+                   f"{len(_degenerate)} of {len(CLASS_NAMES)} lanes at this setting.")
+            if _inert:
+                # The lowest slider value at which each inert lane starts responding
+                # again, so the message is actionable instead of merely alarming.
+                _fix = min(-A2M_ML_CLASS_CONF_BOOST.get(n, 0.0) for n in _inert)
+                log_fn(f"     Unfiltered (every detected peak kept): {', '.join(_inert)}."
+                       f" Raise ML sensitivity above {_fix:.2f} for these to respond.")
+            if _empty:
+                log_fn(f"     Filtered out entirely: {', '.join(_empty)}."
+                       " Lower ML sensitivity for these to return notes.")
 
         for name in ["kick", "snare", "hihat", "crash", "ride", "floor_tom", "tom_mid"]:
             if name not in results:
@@ -17531,6 +17868,7 @@ demucs.separate.main()
         genre       = self.a2m_genre_var.get()
         mode        = self.a2m_mode_var.get()
         remove_flams = self.a2m_remove_flams_var.get()
+        note_dynamics = self.a2m_note_dynamics_var.get()
 
         # Read engine vars early — needed by dedup block below
         detection_engine = self.a2m_engine_var.get()
@@ -17719,7 +18057,8 @@ demucs.separate.main()
             args=(input_path, output_dir, onset, frame, ride_detect, mode,
                   kick_detect, debug_log, genre, dedup_gaps,
                   peak_scan_ms, trigger_align_ms,
-                  detection_engine, onnx_model_path, ml_threshold, remove_flams),
+                  detection_engine, onnx_model_path, ml_threshold, remove_flams,
+                  note_dynamics),
             daemon=True)
         # v4.7.13 — keep a handle so the guard at the top of this method can refuse a
         # SECOND concurrent conversion. Thread liveness IS the state (no flag to leak
@@ -18291,7 +18630,8 @@ demucs.separate.main()
                          kick_detect=True, debug_log=False, genre="auto",
                          dedup_gaps=None, peak_scan_ms=0.0, trigger_align_ms=0.0,
                          detection_engine="spectral", onnx_model_path="",
-                         ml_threshold=0.50, remove_flams=True):
+                         ml_threshold=0.50, remove_flams=True,
+                         note_dynamics=False):
         # Default gaps if not provided (30ms for all, 20ms for hi-hat, 40ms for kick per F-DET-015)
         if dedup_gaps is None:
             dedup_gaps = {k: 0.030 for k in
@@ -18338,6 +18678,8 @@ demucs.separate.main()
                              if detection_engine in ("ml","hybrid") and onnx_model_path else ""))
             self._a2m_log(f"Post-classify:     {'ON' if self._a2m_run_flags['post_classify'] else 'OFF'}")
             self._a2m_log(f"Flam removal:      {'ON' if remove_flams else 'OFF'}")
+            self._a2m_log(f"Note dynamics:     {'ON' if note_dynamics else 'OFF'}"
+                          + ("" if note_dynamics else "  (every note one volume)"))
             self._a2m_log(f"Cymbal resolver:   {'ON' if self._a2m_run_flags['cymbal_resolver'] else 'OFF'}")
 
             # ── F-INT-001 v4.4.4: separator-slot pre-detection wrap ───────────
@@ -19464,13 +19806,98 @@ demucs.separate.main()
             # hard THAT drum was hit rather than how loud the mix is: sub for
             # kick, body for snare and toms, high end for the cymbals. Each
             # falls back to its previous constant if the STFT is unusable.
-            _add_events(kick_times,      36, 100, _conf_for("kick",      kick_times))
-            _add_events(snare_times,     38, _vel_for(snare_times,      150,  1000, 100), _conf_for("snare",     snare_times))
-            _add_events(floor_tom_times, 41, _vel_for(floor_tom_times,   60,   250,  90), _conf_for("floor_tom", floor_tom_times))
-            _add_events(hihat_times,     42, _vel_for(hihat_times,     5000, 12000,  80), _conf_for("hihat",     hihat_times))
-            _add_events(crash_times,     49, _vel_for(crash_times,     3000, 12000, 100), _conf_for("crash",     crash_times))
-            _add_events(ride_times,      51, _vel_for(ride_times,      3000, 12000,  80), _conf_for("ride",      ride_times))
-            _tom_vels = _vel_for(tom_mid_times, 100, 400, 90)
+            # KICK: the velocity is COMPUTED as a detection signal and then
+            # THROWN AWAY — the chart always gets the flat constant.
+            #
+            # Those are two separate decisions and they go opposite ways:
+            #   * Not written, because nothing can use it. Clone Hero cannot —
+            #     accent modifiers are 34-38 and ghosts 40-44, all per colour
+            #     lane, with no modifier number for kick at all, which is why
+            #     `_ch_velocity_flag` returns None for pad 0. For Paradiddle the
+            #     `.rlrr` schema does define `vel` on every DrumEvent, but
+            #     whether the shipped game reads it during note-highway playback
+            #     is UNDETERMINED after searching the docs, the developer's own
+            #     Song Creator source and the community; custom songs play a
+            #     pre-recorded drum track, so it plausibly drives nothing. And
+            #     the lane is non-monotonic, so any ghost/accent mark derived
+            #     from it would be noise dressed as dynamics.
+            #   * Still computed, because as a FILTER it is the strongest signal
+            #     in the app: dropping kicks under A2M_KICK_GHOST_DROP_VEL
+            #     removes 1,467 spurious notes for 195 charted ones (7.52:1) on
+            #     all 48 packs. Non-monotonic only breaks the "loud = good"
+            #     half; "quiet = suspicious" survives, and that is the half this
+            #     uses.
+            # Times/velocities/confidences are re-indexed together — dropping a
+            # note without re-indexing would hand the survivors their
+            # neighbours' data, which produces a wrong chart rather than a crash.
+            _kick_vels = _vel_for(kick_times, 20, 120, 100)
+            _kick_conf = _conf_for("kick", kick_times)
+            try:
+                _n_kv = len(_kick_vels)
+            except TypeError:
+                _n_kv = -1           # fallback constant, no per-hit level to judge
+            if A2M_KICK_GHOST_DROP_VEL > 0 and _n_kv == len(kick_times):
+                _keep_kk = [i for i in range(_n_kv)
+                            if _kick_vels[i] >= A2M_KICK_GHOST_DROP_VEL]
+                if len(_keep_kk) != _n_kv:
+                    _drop_kk = _n_kv - len(_keep_kk)
+                    kick_times = [kick_times[i] for i in _keep_kk]
+                    _kick_vels = [_kick_vels[i] for i in _keep_kk]
+                    if _kick_conf is not None and len(_kick_conf) == _n_kv:
+                        _kick_conf = [_kick_conf[i] for i in _keep_kk]
+                    self._a2m_log(
+                        f"  Ghost-kick filter: dropped {_drop_kk} kick(s) under "
+                        f"velocity {A2M_KICK_GHOST_DROP_VEL}")
+            _add_events(kick_times,      36, 100, _kick_conf)
+            # GHOST-SNARE PHANTOM FILTER (2026-08-10). A snare whose per-hit
+            # level lands under A2M_SNARE_GHOST_DROP_VEL is 9.05x more likely to
+            # be spurious than the snare base rate — the single strongest
+            # predictor found in the 48-pack study. Filtered here, at the point
+            # the velocity first exists, so times/velocities/confidences stay in
+            # lockstep; dropping the note later would leave the conf array
+            # misaligned and `_conf_for`'s length check would silently discard
+            # every snare confidence.
+            # Guarded three ways: the flag can disable it, the velocity list has
+            # to actually align with the times (a fallback constant means the
+            # STFT was unusable, so there is no per-hit level to judge), and the
+            # confidence array is only re-indexed when it matches too.
+            _snare_vels = _vel_for(snare_times, 150, 1000, 100)
+            _snare_conf = _conf_for("snare", snare_times)
+            try:
+                _n_sv = len(_snare_vels)
+            except TypeError:
+                _n_sv = -1           # fallback constant, not a per-hit list
+            if A2M_SNARE_GHOST_DROP_VEL > 0 and _n_sv == len(snare_times):
+                _keep_sn = [i for i in range(_n_sv)
+                            if _snare_vels[i] >= A2M_SNARE_GHOST_DROP_VEL]
+                if len(_keep_sn) != _n_sv:
+                    _drop_sn = _n_sv - len(_keep_sn)
+                    snare_times = [snare_times[i] for i in _keep_sn]
+                    _snare_vels = [_snare_vels[i] for i in _keep_sn]
+                    if _snare_conf is not None and len(_snare_conf) == _n_sv:
+                        _snare_conf = [_snare_conf[i] for i in _keep_sn]
+                    self._a2m_log(
+                        f"  Ghost-snare filter: dropped {_drop_sn} snare(s) under "
+                        f"velocity {A2M_SNARE_GHOST_DROP_VEL}")
+            # NOTE-DYNAMICS TOGGLE (2026-08-10). `note_dynamics` decides what is
+            # WRITTEN, never what is MEASURED. The ghost-snare filter above needs
+            # per-hit level as its INPUT, so `_snare_vels` is computed either way
+            # and only the emission changes — gating the computation instead would
+            # silently disable phantom filtering whenever a user turned dynamics
+            # off, which is a detection change wearing a preference control.
+            # Kick is absent from this decision on purpose: it is unconditionally
+            # flat as of 4.9.12.1 because its 20-120 Hz read band is shared with
+            # the bass guitar, so kick "dynamics" never measured the drum. The
+            # toggle must not resurrect them.
+            # Each lane falls back to the SAME constant `_vel_for` would have
+            # returned as its own fallback, so OFF reproduces pre-4.9.12 output
+            # rather than inventing a new flat value.
+            _add_events(snare_times,     38, (_snare_vels if note_dynamics else 100), _snare_conf)
+            _add_events(floor_tom_times, 41, (_vel_for(floor_tom_times,   60,   250,  90) if note_dynamics else  90), _conf_for("floor_tom", floor_tom_times))
+            _add_events(hihat_times,     42, (_vel_for(hihat_times,     5000, 12000,  80) if note_dynamics else  80), _conf_for("hihat",     hihat_times))
+            _add_events(crash_times,     49, (_vel_for(crash_times,     3000, 12000, 100) if note_dynamics else 100), _conf_for("crash",     crash_times))
+            _add_events(ride_times,      51, (_vel_for(ride_times,      3000, 12000,  80) if note_dynamics else  80), _conf_for("ride",      ride_times))
+            _tom_vels = _vel_for(tom_mid_times, 100, 400, 90) if note_dynamics else None
             _tom_seq = (_tom_vels if (isinstance(_tom_vels, list)
                                       and len(_tom_vels) == len(tom_mid_times))
                         else None)
@@ -25448,7 +25875,17 @@ demucs.separate.main()
             note_len = secs_to_ticks(0.05)
             flat = []
             for note in self.me_notes:
-                tick = secs_to_ticks(note["time"])
+                # ⛔ CLAMP AT THE SOURCE, NOT AT THE DELTA. A note nudged before
+                # t=0 produced a NEGATIVE tick here, and the delta loop below —
+                # `delta = max(0, tick - prev_tick)` then `prev_tick = tick` —
+                # clamped the first delta while still adopting the negative value
+                # as its reference point. Every later event's delta was measured
+                # from that negative anchor, so ONE stray pre-zero note shifted
+                # the ENTIRE rest of the chart late by its magnitude (measured:
+                # a note at -0.05 s @120 BPM moved every subsequent note +48
+                # ticks). Clamped here, pre-zero notes land at tick 0 — already
+                # outside the timeline — and everything at t >= 0 stays exact.
+                tick = max(0, secs_to_ticks(note["time"]))
                 flat.append((tick,            'note_on',  note["note"], note["vel"]))
                 flat.append((tick + note_len, 'note_off', note["note"], 0))
 
@@ -27715,6 +28152,7 @@ demucs.separate.main()
             "dedup_hybrid": dict(getattr(self, "_a2m_dedup_stored", {}).get("hybrid", {})),
             "post_classify": getattr(self, "a2m_post_classify_cymbals_var", tk.BooleanVar(value=True)).get(),
             "remove_flams": getattr(self, "a2m_remove_flams_var", tk.BooleanVar(value=True)).get(),
+            "note_dynamics": getattr(self, "a2m_note_dynamics_var", tk.BooleanVar(value=False)).get(),
             "cymbal_resolver": getattr(self, "a2m_cymbal_resolver_var", tk.BooleanVar(value=False)).get(),
             "cleanup_pass": getattr(self, "a2m_cleanup_pass_var", tk.BooleanVar(value=True)).get(),
             "cleanup_cymbal": getattr(self, "a2m_cleanup_cymbal_var", tk.BooleanVar(value=True)).get(),
@@ -27739,6 +28177,16 @@ demucs.separate.main()
                 tk.StringVar(value="Moderate")).get(),
         }
 
+
+    def _a2m_dedup_update(self, mode_key, saved_dict):
+        """Merge a SAVED dedup dict into the stored one, dropping keys the preset
+        no longer defines. Every restore path funnels here: a plain .update() let
+        retired keys (the dead "ride" gap; see _a2m_dedup_presets) ride back in
+        from old configs, genre stores and settings snapshots forever."""
+        live = self._a2m_dedup_presets[mode_key]
+        self._a2m_dedup_stored[mode_key].update(
+            {k: v for k, v in dict(saved_dict).items() if k in live})
+
     def _a2m_apply_settings_snapshot(self, settings):
         """Apply a saved Audio to MIDI preset to the visible controls."""
         if not settings:
@@ -27751,6 +28199,7 @@ demucs.separate.main()
             ("a2m_dedup_per_inst_var", "per_inst"),
             ("a2m_post_classify_cymbals_var", "post_classify"),
             ("a2m_remove_flams_var", "remove_flams"),
+            ("a2m_note_dynamics_var", "note_dynamics"),
             ("a2m_cymbal_resolver_var", "cymbal_resolver"),
             ("a2m_cleanup_pass_var", "cleanup_pass"),
             ("a2m_cleanup_cymbal_var", "cleanup_cymbal"),
@@ -27780,7 +28229,7 @@ demucs.separate.main()
         if hasattr(self, "_a2m_dedup_stored"):
             for mode_key, cfg_key in (("spectral", "dedup_spectral"), ("hybrid", "dedup_hybrid")):
                 if isinstance(settings.get(cfg_key), dict):
-                    self._a2m_dedup_stored[mode_key].update(settings[cfg_key])
+                    self._a2m_dedup_update(mode_key, settings[cfg_key])
         if "dedup_mode" in settings and hasattr(self, "_a2m_dedup_mode_var"):
             try:
                 self._a2m_dedup_mode_var.set(settings["dedup_mode"])
@@ -27951,9 +28400,9 @@ demucs.separate.main()
         if "ml_threshold" in s:
             self.a2m_ml_thresh_var.set(s["ml_threshold"])
         if "dedup_spectral" in s:
-            self._a2m_dedup_stored["spectral"].update(s["dedup_spectral"])
+            self._a2m_dedup_update("spectral", s["dedup_spectral"])
         if "dedup_hybrid" in s:
-            self._a2m_dedup_stored["hybrid"].update(s["dedup_hybrid"])
+            self._a2m_dedup_update("hybrid", s["dedup_hybrid"])
         self._a2m_switch_dedup_mode(new_mode=self._a2m_dedup_mode_var.get(), auto=False)
         return True
 
@@ -38926,46 +39375,44 @@ demucs.separate.main()
         entry(s, "Note Threshold  (default: 0.30)\n"
                  "Secondary sensitivity filter applied after onset detection. "
                  "Works alongside Onset Sensitivity — adjust them together if needed.")
-        entry(s, "Genre\n"
-                 "Adjusts internal detection thresholds based on how drums typically sound "
-                 "in that style. These are broad approximations — not a perfect match for "
-                 "every song. If a preset gives bad results, try another or tune manually.\n\n"
-                 "Understanding the key parameters so you can tune manually:\n\n"
+        # ⛔ This entry described the genre presets as LIVE ("If a preset gives
+        # bad results, try another") for as long as the tab next door said they
+        # were removed — with per-preset values for presets that no longer
+        # exist. Help and the tab must tell the same story. The parameter
+        # explanations stay: those constants are real and still what manual
+        # tuning adjusts.
+        entry(s, "Genre presets  (removed)\n"
+                 "Genre presets have been removed. Detection uses one tuned "
+                 "configuration for every song.\n\n"
+                 "They were tuned on solo drum recordings, but conversion runs on "
+                 "separated drum stems — audio the tuning material never contained. "
+                 "Measured against real songs, they changed charts far more than "
+                 "intended and did so identically regardless of genre. Saved settings "
+                 "and batch templates that name a genre still load; they use default "
+                 "detection.\n\n"
+                 "Understanding the key parameters (these are the defaults manual "
+                 "tuning adjusts):\n\n"
                  "  kick_sub_dom_thresh — how dominant the sub-bass must be for a hit to\n"
                  "    count as kick. Higher = stricter (fewer false kicks). Lower = more\n"
-                 "    kicks detected including false ones.\n"
-                 "    Default: 1.0  |  Pop-Punk: 1.6  |  Metal: uses default\n\n"
+                 "    kicks detected including false ones.  Default: 1.0\n\n"
                  "  snare_delta_mult — onset sensitivity multiplier for snare detection.\n"
                  "    Lower = more sensitive, catches quieter/faster snares.\n"
-                 "    Higher = only strong snare hits detected.\n"
-                 "    Default: 0.9  |  Pop-Punk: 0.7  |  Metal: 0.5\n\n"
+                 "    Higher = only strong snare hits detected.  Default: 0.9\n\n"
                  "  tom_rsub_max — max allowed sub-bass ratio for a tom hit. Keeps\n"
                  "    kick bleed from being misclassified as toms. Raise if toms are\n"
-                 "    missing; lower if kicks are appearing as toms.\n"
-                 "    Default: 0.40  |  Pop-Punk: 0.55\n\n"
+                 "    missing; lower if kicks are appearing as toms.  Default: 0.40\n\n"
                  "  tom_rwire_max — max allowed high-frequency ratio for a tom hit.\n"
                  "    Keeps hi-hat bleed from being misclassified as toms. Raise if\n"
-                 "    toms are missing; lower if hi-hats appear as toms.\n"
-                 "    Default: 0.35  |  Pop-Punk: 0.45\n\n"
-                 "  cymbal_delta_mult — onset sensitivity for cymbal (hi-hat/crash) layer.\n"
-                 "    Default: 1.6 for all presets currently.\n\n"
+                 "    toms are missing; lower if hi-hats appear as toms.  Default: 0.35\n\n"
+                 "  cymbal_delta_mult — onset sensitivity for the cymbal (hi-hat/crash)\n"
+                 "    layer.  Default: 1.6\n\n"
                  "  crash_strength_pct — percentile of cymbal hit strengths above which\n"
                  "    a hit is classified as crash rather than hi-hat. Higher = fewer\n"
-                 "    crashes, more hi-hats. Default: 90 (top 10% are crashes).\n\n"
-                 "Preset status:\n"
-                 "  Auto / No Adjustment   — identical defaults, no overrides\n"
-                 "  Pop / Pop-Punk & Rock  — kick threshold raised, snare more sensitive,\n"
-                 "                           tom filters loosened.\n"
-                 "  Metal / Hard Rock      — snare much more sensitive (guitar bleed).\n"
-                 "  Punk & Hardcore        — removed. Lo-fi production, fast irregular\n"
-                 "    tempos, and dense wall-of-cymbal playing make auto-detection\n"
-                 "    unreliable for this genre regardless of threshold settings.\n"
-                 "    For punk songs: use Auto or No Adjustment, generate a rough\n"
-                 "    skeleton, then do heavy manual cleanup in the MIDI Editor.\n"
-                 "    Sourcing a MIDI file if one exists will always give better results.\n\n"
-                 "💡  If you understand what a parameter does, you can use 'No Adjustment'\n"
-                 "and tune the Onset Sensitivity and dedup gaps manually to get the same\n"
-                 "effect for your specific song without being locked into a preset.")
+                 "    crashes, more hi-hats.  Default: 90 (top 10% are crashes)\n\n"
+                 "💡  Use Onset Sensitivity, Kick Sensitivity and the dedup gaps to tune\n"
+                 "a difficult song. For fast, dense or lo-fi material (e.g. punk or\n"
+                 "hardcore), generate a rough skeleton and clean it up in the MIDI\n"
+                 "Editor — sourcing an existing MIDI file will always beat re-detecting.")
         divider(s)
         entry(s, "Detection Mode  (Spectral / Hybrid engine only)\n"
                  "  Sets the spectral analysis method used inside the Spectral and Hybrid engines.\n"
@@ -40456,8 +40903,9 @@ demucs.separate.main()
                  "  → Or lower the Snare/Tom dedup gap and regenerate.")
         divider(s)
         entry(s, "Not enough snares\n"
-                 "  → Try Metal / Hard Rock / Post-Hardcore genre if it's a heavy song.\n"
                  "  → Lower Onset Sensitivity slightly.\n"
+                 "  → Very quiet snares are dropped on purpose — they are far more\n"
+                 "     often bleed than real hits. Add any the song truly needs.\n"
                  "  → Add missing snares manually on beats 2 and 4.")
         divider(s)
         entry(s, "Song doesn't appear in Paradiddle\n"
@@ -41147,8 +41595,9 @@ demucs.separate.main()
                     f"📈 Dense sections over-detected:\n"
                     f"   → Increase global dedup gap:  {cur_dedup}ms  →  {sug_dedup}ms\n"
                     "   → In Hybrid: raise ML confidence threshold\n"
-                    "   → Try Metal genre preset — tuned for dense playing\n"
-                    "   → MIDI Editor → Vel Filter: remove hits below velocity 35–45")
+                    "   → MIDI Editor → Vel Filter: remove hits below velocity 35–45\n"
+                    "      (quiet snares and kicks are already dropped automatically —\n"
+                    "       this catches the remaining lanes)")
                 _act("Increase global dedup gap (dense over-detection)",
                      f"{cur_dedup}ms → {sug_dedup}ms",
                      lambda v=float(sug_dedup): _dt_apply_global_dedup(v))
@@ -48000,6 +48449,7 @@ demucs.separate.main()
             self._batch_folder_log(
                 f"=== Folder Batch \u2014 {total} pair(s) | difficulty: {diff} ===\n")
 
+            _claimed_dirs = {}   # per-run: no pair may reuse another's folder
             for midi_path, audio_path in queue:
                 if self._batch_folder_stop_event.is_set():
                     self._batch_folder_log("\u23f9  Stopped by user.\n")
@@ -48088,7 +48538,7 @@ demucs.separate.main()
                         slot_num=midi_name, slot=slot,
                         output_base=output_base, creator=creator,
                         fmt=fmt, ch_base_cfg=ch_base_cfg,
-                        folder_title=folder_name)
+                        folder_title=folder_name, claimed_dirs=_claimed_dirs)
 
                     if ok:
                         if pair_idx is not None:
@@ -48276,11 +48726,12 @@ demucs.separate.main()
             fmt = _batch_cfg.get("export_format", "paradiddle")
             ch_base_cfg = _batch_cfg.get("ch_output_folder", "").strip()
 
+            _claimed_dirs = {}   # per-run: no slot may reuse another's folder
             for slot_num, slot in queue:
                 ok = self._batch_convert_one_slot(
                     slot_num=slot_num, slot=slot, output_base=output_base,
                     creator=creator, fmt=fmt, ch_base_cfg=ch_base_cfg,
-                    folder_title=None)
+                    folder_title=None, claimed_dirs=_claimed_dirs)
                 if ok:
                     success += 1
                 else:
@@ -48318,13 +48769,24 @@ demucs.separate.main()
     # path (`_batch_folder_do_run`) funnel through this helper. Plan
     # requirement: one batch codepath, no parallel drift.
     def _batch_convert_one_slot(self, slot_num, slot, output_base, creator,
-                                fmt, ch_base_cfg, folder_title=None):
+                                fmt, ch_base_cfg, folder_title=None,
+                                *, claimed_dirs):
         """Convert one slot-shaped dict to .rlrr (and optionally .chart).
 
         `slot` is a dict carrying StringVars / BooleanVars in the original
         Create Multiple Songs path, or plain values when called from the
         folder/template path. Both shapes are read with .get() so a duck
         wrapper class is enough to bridge them.
+
+        `claimed_dirs` is a per-RUN dict the driver creates fresh before its
+        loop and passes to every slot: {abs dir -> "Song <n>"}. It is how one
+        batch run is kept from eating its own output — two slots resolving to
+        the same folder used to have the second silently clobber the first's
+        files, with BOTH counted "converted successfully". Required and
+        keyword-only on purpose: a future driver that forgets it must fail
+        loudly with a TypeError, not run quietly unprotected — the Clone Hero
+        side of this bug existed precisely because the slot-number suffix that
+        protects the Paradiddle side was added in one place and not the other.
 
         Returns True on success, False on skip/failure.
         """
@@ -48382,20 +48844,71 @@ demucs.separate.main()
             # dict slots carry no such key and keep legacy behavior (overwrite).
             # Both slot shapes support .get() — dict AND _BatchFolderSlotShim,
             # which is NOT a dict subclass, so don't gate this on isinstance.
+            # ⛔ THE CLONE HERO FOLDER IS AN OUTPUT TOO. `ch_dir` was derived inside
+            # the CH block below as `ch_base/fs_title` — no slot-number suffix (the
+            # thing that protects `out_dir` on the slot path) and never looked at by
+            # this policy block. So batching the same song at Easy + Expert — the
+            # ordinary use of a batch tab — wrote both slots into ONE CH folder:
+            # `notes.chart` and `song.ini` open with "w", the second difficulty
+            # replaced the first wholesale, and both slots were counted "converted
+            # successfully". The folder path's rename policy made it worse-looking:
+            # the Paradiddle folder was dutifully renamed to "(2)" while the CH
+            # folder silently collided anyway. Derived HERE so the policy and the
+            # per-run claims below govern both outputs identically.
+            ch_dir = None
+            if fmt in ("clonehero", "both"):
+                ch_dir = os.path.join(
+                    ch_base_cfg or os.path.join(output_base, "Clone Hero Songs"),
+                    fs_title)
             policy = slot.get("_overwrite_policy") if hasattr(slot, "get") else None
-            if policy and os.path.isdir(out_dir):
+            if policy and (os.path.isdir(out_dir)
+                           or (ch_dir and os.path.isdir(ch_dir))):
                 if policy == "skip":
                     self._batch_log(f"  ? Output exists — skipping per template overwrite_policy='skip'.\n")
                     return False
                 if policy == "rename":
-                    base = out_dir
-                    n = 2
-                    while os.path.isdir(out_dir):
-                        out_dir = f"{base} ({n})"
-                        n += 1
-                    folder_title = os.path.basename(out_dir)
-                    self._batch_log(f"  ? Renamed output to '{folder_title}' to avoid overwrite.")
+                    if os.path.isdir(out_dir):
+                        base = out_dir
+                        n = 2
+                        while os.path.isdir(out_dir):
+                            out_dir = f"{base} ({n})"
+                            n += 1
+                        folder_title = os.path.basename(out_dir)
+                        self._batch_log(f"  ? Renamed output to '{folder_title}' to avoid overwrite.")
+                    if ch_dir and os.path.isdir(ch_dir):
+                        base = ch_dir
+                        n = 2
+                        while os.path.isdir(ch_dir):
+                            ch_dir = f"{base} ({n})"
+                            n += 1
+                        self._batch_log("  ? Renamed Clone Hero output to "
+                                        f"'{os.path.basename(ch_dir)}' to avoid overwrite.")
                 # "overwrite" is a no-op — fall through.
+
+            # Per-RUN claims: whatever the cross-run policy said, one run must never
+            # eat its own output. First claimant keeps today's folder name, so
+            # non-colliding runs are byte-identical to before; a collision gets the
+            # difficulty appended (the common cause), then the slot number (unique
+            # within a run, so this always terminates with one probe).
+            for _which, _claimed_dir in (("out", out_dir), ("ch", ch_dir)):
+                if _claimed_dir is None or (_which == "out"
+                                            and fmt == "clonehero"):
+                    continue
+                if _claimed_dir in claimed_dirs:
+                    _cand = f"{_claimed_dir} ({diff})"
+                    if _cand in claimed_dirs:
+                        _cand = f"{_claimed_dir} ({diff}) (Song {slot_num})"
+                    self._batch_log(
+                        f"  ? {'Clone Hero output' if _which == 'ch' else 'Output'} "
+                        f"folder already used by {claimed_dirs[_claimed_dir]} in this "
+                        f"run — writing to '{os.path.basename(_cand)}' instead.")
+                    if _which == "ch":
+                        ch_dir = _cand
+                    else:
+                        out_dir = _cand
+                        folder_title = os.path.basename(out_dir)
+                    _claimed_dir = _cand
+                claimed_dirs[_claimed_dir] = f"Song {slot_num}"
 
             event_count = 0
             ch_count = 0
@@ -48430,8 +48943,9 @@ demucs.separate.main()
 
                 os.makedirs(out_dir, exist_ok=True)
                 rlrr_path = os.path.join(out_dir, f"{fs_title}_{diff}.rlrr")
-                with open(rlrr_path, "w", newline="\r\n") as f:
-                    json.dump(rlrr, f, indent=4)
+                # Atomic (tmp+fsync+replace): a re-export that dies mid-write must
+                # not leave a truncated chart where the previous one used to be.
+                write_rlrr_atomic(rlrr_path, rlrr)
 
                 shutil.copy2(slot["audio_var"].get(), out_dir)
                 if slot["drum_var"].get() and os.path.exists(slot["drum_var"].get()):
@@ -48447,8 +48961,9 @@ demucs.separate.main()
                 event_count = len(rlrr["events"])
 
             if fmt in ("clonehero", "both"):
-                ch_base = ch_base_cfg or os.path.join(output_base, "Clone Hero Songs")
-                ch_dir = os.path.join(ch_base, fs_title)
+                # ch_dir was derived up at the policy block, where the overwrite
+                # policy and the per-run claims could see it. Re-deriving it here
+                # from fs_title would silently discard both protections.
                 os.makedirs(ch_dir, exist_ok=True)
 
                 # Audit E2/E4/E5 — same derivation as the single-song flow:
@@ -48528,7 +49043,9 @@ demucs.separate.main()
                         drum_ext = os.path.splitext(slot["drum_var"].get())[1].lower()
                         shutil.copy2(slot["drum_var"].get(), os.path.join(ch_dir, f"drums{drum_ext}"))
                     if slot["cover_var"].get() and os.path.exists(slot["cover_var"].get()):
-                        shutil.copy2(slot["cover_var"].get(), os.path.join(ch_dir, "album.png"))
+                        # Real PNG, not source bytes under a .png name.
+                        copy_cover_as_album_png(slot["cover_var"].get(), ch_dir,
+                                                self._batch_log)
                     ch_count = len(ch_events)
 
             if fmt == "paradiddle":
@@ -49743,8 +50260,9 @@ demucs.separate.main()
             os.makedirs(output_dir, exist_ok=True)
             rlrr_filename = f"{fs_title}_{difficulty}.rlrr"
             rlrr_path = os.path.join(output_dir, rlrr_filename)
-            with open(rlrr_path, 'w', newline='\r\n') as f:
-                json.dump(rlrr, f, indent=4)
+            # Atomic (tmp+fsync+replace): a re-export that dies mid-write must
+            # not leave a truncated chart where the previous one used to be.
+            write_rlrr_atomic(rlrr_path, rlrr)
 
             # Copy under the SAME names the manifest above was built from. Passing
             # output_dir and letting shutil keep the basename is what allowed two
@@ -49841,7 +50359,8 @@ demucs.separate.main()
                 drum_ext = os.path.splitext(drum_audio_path)[1].lower()
                 shutil.copy2(drum_audio_path, os.path.join(ch_dir, f"drums{drum_ext}"))
             if cover_path and os.path.exists(cover_path):
-                shutil.copy2(cover_path, os.path.join(ch_dir, "album.png"))
+                # Real PNG, not source bytes under a .png name.
+                copy_cover_as_album_png(cover_path, ch_dir, self.log)
             if output_dir is None:
                 output_dir = ch_dir
 

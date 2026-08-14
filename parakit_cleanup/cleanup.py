@@ -6,14 +6,19 @@ clean_a2m_midi(midi_path, audio_path, do_cymbal=True, do_kick=True,
   1. load the audio (features.load_audio — librosa),
   2. parse the MIDI to {lane: onsets} + per-note records (midi_io.parse_midi),
   3. run the enabled post-passes on the onset dict:
-       - cymbal: passes.reclassify (asymmetric gate {to_ride:0.3, swap:0.7}),
+       - cymbal: passes.reclassify (gate_to_ride None, gate_swap 0.7,
+                 ride_floor 0.425 -- see RECOMMENDED_ASYM_QUALITY, and note
+                 ride_floor is FORCED OFF when allow_ride is False),
        - kick:   passes.remove_phantoms (phantom P>=0.9),
      using NumpyRF models loaded from <model_dir>/parakit_{cymbal,kick}_cleanup.npz,
   4. rewrite midi_path IN PLACE preserving every surviving note's velocity+timing
      (cymbal relabels change pitch only; kick removals delete the note).
 
-This reproduces the VALIDATED harness post-pass exactly (the faithfulness gate
-in run_faithfulness_gate.py proves identical cleaned {lane: onsets}).
+This reproduced the VALIDATED harness post-pass exactly up to 2026-08-07, when
+`ride_floor` was enabled and the default path became deliberately DIFFERENT from
+that baseline. (The gate it cited, run_faithfulness_gate.py, is also no longer in
+the tree -- do not cite it as a live check.) With allow_ride=False the old
+equivalence still holds, because ride_floor is forced off on that path.
 
 Imports: numpy + the package's own features / passes / midi_io. No sklearn /
 joblib / onnx.
@@ -72,11 +77,11 @@ def clean_a2m_midi(midi_path, audio_path, do_cymbal=True, do_kick=True,
                   (ParaKit v4.0.py: ``crash += ride; ride = []``). Only affects
                   the cymbal pass; no-op when do_cymbal is False.
     model_dir   : dir holding parakit_{cymbal,kick}_cleanup.npz (+ .json sidecars);
-                  defaults to the package dir. The faithfulness gate passes the
-                  harness ``results/`` dir.
-    cymbal_gate : override the cymbal gate. None => the model's recommended
-                  asymmetric QUALITY gate {gate_to_ride:0.3, gate_swap:0.7}
-                  (matches the validated harness path).
+                  defaults to the package dir.
+    cymbal_gate : override the cymbal gate. None => RECOMMENDED_ASYM_QUALITY
+                  {gate_to_ride: None, gate_swap: 0.7, ride_floor: 0.425}.
+                  ⚠ A bare float selects a symmetric gate and carries NO
+                  ride_floor, silently disabling the shipped lever.
     kick_gate   : min P(phantom) to drop a kick (default 0.9, recall-safe).
 
     Returns
@@ -95,18 +100,11 @@ def clean_a2m_midi(midi_path, audio_path, do_cymbal=True, do_kick=True,
 
     if do_cymbal:
         npz = os.path.join(mdir, CYMBAL_NPZ)
-        gate_kwargs = _cymbal_gate_kwargs(cymbal_gate)
+        gate_kwargs = _cymbal_gate_kwargs(cymbal_gate, allow_ride=allow_ride)
         cleaned = passes.reclassify(y, sr, cleaned, npz_path=npz, **gate_kwargs)
         # normalize back to plain lists for downstream apply/compare
         cleaned = {lane: list(v) for lane, v in cleaned.items()}
-        # Ride-detection toggle is authoritative: if ride is OFF, the user wants
-        # NO rides, but the re-classifier can still promote onsets into ride
-        # (gate_to_ride=0.3 is lenient). Fold those back into crash so the
-        # cleanup never reintroduces rides — mirrors the detector's ride-OFF fold.
-        if not allow_ride and cleaned.get("ride"):
-            cleaned["crash"] = sorted(
-                float(t) for t in (list(cleaned.get("crash", [])) + list(cleaned["ride"])))
-            cleaned["ride"] = []
+        cleaned = _fold_rides_to_crash(cleaned, allow_ride)
 
     if do_kick:
         npz = os.path.join(mdir, KICK_NPZ)
@@ -155,20 +153,82 @@ def clean_a2m_midi(midi_path, audio_path, do_cymbal=True, do_kick=True,
     }
 
 
-def _cymbal_gate_kwargs(cymbal_gate):
+def _fold_rides_to_crash(cleaned, allow_ride):
+    """Ride detection OFF => the ride lane is emptied into crash.
+
+    The ride toggle is authoritative: if the user turned rides off they want NO
+    rides, but the re-classifier can still put onsets in the ride lane on its own
+    argmax. Mirrors the detector's own ride-OFF fold (``crash += ride; ride = []``).
+
+    `ride_floor` is forced off upstream for this case (`_cymbal_gate_kwargs`), so
+    what reaches here is only argmax-ride, never a PROMOTED hi-hat. Those are two
+    separate defences and they cover different holes: the upstream one stops a
+    hi-hat becoming a crash, this one stops an argmax-ride surviving into a
+    rides-off chart.
+
+    ⛔ EXTRACTED FROM `clean_a2m_midi` SO IT CAN BE TESTED WITHOUT AUDIO. Inline,
+    nothing executed it — deleting the block left INV97, INV100 and the whole suite
+    green while ride notes shipped into a chart the user asked to have none, which
+    is the sibling of the very defect this round fixed. A guard that inspects the
+    kwargs helper and greps for a call site does not cover the transform itself.
+    Pinned by INV100."""
+    if allow_ride or not cleaned.get("ride"):
+        return cleaned
+    cleaned["crash"] = sorted(
+        float(t) for t in (list(cleaned.get("crash", [])) + list(cleaned["ride"])))
+    cleaned["ride"] = []
+    return cleaned
+
+
+def _cymbal_gate_kwargs(cymbal_gate, allow_ride=True):
     """Map the cymbal_gate arg -> reclassify kwargs.
 
-    None  -> recommended asymmetric QUALITY {gate_to_ride:0.3, gate_swap:0.7};
+    None  -> RECOMMENDED_ASYM_QUALITY (gate_to_ride None, gate_swap 0.7,
+             ride_floor 0.425);
     float -> symmetric gate on every move;
-    dict  -> {gate_to_ride, gate_swap} passed through."""
+    dict  -> {gate_to_ride, gate_swap, ride_floor} passed through.
+
+    ⛔ ``allow_ride=False`` FORCES ``ride_floor`` OFF, and that is a correctness
+    fix, not a tidy-up. ``ride_floor`` PROMOTES an onset into the ride lane even
+    where another class is argmax (passes.py ``assign``). With ride detection
+    turned off, the caller then folds the whole ride lane into CRASH — so a hi-hat
+    the model scored at P(ride)>=0.425 came out as a **crash note**, where before
+    this feature existed it stayed a hi-hat. Paradiddle is VR: that sends the
+    player's arm to a different physical object, which is exactly the wrong-lane
+    harm every cap in the tau decision was built to bound — on an arm no sweep
+    ever measured, since every measurement behind 0.425 ran with rides allowed.
+
+    Turning the lever off here (rather than teaching the fold to restore the
+    original lane) buys a property worth having: with ride detection OFF the
+    cleanup is byte-identical to its pre-``ride_floor`` self. A ride-recall lever
+    should do nothing when the user has said they want no rides.
+
+    Found by an independent audit 2026-08-08, not by the sweep; pinned by INV100.
+
+    ⚠ This maps keys BY NAME rather than splatting the config, so a key added to
+    RECOMMENDED_ASYM_QUALITY and not added here is silently inert — it would look
+    like a setting and behave like nothing, which is exactly the defect INV97
+    exists to catch. `ride_floor` is named in all three branches for that reason.
+    (The docstring also said gate_to_ride was 0.3 long after it became None; it
+    was inert at 0.3 anyway, because a three-class argmax is always >= 1/3.)"""
     if cymbal_gate is None:
-        return dict(gate_to_ride=RECOMMENDED_ASYM_QUALITY["gate_to_ride"],
-                    gate_swap=RECOMMENDED_ASYM_QUALITY["gate_swap"])
-    if isinstance(cymbal_gate, dict):
-        return dict(gate_to_ride=cymbal_gate.get("gate_to_ride"),
-                    gate_swap=cymbal_gate.get("gate_swap"),
-                    gate=cymbal_gate.get("gate"))
-    return dict(gate=float(cymbal_gate))
+        kw = dict(gate_to_ride=RECOMMENDED_ASYM_QUALITY["gate_to_ride"],
+                  gate_swap=RECOMMENDED_ASYM_QUALITY["gate_swap"],
+                  ride_floor=RECOMMENDED_ASYM_QUALITY.get("ride_floor"))
+    elif isinstance(cymbal_gate, dict):
+        kw = dict(gate_to_ride=cymbal_gate.get("gate_to_ride"),
+                  gate_swap=cymbal_gate.get("gate_swap"),
+                  ride_floor=cymbal_gate.get("ride_floor"),
+                  gate=cymbal_gate.get("gate"))
+    else:
+        # ⚠ The float branch carries NO ride_floor, so passing a bare float for
+        # cymbal_gate silently disables the shipped lever. Nothing in the app does
+        # that today (clean_a2m_midi is called without cymbal_gate), but INV100
+        # pins it so a future caller cannot turn the feature off by accident.
+        kw = dict(gate=float(cymbal_gate))
+    if not allow_ride:
+        kw["ride_floor"] = None
+    return kw
 
 
 def _first_tempo(mid):

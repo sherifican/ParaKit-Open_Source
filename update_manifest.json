@@ -1,10 +1,10 @@
 {
-  "version": "4.9.12.1",
+  "version": "4.9.13",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "0731c2760f9306ca9fac5fec46cbf16b0b668e74feeea8082260e20dd7ad4faa"
+      "sha256": "3dd3a0ca8cc37c49c140bb1a288b9981fe81a12350d35056eab7bc04338b8016"
     },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
@@ -52,11 +52,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "276f68a9bfd2db9d7aecc0ed28273c51a472880894a4e0c98bb61d6ef513dc28"
+      "sha256": "568dea579603ef2895dbc11ce67f515cff53399579f029dc63f1732398ec47eb"
     },
     {
       "path": "README.txt",
-      "sha256": "f069e578679fa2e1cac3f6d4a0729c05748050c5c33a3f6e1f088c49526cd5f1"
+      "sha256": "8d6e63eb6d9e1a85e69d9d148033ddb39b5d7560eeda922ea43d02c7a4147d02"
     },
     {
       "path": "Run ParaKit v4.0.bat",
@@ -104,7 +104,7 @@
     },
     {
       "path": "extractor/rlrr_parse.py",
-      "sha256": "c7a36e5e187d3d27fda1040d3f735594f59231304f8fafc5aa0339a859710e18"
+      "sha256": "a4ddc212575686d0d95937bf8a1f3c2a7eee43d1bee699a8904bc1e1e6162c51"
     },
     {
       "path": "parakit.ico",
@@ -120,7 +120,7 @@
     },
     {
       "path": "parakit_cleanup/cleanup.py",
-      "sha256": "2219ab119cba17d4fb019b47c0d57f271c1d8252f9d885cc4465d0b1e52aa27b"
+      "sha256": "c5a98313bc5175a01d9c0a1cdc1f7c96792fcd885e67438385be6262fd52a04d"
     },
     {
       "path": "parakit_cleanup/features.py",
@@ -128,11 +128,11 @@
     },
     {
       "path": "parakit_cleanup/midi_io.py",
-      "sha256": "3b25f82f260048e45973301e45288583f9540d23e58dee3240f940c7ce337810"
+      "sha256": "2cc2aefa9ceb09fe15297da434e5b7461df50cd592b118e3316af799228a3447"
     },
     {
       "path": "parakit_cleanup/numpy_rf.py",
-      "sha256": "b97462fc2aa852bbb02541f120080971c75de680fbfd84cb3e0a92ae96d47c36"
+      "sha256": "0a1acb53d4ba6405bd0ce1fe04df3aa4ed032ef5435df3c394687ba60b36adfc"
     },
     {
       "path": "parakit_cleanup/parakit_cymbal_cleanup.npz",
@@ -152,7 +152,7 @@
     },
     {
       "path": "parakit_cleanup/passes.py",
-      "sha256": "52d71266d83cab87841070b8f05b030cd83bf5eb334ff405861f75ae91c29f9e"
+      "sha256": "c6d843be0a67ac024982720a29e47ad93d0c561fc674901ed5967b243813fd7f"
     },
     {
       "path": "parakit_drum_model.onnx",
@@ -180,7 +180,7 @@
     },
     {
       "path": "parakit_practice_tab.py",
-      "sha256": "d6db49369a2fb0141430bee51ba5716d4788abc9c85308bb80d23a81837f14b2"
+      "sha256": "48fa8b075f13101d6dbbee5e159a624aaf06defb5e72c3f47079302b59970aa1"
     },
     {
       "path": "parakit_practice_widgets.py",
@@ -188,7 +188,7 @@
     },
     {
       "path": "parakit_preview_engine.py",
-      "sha256": "ae1d03e319b4ec1b47a4caf0a5224ffd98f967c369e5694988fc4016d1db1da5"
+      "sha256": "c1a6c8de0cbf9ef5a7a5fd1e19c185ba827a21d8324fb2e5ef43674fc9db551a"
     },
     {
       "path": "parakit_preview_sprites.py",

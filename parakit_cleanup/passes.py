@@ -1,9 +1,19 @@
 """
 passes.py — dependency-light port of the harness cleanup post-passes.
 
-Faithful re-implementation of:
-  - tools/detection_harness/cymbal_postpass.py  (cymbal re-classifier)
-  - tools/detection_harness/kick_postpass.py    (kick phantom-remover)
+Faithful re-implementation of the detection-research harness's cymbal
+re-classifier and kick phantom-remover post-passes.
+
+⛔ THE REFERENCE FILES ARE NOT IN THIS REPO AND NEVER WERE. Earlier revisions
+cited `tools/detection_harness/cymbal_postpass.py` / `kick_postpass.py` as if a
+reader could open them — that path does not exist here, in the public checkout,
+or anywhere in this repo's git history (audited 2026-08-09). The originals lived
+in the detection-research environment where the cleanup pass was developed
+(v4.5.0 era) and were never imported. So "faithful" cannot be re-verified against
+a source by a maintainer of THIS repo; what binds today is (a) the bit-exactness
+measured at port time, recorded below, and (b) the `_breaker/` invariants that
+pin this sidecar's live behaviour. Treat this docstring as provenance history,
+not as a checkable contract.
 
 The ONLY behavioral change vs the harness is the model backend: instead of a
 joblib-pickled sklearn Pipeline this uses a ``numpy_rf.NumpyRF`` loaded from the
@@ -27,6 +37,7 @@ from __future__ import annotations
 
 import os
 import json
+import warnings
 
 import numpy as np
 
@@ -38,8 +49,130 @@ from .numpy_rf import NumpyRF
 CYM_LANES = ("hihat", "crash", "ride")
 # The harness defaults reclassify() to all-None (ungated audited result) but the
 # faithfulness gate / production path use the asymmetric QUALITY gate that the
-# exported model recommends: {gate_to_ride: 0.3, gate_swap: 0.7}.
-RECOMMENDED_ASYM_QUALITY = {"gate_to_ride": 0.3, "gate_swap": 0.7}
+# exported model recommends.
+#
+# ⛔ `gate_to_ride` WAS 0.3, AND THAT VALUE COULD NEVER FIRE (measured 2026-08-06).
+# The gate refuses a move only when the winning class's probability is BELOW it,
+# and with three classes whose posteriors sum to 1 the winner is always >= 1/3
+# = 0.3333. So 0.3 was unreachable: it refused nothing, and 0.0 and 0.3 produced
+# byte-identical charts. Across 3,901 candidates sitting on charted rides,
+# corpus-wide, the count of gate-blocked ride assignments was ZERO -- in the packs
+# where the re-classifier emits no rides and in the packs where it works alike.
+#
+# The value is now None -- "no gate on moves into ride" -- which is what 0.3
+# already meant. Output is unchanged; the knob no longer advertises a control it
+# does not have. The old value survived because it read as a deliberate leniency
+# setting, and every experiment that "tuned" it was measuring nothing.
+#
+# ⚠ A refusal gate CANNOT express leniency. Its floor is "refuse nothing", which
+# is where this already sat. Wanting MORE rides than the argmax yields needs a
+# different mechanism, not a smaller number here -- see `ride_floor` in assign().
+#: ``ride_floor`` ENABLED at 0.425 on 2026-08-07. This CHANGES CHARTS — it accepts
+#: ride where P(ride) >= 0.425 even when another class is argmax, which a refusal
+#: gate structurally cannot do.
+#:
+#: Chosen per-pack, not on the corpus average. The aggregate favoured 0.400 but
+#: two of 35 charts breached a severity cap there — Forsaken paid ten wrong-lane
+#: notes for ZERO recovered rides. Nobody plays the corpus average.
+#:
+#: 0.425 is the **LOWEST** value at which every pack clears both caps. (The first
+#: version of this comment said "highest", which is backwards and would mislead
+#: the next person to tune it: cap breaches shrink monotonically as the floor
+#: rises, so 0.450 and 0.500 clear them too. Higher is not safer, it is deader —
+#: 0.500 is byte-identical to OFF on all 35 packs. The selection rule is "as much
+#: recall as the caps allow", so the binding edge is the bottom.)
+#:
+#: ⚠ Wrong-lane is not free even though it is milder than a phantom in silence:
+#: Paradiddle is VR and each instrument is a distinct object in 3D space, so a
+#: wrong lane moves the player's arm. Both classes are capped, separately.
+#:
+#: ⚠ THE SEVERITY AXIS THIS WAS FIRST DECIDED ON WAS MISLABELLED. `phantom_no_drum`
+#: was computed as "not on a charted crash and not on a charted hi-hat" and never
+#: checked kick/snare/toms, so a cymbal call landing on a charted KICK was billed
+#: at the worst rate. Re-measured 2026-08-08 with the classes split: only ~30% of
+#: that column is genuinely silent. On the corrected axis the exchange rate roughly
+#: doubles (+181 references per +9 silent phantoms, 20:1) and 0.400 vs 0.425 is a
+#: near tie in aggregate — so the per-pack tail is not a tiebreaker here, it is the
+#: whole argument. 0.425 still wins it: 35/35 clear, versus 33/35 at 0.400.
+#:
+#: Data: ride_floor_severity_2026-08-06.json (as decided),
+#: ride_floor_severity_classed_2026-08-08.json + _decision_package_silent_2026-08-08
+#: (corrected axis; every published field reproduced exactly, 0 mismatches).
+RECOMMENDED_ASYM_QUALITY = {"gate_to_ride": None, "gate_swap": 0.7, "ride_floor": 0.425}
+
+#: A gate at or below this cannot refuse anything, because the largest of N
+#: probabilities summing to 1 is always at least 1/N. Configuring a value in that
+#: range is always a mistake: it looks like a setting and behaves like None.
+def unreachable_gate_floor(classes):
+    """Highest gate value that is guaranteed never to fire for `classes`."""
+    return 1.0 / max(len(classes), 1)
+
+
+def check_gate_reachable(value, classes, name="gate"):
+    """Return a complaint string if `value` is a gate that can never fire, else "".
+
+    Deliberately returns rather than raises: this is called on the production path
+    and a stale config must not break a user's conversion. The caller decides
+    whether to log or assert. `None` is not a mistake -- it means "no gate" and
+    says so."""
+    if value is None:
+        return ""
+    floor = unreachable_gate_floor(classes)
+    if value <= floor:
+        return ("%s=%.3f can never refuse anything: with %d classes the winning "
+                "probability is always >= %.4f. Use None to mean 'no gate'."
+                % (name, value, len(classes), floor))
+    return ""
+
+
+#: ⛔ THE DUAL, AND IT POINTS THE OTHER WAY. Everything above describes a REFUSAL
+#: gate, which dies at LOW values: it can only take moves away, so below 1/N it
+#: refuses nothing. `ride_floor` is a PROMOTION floor and its dead zone is at the
+#: TOP. The promotion branch only runs when ride is NOT argmax, and a non-argmax
+#: class can never hold more than half the mass (if P(ride) > 1/2 then no other
+#: class can match it, so ride would BE the argmax). So a floor at or above 0.5
+#: can essentially never fire — independent of the class count.
+#:
+#: This is not theory. The 35-pack sweep printed `ride_floor=0.500` as byte-identical
+#: to the baseline on every pack and every column, and that row sat in the results
+#: table unremarked. Meanwhile INV97 was scanning the shipped config for values
+#: <= 1/3 and would have flagged `ride_floor=0.30` — which is its most AGGRESSIVE
+#: live setting — as "can never fire". The guard written to catch a knob that looks
+#: like a setting and behaves like nothing was, for the replacement knob, wrong at
+#: both ends. Found by an independent audit 2026-08-08; pinned by INV97.
+PROMOTION_FLOOR_DEAD_AT = 0.5
+
+
+def unreachable_promotion_floor(classes=None):
+    """Lowest promotion-floor value at which promotion is dead for practical purposes.
+
+    Takes `classes` only for symmetry with `unreachable_gate_floor`; the bound is
+    1/2 for ANY class count, because it comes from "not the argmax", not from N.
+
+    ⚠ ABOVE 0.5 it is a proof; AT exactly 0.5 it is not. A perfect two-way tie
+    (P(ride)=P(other)=0.5) leaves ride non-argmax only because argmax breaks ties
+    toward the lower index -- and then P(ride) >= 0.5 does fire. Averaged forest
+    probabilities are rationals, so that tie is constructible rather than
+    measure-zero. It is empirically absent: the 0.500 rung is byte-identical to
+    baseline on all 35 corpus packs, every column. Flagging 0.5 is therefore the
+    SAFE error -- it warns about a value that is dead in every observed case."""
+    return PROMOTION_FLOOR_DEAD_AT
+
+
+def check_promotion_floor_reachable(value, classes, name="ride_floor"):
+    """Complaint string if `value` is a promotion floor that can never fire, else "".
+
+    Returns rather than raises, for the same reason as `check_gate_reachable`: this
+    runs on the production path and a stale config must not break a conversion."""
+    if value is None:
+        return ""
+    ceil = unreachable_promotion_floor(classes)
+    if value >= ceil:
+        return ("%s=%.3f promotes nothing in practice: the branch only runs when "
+                "ride is NOT the argmax, and a non-winning class cannot exceed %.2f "
+                "(bar an exact tie). "
+                "Use None to mean 'no promotion'." % (name, value, ceil))
+    return ""
 
 # ---- kick post-pass constants (mirror kick_postpass.py) ---------------------
 KICK_PHANTOM_LABEL = 0
@@ -160,24 +293,59 @@ def _required_prob(orig, pred, gate, gate_to_ride, gate_swap):
     return gate_swap if gate_swap is not None else 0.0
 
 
-def assign(pairs, F, model, classes, gate=None, gate_to_ride=None, gate_swap=None):
-    """Core cymbal relabeling step — verbatim from cymbal_postpass.assign.
+def assign(pairs, F, model, classes, gate=None, gate_to_ride=None, gate_swap=None,
+           ride_floor=None):
+    """Core cymbal relabeling step — from cymbal_postpass.assign, plus ``ride_floor``.
 
     ``pairs`` = [(onset_seconds, original_lane), ...] and ``F`` = the feature
     matrix in the SAME order. Returns {lane: [onsets]} for the three cymbal
-    lanes. Onset COUNT is preserved (every pair lands in exactly one lane)."""
+    lanes. Onset COUNT is preserved (every pair lands in exactly one lane).
+
+    ``ride_floor`` — ACCEPT ride whenever P(ride) reaches this, even where another
+    class scores higher. **Default None = off, and the output is then bit-identical
+    to the pre-2026-08-06 behaviour.**
+
+    This exists because the thing the old `gate_to_ride=0.3` was *trying* to say
+    could not be said by a refusal gate. Measured 2026-08-06: ride is the argmax
+    for only 40.3% of candidates that sit on a charted ride, and for 0 of 130 in
+    the packs that emit no rides at all — while the gate refused **nothing**,
+    anywhere. So the binding constraint is argmax, and no gate value can loosen
+    it, because a gate can only ever take moves away.
+
+    ⚠ Turning this on trades ride recall against phantom rides directly, and the
+    sweep says that trade is real, not free. SHIPS ON at 0.425 since 2026-08-07
+    (it said "ships OFF" for a day after that); pick a value from
+    measurement, not from taste."""
     out = {lane: [] for lane in CYM_LANES}
     if not pairs:
         return out
-    gated = gate is not None or gate_to_ride is not None or gate_swap is not None
+    for _nm, _v in (("gate", gate), ("gate_to_ride", gate_to_ride),
+                    ("gate_swap", gate_swap)):
+        _c = check_gate_reachable(_v, classes, _nm)
+        if _c:
+            warnings.warn(_c, RuntimeWarning, stacklevel=2)
+    # ride_floor is a PROMOTION floor, so it gets the dual check, not this one.
+    # Running it through check_gate_reachable would flag its most aggressive live
+    # values and stay silent on the range where it is genuinely dead.
+    _cf = check_promotion_floor_reachable(ride_floor, classes, "ride_floor")
+    if _cf:
+        warnings.warn(_cf, RuntimeWarning, stacklevel=2)
+    gated = (gate is not None or gate_to_ride is not None or gate_swap is not None
+             or ride_floor is not None)
     if gated and hasattr(model, "predict_proba"):
         proba = model.predict_proba(F)
         # predict_proba columns are ordered by model.classes_ (the integer labels
         # the model was trained on); map column index -> class-name via classes[].
         mc = list(getattr(model, "classes_", range(proba.shape[1])))
+        ride_col = next((j for j in range(len(mc)) if classes[int(mc[j])] == "ride"), None)
         for (t, orig), row in zip(pairs, proba):
             j = int(np.argmax(row)); p = float(row[j])
             lab = classes[int(mc[j])]
+            if (ride_floor is not None and ride_col is not None and lab != "ride"
+                    and float(row[ride_col]) >= ride_floor):
+                # Promote to ride, then let the normal gate logic judge the move on
+                # ride's OWN probability rather than the winner's.
+                lab, p = "ride", float(row[ride_col])
             if lab != orig and p < _required_prob(orig, lab, gate, gate_to_ride, gate_swap):
                 lab = orig  # not confident enough to override the detector — keep its lane
             out[lab].append(t)
@@ -189,12 +357,15 @@ def assign(pairs, F, model, classes, gate=None, gate_to_ride=None, gate_swap=Non
 
 
 def reclassify(y, sr, est_by_class, model=None, classes=None, npz_path=None,
-               gate=None, gate_to_ride=None, gate_swap=None):
-    """Return a new est dict with cymbal-lane onsets relabeled — verbatim port of
-    cymbal_postpass.reclassify (joblib swapped for NumpyRF).
+               gate=None, gate_to_ride=None, gate_swap=None, ride_floor=None):
+    """Return a new est dict with cymbal-lane onsets relabeled — port of
+    cymbal_postpass.reclassify (joblib swapped for NumpyRF), plus ``ride_floor``.
 
     The set of cymbal onsets is preserved (no onsets created/destroyed) — only
-    their hi-hat/crash/ride labels change. Non-cymbal lanes pass through."""
+    their hi-hat/crash/ride labels change. Non-cymbal lanes pass through.
+
+    ``ride_floor`` defaults to None (off), in which case this is bit-identical to
+    the pre-2026-08-06 behaviour. See assign()."""
     if model is None:
         model, classes = load_model(npz_path)
     est = {k: (list(v) if not isinstance(v, list) else list(v)) for k, v in est_by_class.items()}
@@ -207,7 +378,8 @@ def reclassify(y, sr, est_by_class, model=None, classes=None, npz_path=None,
         pairs.sort(key=lambda pr: pr[0])
         F = cf.extract_features(y, sr, [t for t, _ in pairs])
         assigned = assign(pairs, F, model, classes, gate=gate,
-                          gate_to_ride=gate_to_ride, gate_swap=gate_swap)
+                          gate_to_ride=gate_to_ride, gate_swap=gate_swap,
+                          ride_floor=ride_floor)
         for lane in CYM_LANES:
             est[lane] = assigned[lane]
     for lane in CYM_LANES:

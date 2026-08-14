@@ -34,6 +34,25 @@ CLASS_TO_MIDI: dict[str, tuple[int, int, str]] = {
     "BP_HiHat_C":    (0, 42, "Hi-Hat"),
     "BP_Crash15_C":  (1, 49, "Crash"),
     "BP_Crash17_C":  (1, 49, "Crash"),
+    # china / 13" crash / splash were SILENTLY DROPPED from the ground truth before
+    # 2026-07-12 (they prefix-matched none of the 10 keys -> event_to_class "" ->
+    # excluded), undercounting the Crash lane GT on ~8% of charts. Owner 2026-07-12:
+    # china = crash everywhere. Short prefixes catch any size variant. Mirrors the
+    # app loader's _RLRR_SUPPLEMENTAL_CLASS_NOTE fix (ParaKit v4.0.py, 4.7.8.7).
+    # NOTE: charts extracted before this date have crash-undercounted GT -> RE-EXTRACT.
+    #
+    # ⚠ SYNCED FROM paradb_extract.py ON 2026-08-06, FOUR WEEKS LATE. The upstream
+    # got this on 2026-07-12; this mirror did not, and INV96 could not see it —
+    # it compares five FUNCTION BODIES by AST hash, and this is a module constant.
+    # `event_to_class` is byte-identical in both copies; it just iterated a shorter
+    # dict. A sync guard that checks the code but not the data the code reads is
+    # the same shape as the `sync_check.py` that never existed. INV96 now covers
+    # this map too. Cost of the gap: 2,861 dropped notes (3.5% of all charted
+    # notes) across the 35 packs behind the 2026-08-05/06 ride research, china
+    # present in 29 of them.
+    "BP_Crash13":    (1, 49, "Crash"),
+    "BP_China":      (1, 49, "Crash"),
+    "BP_Splash":     (1, 49, "Crash"),
     "BP_Snare_C":    (2, 38, "Snare"),
     "BP_Tom1_C":     (3, 48, "Tom 1"),
     "BP_Tom2_C":     (4, 45, "Tom 2"),

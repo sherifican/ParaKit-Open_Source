@@ -492,10 +492,27 @@ def parse_parakit_chart_v1_text(text: str) -> Tuple[List[EdNote], float]:
     return notes, safe_bpm(bpm)
 
 
+def _read_chart_text(path: str) -> str:
+    """Read a chart file through the same encoding ladder as every other .rlrr
+    reader in the app (5 sites in ParaKit v4.0.py and both rlrr_parse copies all
+    start with utf-8-sig). This file alone opened with plain utf-8, so a chart
+    saved by Notepad's "UTF-8 with BOM" or a PowerShell redirect died in
+    json.load with "Unexpected UTF-8 BOM", and a utf-16 chart with a decode
+    error — files every other reader in the ecosystem accepts. cp1252 last, as
+    in rlrr_parse: it decodes anything, so it must never sit above a codec that
+    can actually fail."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 def load_parakit_chart_v1(path: str) -> Tuple[List[EdNote], float]:
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    return parse_parakit_chart_v1_text(text)
+    return parse_parakit_chart_v1_text(_read_chart_text(path))
 
 
 def dump_parakit_chart_v1(notes: Iterable[EdNote], bpm: float) -> str:
@@ -520,8 +537,9 @@ def dump_parakit_chart_v1(notes: Iterable[EdNote], bpm: float) -> str:
 # instruments block, robust to any pack) -> lane via CLASS_TO_LANE.
 # ---------------------------------------------------------------------------
 def load_rlrr_as_notes(path: str) -> Tuple[List[EdNote], float]:
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
+    # _read_chart_text, not open(..., "utf-8"): see its docstring — the BOM'd and
+    # utf-16 charts every other reader accepts must not die only here.
+    data = json.loads(_read_chart_text(path))
 
     name_to_class: Dict[str, str] = {}
     for inst in data.get("instruments", []) or []:
@@ -688,26 +706,43 @@ def load_midi_as_notes(path: str) -> Tuple[List[EdNote], float]:
         import mido  # lazy, optional
         mid = mido.MidiFile(path)
         ticks_per_beat = mid.ticks_per_beat or 480
-        for track in mid.tracks:
-            abs_tick = 0
-            tempo_us = 500000
-            got_tempo = False
-            r: List[Tuple[float, int, int]] = []
-            cur_sec = 0.0
-            for msg in track:
-                abs_tick += msg.time
-                cur_sec += mido.tick2second(msg.time, ticks_per_beat, tempo_us)
-                if msg.is_meta and msg.type == "set_tempo":
-                    tempo_us = msg.tempo
-                    if not got_tempo:
-                        bpm = 60_000_000.0 / tempo_us
-                        got_tempo = True
-                elif msg.type == "note_on" and msg.velocity > 0:
-                    r.append((cur_sec, msg.note, msg.velocity))
-            if r:
-                rows = (rows or []) + r
-        if rows is None:
-            rows = []
+        # ⛔ MERGE THE TRACKS. This walked `for track in mid.tracks` and reset
+        # `tempo_us = 500000` at the top of every one, so a track's notes were timed
+        # by that track's OWN set_tempo events and by nothing else. A Type-1 file
+        # puts the tempo map in track 0 and the notes in tracks 1..N — the standard
+        # layout for a DAW export, a ParaDB chart, or any .mid the user did not make
+        # here — so the notes never saw the tempo at all and were laid out at the
+        # 120 BPM default.
+        #
+        # Measured on a 180 BPM Type-1 probe: the last of 8 kicks landed at 3.5729 s
+        # instead of 2.3819 s, exactly 1.5x late = 180/120. The whole chart stretches.
+        #
+        # ⚠ AND IT LOOKED FINE, WHICH IS WHY IT LASTED. `bpm` was read correctly
+        # (180.0) from that same track-0 event, so the engine reported the right
+        # tempo while placing every note for the wrong one. Grid and notes disagreed
+        # self-consistently, with nothing anywhere reporting an error. The file's own
+        # hand-rolled fallback `_read_midi_minimal` builds a proper cross-track tempo
+        # map and was right the whole time; it is only reached when mido is missing
+        # or raises, so the CORRECT reader was the one almost nobody ran.
+        #
+        # `merge_tracks` interleaves every track into one delta-time stream in
+        # tempo-map order, which is what the sidecar's parse already does. Seconds
+        # accumulate incrementally: a message's delta elapses under the tempo in
+        # force BEFORE it, so the tempo is applied after the accumulation, never to
+        # the total elapsed ticks.
+        tempo_us = 500000
+        got_tempo = False
+        cur_sec = 0.0
+        rows = []
+        for msg in mido.merge_tracks(mid.tracks):
+            cur_sec += mido.tick2second(msg.time, ticks_per_beat, tempo_us)
+            if msg.is_meta and msg.type == "set_tempo":
+                tempo_us = msg.tempo
+                if not got_tempo:
+                    bpm = 60_000_000.0 / tempo_us
+                    got_tempo = True
+            elif msg.type == "note_on" and msg.velocity > 0:
+                rows.append((cur_sec, msg.note, msg.velocity))
         rows.sort(key=lambda r: r[0])
     except Exception:
         rows, bpm = _read_midi_minimal(path)

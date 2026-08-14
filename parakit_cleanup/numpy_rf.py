@@ -50,6 +50,14 @@ Scalars / small arrays:
   recommended_gate: (k,) float64 OR () float64  (informational; preserved)
   gate_keys       : (k,) <U... unicode  (present iff recommended_gate is a dict;
                     pairs by index with recommended_gate to reconstruct the dict)
+                    ⛔ STALE ADVICE, DO NOT WIRE IN. The shipped .npz embeds
+                    {gate_to_ride: 0.3, gate_swap: 0.7} from export time, and
+                    gate_to_ride=0.3 was later PROVEN unreachable (a 3-class
+                    argmax is always >= 1/3, so a 0.3 refusal gate refuses
+                    nothing) and retired to None. The live gates come from
+                    passes.RECOMMENDED_ASYM_QUALITY, never from this field;
+                    nothing in the app reads .recommended_gate, and INV114
+                    keeps it that way. Kept only so the npz round-trips.
 Per-tree node arrays are CONCATENATED across all trees, indexed by `tree_offsets`
 (an (n_trees+1,) int64 prefix-sum of per-tree node counts):
   feat            : (total_nodes,) int64    -> tree.feature
@@ -193,7 +201,7 @@ class NumpyRF:
 
         Stored as either a scalar float (kick: 0.9) or a dict reconstructed from
         parallel `gate_keys` (unicode) + `recommended_gate` (float) arrays
-        (cymbal: {gate_to_ride:0.3, gate_swap:0.7}). Absent -> None.
+        (cymbal: see passes.RECOMMENDED_ASYM_QUALITY). Absent -> None.
         """
         if "recommended_gate" not in z.files:
             return None

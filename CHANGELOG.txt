@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)      4.9.12.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.13  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -27,24 +27,98 @@
 ==============================================================================
 
 ------------------------------------------------------------------------------
+  v4.9.13   --   2026-08-10
+------------------------------------------------------------------------------
+  Note dynamics become a choice, fewer notes appear that were never played,
+  and a dozen verified bugs are fixed.
+
+  NOTE DYNAMICS ARE NOW OPTIONAL, AND OFF BY DEFAULT
+  4.9.12 started writing a volume for every note, read from how hard the drum
+  was struck. That is not what everyone wants, and it was forced. Audio to MIDI
+  now carries a "Vary note volume to match the playing" checkbox, off unless
+  you turn it on.
+
+  Off is the default because the two directions are not equally easy to undo.
+  Adding variation to a flat chart is one setting away; removing it from a
+  chart you did not want varied means editing every note's volume by hand.
+
+  With the box unticked, conversions come out exactly as they did before
+  4.9.12: one volume for every note. Clone Hero ghost and accent notes are
+  marked from these volumes, so they are absent too, as they were then. Tick
+  the box and both come back.
+
+  KICK NOTES ARE NEVER VARIED, EITHER WAY
+  A kick's volume has to be read from the 20-120 Hz range, which is also where
+  the bass guitar sits, so the reading followed the bassline as much as the
+  drumming: a quiet kick under a loud bass note came out loud, and a firm kick
+  under a rest came out quiet. Kick is written at one volume regardless of the
+  setting above. This also shipped on its own as 4.9.12.1.
+
+  FEWER NOTES THAT WERE NEVER PLAYED
+  When detection fires where nothing was actually struck, the note it invents
+  has almost no energy behind it -- there was nothing there to measure. Snare
+  and kick notes that come back that quiet are now dropped before the chart is
+  written. Both were measured across a large library of community charts before
+  being turned on, and both remove far more invented notes than real ones.
+
+  This runs whether or not note dynamics are switched on. The volume is still
+  measured with the setting off; it simply is not written into the chart.
+
+  Hi-hat, crash, ride and tom were measured the same way and deliberately left
+  alone -- either too few notes to judge, or not enough gain to be worth losing
+  real hits over.
+
+  CYMBALS PLAYED WITH A SNARE ARE NO LONGER DELETED
+  A pass that removed cymbals landing at the same moment as a snare has been
+  switched off. It was treating ordinary drumming as bleed: a snare hit
+  together with a hi-hat and a crash is a normal thing to play. Checked against
+  human-made charts, roughly nine of every ten cymbals it deleted were notes
+  the chart wanted.
+
+  ADVICE THAT POINTED AT SOMETHING REMOVED
+  The Help tab suggested trying a Metal / Hard Rock / Post-Hardcore preset for
+  heavy songs, and the Detection Troubleshooter offered Metal as a fix for too
+  many detected notes. Genre presets were removed in 4.9.12, so both pointed at
+  nothing -- and the Metal suggestion was backwards anyway, since that preset
+  added notes rather than removing them.
+
+  TWELVE FIXED BUGS
+  Each was reproduced and verified before it was touched.
+
+    - The MIDI Extractor dropped china, splash and 13" crash from every
+      extracted file.
+    - The cleanup pass could swap two cymbals played at the same instant,
+      putting each on the other's lane.
+    - The Preview tab timed every multi-track MIDI at 120 BPM, so notes drifted
+      even though the BPM shown was right.
+    - The Preview tab refused chart files that every other part of ParaKit
+      opens without complaint.
+    - The Practice Mixer's Drums slider switched the backing drums back on
+      during You-drum mode.
+    - Saved Audio to MIDI settings could be overwritten by an older snapshot,
+      which then wrote the stale value back to disk.
+    - A batch run could destroy its own output: two difficulties of the same
+      song overwrote each other's Clone Hero chart while both reported success.
+    - Re-exporting a chart destroyed the existing file the moment the export
+      began, so a failure part-way left nothing behind.
+    - Clone Hero covers were copied under a .png name whatever format they
+      really were; they are now converted properly.
+    - Dragging one note before the start of a song shifted the whole saved
+      chart later by the same amount.
+    - The retired genre presets still presented as live in several places.
+    - The ML sensitivity slider does nothing across the bottom of its travel
+      for some instruments. That is now stated in the conversion log rather
+      than left to be discovered.
+
+------------------------------------------------------------------------------
   v4.9.12.1   --   2026-08-10
 ------------------------------------------------------------------------------
   Kick notes go back to a single volume.
 
-  4.9.12 gave every detected note a volume read from the audio. For the kick
-  that reading is taken from the 20-120 Hz band, which is also where the bass
-  guitar sits, so what looked like kick dynamics was largely the bass line
-  moving underneath it. A quiet kick under a loud bass note came out loud, and
-  a firm kick under a rest came out quiet. Ghost and accent marks derived from
-  it followed the bass rather than the drumming.
-
-  Kick notes are therefore written at one fixed volume again. Snare, hi-hat,
-  crash, ride and toms keep the per-hit volumes 4.9.12 introduced -- their
-  frequency bands are not shared with another instrument in the same way, and
-  their dynamics measured correctly.
-
-  Nothing else changes: no note moves, no note is added or removed, and
-  detection is untouched.
+  Released on its own ahead of 4.9.13, and included in it. See "KICK NOTES ARE
+  NEVER VARIED" above for why: the frequency range a kick's volume is read from
+  is shared with the bass guitar, so what looked like kick dynamics largely
+  tracked the bassline. Every other instrument kept its per-hit volumes.
 
 ------------------------------------------------------------------------------
   v4.9.12   --   2026-08-05

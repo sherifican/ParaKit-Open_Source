@@ -4216,11 +4216,28 @@ class MixerOverlay(_Overlay):
             val.pack(side=tk.RIGHT)
             var = tk.DoubleVar(value=float(self._get(key, 1.0) or 1.0))
 
+            # ⛔ DO NOT PUSH THE RAW SLIDER VALUE AT THE BUS. `self._set` is
+            # PracticeTab._pref_set, which already forwards every bus key to
+            # PlayScreen._apply_bus_gains — the one place that knows the rules the
+            # raw value does not. Chief among them: with You-drum ON (the DEFAULT)
+            # the drums bus must be 0.0, because YOU are playing the drums and the
+            # recorded drum stem has to be silent.
+            #
+            # The line that used to follow ran AFTER that, so it won: dragging the
+            # Drums slider set the bus to the slider's own number and UNMUTED the
+            # backing drums, which is the entire thing You-drum mode exists to
+            # prevent. It also overrode the miss-duck, so a slider nudge undid the
+            # ducking a missed note had just applied.
+            #
+            # The other three were dead rather than harmful and hid the first one by
+            # making the row look uniform: `song` and `master` got pushed the same
+            # value `_apply_bus_gains` had just set, and `synth` went to a bus that
+            # reaches nothing (the synth is not a stem channel, which is why
+            # `_apply_bus_gains` folds busSynth x master into the synth's OWN gain).
             def moved(_v, k=key, vl=val, vr=var, b=bus):
                 v = round(vr.get(), 2)
                 vl.configure(text=f"{v:.2f}")
                 self._set(k, v)
-                self._hook_call("mixer_set_bus_gain", b, v)
             ttk.Scale(row, from_=0.0, to=1.0, orient=tk.HORIZONTAL, variable=var,
                       style="Prac.Horizontal.TScale", command=moved).pack(
                 side=tk.LEFT, fill=tk.X, expand=True, padx=8)
