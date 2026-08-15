@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.13  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.14  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,59 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.14   --   2026-08-14
+------------------------------------------------------------------------------
+  Doubled cymbal notes are removed, pasted notes stay selected, and there is a
+  tool for placing snare rolls by hand.
+
+  DOUBLED CYMBAL NOTES ARE REMOVED
+  Conversion could place two cymbal notes on top of each other in the same
+  lane, almost always hi-hats. They are easy to miss when checking a chart and
+  only became obvious in the game, where the only fix was going back and
+  deleting them by hand.
+
+  Two different things caused it.
+
+    - One cymbal strike could be detected twice, once by each of the two
+      detectors that run together, landing about a fiftieth of a second apart.
+      The earlier of the two is kept, because it comes from the detector that
+      was trained on human-timed drum recordings and lands closer to the actual
+      stick contact.
+
+    - A single strike could also be listed under two different cymbals at once,
+      and the pass that sorts cymbals into their proper lanes would move both
+      into the same lane rather than noticing they were the same hit. That pass
+      was built to never lose a note, which is exactly why the duplicate
+      survived it.
+
+  Measured across 290 community charts, this removes about one note in every
+  2,700 - roughly one song in four has at least one, and a song that has any
+  usually has several. Nothing outside the hi-hat, crash and ride lanes is
+  touched. Fast playing is safe: the notes have to be closer together than a
+  thirty-second note at 300 BPM before either is removed.
+
+  PASTED NOTES STAY SELECTED
+  Pasting in the MIDI Editor left nothing selected, and the copy usually landed
+  directly on top of the notes it came from - so moving it meant separating two
+  overlapping stacks by hand first. Pasted notes now stay highlighted and can be
+  dragged or deleted straight away. Clicking a stack that includes selected
+  notes now picks the selected one, as it does in a DAW.
+
+  NEW - ADD SNARE ROLL
+  Fast rolls are the thing conversion misses most often, and loosening detection
+  enough to catch them adds notes elsewhere that were never played. There is now
+  a button next to Tempo Map that places one directly: choose how many notes and
+  how tightly spaced, then click the chart once and the roll appears. The tool
+  switches itself off after a single placement so it cannot be applied twice by
+  accident, and one undo removes the whole roll.
+
+  Spacing follows the song's tempo rather than a fixed number of milliseconds -
+  measured over 1,194 community charts, roll spacing tracks the beat far more
+  consistently than it tracks the clock. Thirty-second notes are the default,
+  with sixteenths and sextuplets available. After placing a roll, zoom in and
+  nudge the timing against the waveform; real rolls drift around the grid.
 
 ------------------------------------------------------------------------------
   v4.9.13   --   2026-08-10

@@ -6159,7 +6159,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.13"
+    VERSION = "4.9.14"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -20355,6 +20355,13 @@ demucs.separate.main()
     # ── Lane definitions ──────────────────────────────────────────────────────
     # Order matches in-game left-to-right layout.
     # shape: 'circle' for cymbals, 'bar' for drums, 'kick' for kick line
+    #: Snare Roll button labels. Defined once because the button is built in
+    #: one place and re-labelled in two others - the first version hardcoded the
+    #: idle string in both spots, so renaming the button silently made disarm
+    #: restore a label that no longer existed anywhere else.
+    ME_SNARE_ROLL_IDLE_TEXT  = "⋙  Add Snare Roll"
+    ME_SNARE_ROLL_ARMED_TEXT = "⋙  Roll: click the chart…"
+
     MIDI_EDITOR_LANES = [
         {"name": "Hi-Hat",    "midi": [42, 44, 46, 26, 21, 22, 23], "color": "#00e5ff", "shape": "circle"},
         {"name": "Crash",     "midi": [49, 55, 57], "color": "#ff8c00", "shape": "circle"},
@@ -21063,6 +21070,10 @@ demucs.separate.main()
                      "Repeat the selected note pattern forward in time.")
         _tool_button(edit_frame, "🥁 Flam", self._me_insert_flam,
                      "Add a quiet grace note just before selected notes to create a flam effect.")
+        # ⋙ Snare Roll lives in `bottom_tools` beside Tempo Map / Manual MIDI
+        # Note Manager (owner 2026-08-14), NOT on this row — it opens a dialog
+        # and arms a mode like those two, rather than acting on the current
+        # selection like everything here.
         _tool_button(edit_frame, "⊞~ Soft Quantize", self._me_soft_quantize,
                      "Gently pull selected notes toward the grid without fully snapping their timing.")
         _tool_button(edit_frame, "🔍 Review Issues", self._me_cleanup_wizard,
@@ -22245,6 +22256,25 @@ demucs.separate.main()
         ttk.Button(bottom_tools, text="🥁  Manual MIDI Note Manager",
                    command=self._me_open_manual_note_manager).pack(
                        side=tk.LEFT, padx=(0, 16))
+
+        # ⋙ Add Snare Roll (owner 2026-08-14) — grouped with the two buttons
+        # above rather than on the edit toolbar: those act on the CURRENT
+        # SELECTION, while these three open a dialog / arm a mode. Plain
+        # ttk.Button to match its neighbours; the edit row's `_tool_button`
+        # carries a different style and is out of scope here anyway.
+        self.me_snare_roll_btn = ttk.Button(
+            bottom_tools, text=self.ME_SNARE_ROLL_IDLE_TEXT,
+            command=self._me_snare_roll_tool)
+        self.me_snare_roll_btn.pack(side=tk.LEFT, padx=(0, 16))
+        self._add_tooltip(
+            self.me_snare_roll_btn,
+            "Place a burst of evenly spaced snare notes with ONE click — for fast\n"
+            "rolls that Audio to MIDI tends to miss. Pick a note count and\n"
+            "subdivision, then click the chart where the roll starts. The tool\n"
+            "turns itself off after one placement, and Ctrl+Z removes the whole\n"
+            "roll in one step.\n\n"
+            "Tip: after placing, zoom in and fine-tune each note's timing against\n"
+            "the waveform — real rolls drift around the grid.")
 
         self._me_vel_expanded = tk.BooleanVar(value=False)
 
@@ -24999,6 +25029,28 @@ demucs.separate.main()
         whether they render as the full-height vertical line or as a square
         in their own lane.  Clicks elsewhere on a kick line do not select
         the kick.
+
+        SELECTED notes win over unselected ones inside the hit tolerance
+        (smart-paste selection, 2026-08-14): a paste drops its copies on top
+        of the source notes, and the stable sort files each copy AFTER an
+        equal-time source note — so the old first-closest-wins scan resolved
+        a click on the stack to the UNSELECTED source, and _me_on_lclick then
+        cleared the fresh paste selection instead of starting the
+        whole-selection drag.
+
+        WHY PREFERRING THE SELECTION IS RIGHT IN GENERAL, not just after a
+        paste: a click landing inside an existing selection should MOVE that
+        selection, not silently reselect something underneath it — the same
+        convention every DAW uses.  (Do not justify this by "the selection
+        ring draws on top": selection is an outline on the note itself and
+        notes paint in list order, so the last-drawn note is the visible one.
+        After a paste the copy has the higher index and the two coincide, but
+        that is a property of paste, not a general guarantee.)
+
+        KNOWN COST: while a note is selected you cannot click-select a
+        DIFFERENT note within ±18 px of it — the selected one keeps winning.
+        Click empty space to clear first.  Accepted because at that distance
+        the two notes overlap visually anyway.
         """
         lane_idx = self._me_y_to_lane(y)
         if lane_idx < 0:
@@ -25007,8 +25059,11 @@ demucs.separate.main()
         zoom = self.me_zoom_var.get()
         tol  = 0.15 / zoom  # tolerance in seconds, tighter when zoomed in
 
-        best_idx  = -1
-        best_dist = float('inf')
+        sel = getattr(self, "_me_selected_notes", set())
+        best_idx      = -1
+        best_dist     = float('inf')
+        best_sel_idx  = -1
+        best_sel_dist = float('inf')
         for ni, note in enumerate(self.me_notes):
             # All notes — including kicks — must be in the same lane as the
             # click to be selectable.  This prevents the kick line from
@@ -25016,10 +25071,18 @@ demucs.separate.main()
             if note["lane_idx"] != lane_idx:
                 continue
             dist = abs(note["time"] - t)
-            if dist < tol and dist < best_dist:
-                best_dist = dist
-                best_idx  = ni
-        return best_idx
+            if dist < tol:
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx  = ni
+                if ni in sel and dist < best_sel_dist:
+                    best_sel_dist = dist
+                    best_sel_idx  = ni
+        # The tolerance is a constant ±18 px on screen (0.15 s x 120 px/s;
+        # zoom cancels), so a selected candidate here means the click is ON
+        # the visual stack — this preference cannot reach across a gap and
+        # steal a clean click aimed at a lone unselected note.
+        return best_sel_idx if best_sel_idx >= 0 else best_idx
 
     def _me_on_lclick(self, event):
         """Left click: seek if in header, reclassify if mode on, drag/add/select otherwise."""
@@ -25057,6 +25120,18 @@ demucs.separate.main()
             # No marker hit — seek playhead
             self._me_ruler_dragging = True
             self._me_seek(event)
+            return "break"
+
+        # Armed one-shot Snare Roll tool — a single click in the chart body
+        # places the whole roll, then the tool disengages itself
+        # (F-ME-SNARE-ROLL-TOOL-2026-08-14). Sits BELOW the header branch so
+        # seek/marker clicks keep working (the tool stays armed through them)
+        # and ABOVE every note/drag/add branch so the armed click can't also
+        # start a drag or queue a pending single-note add.
+        if getattr(self, '_me_snare_roll_armed', None):
+            self._me_pending_add = None
+            self.me_drag_note    = None
+            self._me_place_snare_roll(cx)
             return "break"
 
         # Shift held = start rubber band selection regardless of what's under cursor
@@ -26808,6 +26883,145 @@ demucs.separate.main()
             f"🥁  Added {len(new_notes)} flam grace note(s) at 30ms / vel 30 — Ctrl+Z to undo")
         self.root.after(3000, lambda: self.me_status_var.set(self.ME_DEFAULT_STATUS))
 
+    def _me_snare_roll_tool(self):
+        """Arm the one-shot Add Snare Roll tool (F-ME-SNARE-ROLL-TOOL-2026-08-14).
+
+        Fast rolls are frequently missed by Audio to MIDI, and loosening the
+        detection thresholds to catch them introduces phantom notes elsewhere —
+        this is the manual authoring route around that tradeoff. Asks for a
+        note count (min 3) + subdivision, then ONE click on the chart places
+        the whole roll in the Snare lane and the tool disengages itself.
+
+        Spacing is TEMPO-SCALED, not a millisecond constant: measured over
+        1,194 charts (tools/snare_roll_spacing_2026-08-14.py), roll spacing
+        clusters on beat fractions (67.6% within ±10% of a beat fraction vs
+        32.4% for the best fixed-ms cluster). Default = 32nd notes (0.125
+        beat): the detector already catches 16ths — the rolls it misses are
+        the fast ones, so the fast subdivision is the right default.
+        """
+        # Second press while armed = cancel/disarm (the visible escape hatch).
+        if getattr(self, '_me_snare_roll_armed', None):
+            self._me_snare_roll_disarm("⋙  Snare Roll cancelled — nothing placed")
+            return
+
+        top = tk.Toplevel(self.root)
+        top.title("⋙ Add Snare Roll")
+        top.resizable(False, False)
+        top.transient(self.root)
+        top.configure(bg=APP_BG)
+        top.bind("<Escape>", lambda e: top.destroy())
+        f = tk.Frame(top, bg=APP_BG, padx=14, pady=12)
+        f.pack()
+        tk.Label(f, text="Place a burst of evenly spaced snare notes with one click.",
+                 bg=APP_BG, fg="#e0e0e0", font=("Segoe UI", 9)).pack(anchor="w")
+        tk.Label(f, text="For fast rolls Audio to MIDI misses. After arming, click the chart where\n"
+                         "the roll starts — the tool turns itself off after that one placement.",
+                 bg=APP_BG, fg="#888", font=("Segoe UI", 8),
+                 justify=tk.LEFT).pack(anchor="w", pady=(2, 8))
+
+        row = tk.Frame(f, bg=APP_BG)
+        row.pack(anchor="w")
+        tk.Label(row, text="Notes in roll:", bg=APP_BG, fg="#e0e0e0",
+                 font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(0, 8))
+        count_var = tk.IntVar(value=3)
+        ttk.Spinbox(row, from_=3, to=64, textvariable=count_var,
+                    width=5).pack(side=tk.LEFT)
+
+        tk.Label(f, text="Spacing (scales with the chart's tempo):",
+                 bg=APP_BG, fg="#e0e0e0",
+                 font=("Segoe UI", 9)).pack(anchor="w", pady=(8, 2))
+        sub_var = tk.DoubleVar(value=0.125)
+        for label, frac in (("32nd notes  (default — fast roll)", 0.125),
+                            ("Sextuplets", 1.0 / 6.0),
+                            ("16th notes", 0.25)):
+            ttk.Radiobutton(f, text=label, variable=sub_var,
+                            value=frac).pack(anchor="w", padx=(8, 0))
+
+        tk.Label(f, text="Tip: zoom in afterwards and fine-tune each note's timing against\n"
+                         "the waveform — real rolls drift around the grid.",
+                 bg=APP_BG, fg="#888", font=("Segoe UI", 8),
+                 justify=tk.LEFT).pack(anchor="w", pady=(8, 0))
+
+        btn_row = tk.Frame(f, bg=APP_BG)
+        btn_row.pack(pady=(10, 0))
+
+        def _arm():
+            try:
+                count = int(count_var.get())
+            except (ValueError, tk.TclError):
+                count = 3
+            count = max(3, min(count, 64))   # owner spec: minimum 3
+            self._me_snare_roll_armed = {"count": count,
+                                         "beat_frac": float(sub_var.get())}
+            top.destroy()
+            self.me_snare_roll_btn.configure(text=self.ME_SNARE_ROLL_ARMED_TEXT)
+            self.me_status_var.set(
+                f"⋙  Snare Roll armed ({count} notes) — click the chart where the "
+                f"roll starts. Press the Snare Roll button again to cancel.")
+
+        ttk.Button(btn_row, text="Arm — then click the chart",
+                   command=_arm).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_row, text="Cancel", command=top.destroy).pack(side=tk.LEFT)
+        top.grab_set()
+
+    def _me_snare_roll_disarm(self, status=None):
+        """Clear the armed one-shot Snare Roll state + restore the toolbar
+        button text so the UI visibly reflects the tool turning off."""
+        self._me_snare_roll_armed = None
+        if hasattr(self, 'me_snare_roll_btn'):
+            self.me_snare_roll_btn.configure(text=self.ME_SNARE_ROLL_IDLE_TEXT)
+        if status:
+            self.me_status_var.set(status)
+            self.root.after(3000, lambda: self.me_status_var.set(self.ME_DEFAULT_STATUS))
+
+    def _me_place_snare_roll(self, cx):
+        """Place the armed snare roll starting at canvas-x *cx*, then
+        auto-disengage. Called once from _me_on_lclick's armed branch.
+
+        - ONE undo step for the whole roll: a single _me_push_undo before the
+          extend, so Ctrl+Z removes every note of the roll together.
+        - Only the FIRST note goes through _me_snap_time (honoring the user's
+          snap settings for the start point); the rest are exact beat-fraction
+          offsets from it — snapping every note to the 1/16 grid would fight
+          the whole point of a sub-grid roll.
+        - The placed notes end up SELECTED for immediate nudging, rebuilt by
+          object identity AFTER the sort (same idiom as _me_paste — positional
+          indices go stale the moment me_notes reorders).
+        """
+        armed = self._me_snare_roll_armed or {}
+        count     = max(3, int(armed.get("count", 3)))
+        beat_frac = float(armed.get("beat_frac", 0.125)) or 0.125
+        beat      = 60.0 / self.me_bpm if self.me_bpm > 0 else 0.5
+        interval  = beat * beat_frac
+        t0 = max(0.0, self._me_snap_time(self._me_x_to_secs(cx)))
+        lane_idx = next((i for i, lane in enumerate(self.MIDI_EDITOR_LANES)
+                         if lane["name"] == "Snare"), 2)
+        place_note = self._me_default_place_note(lane_idx)
+        # vel 80: real rolls sit below accented backbeats (placed singles are
+        # vel 100) but well above ghost/grace level (flam grace is vel 30) —
+        # soft enough to read as a roll, loud enough to survive Vel Filter
+        # and difficulty reduction at their default thresholds.
+        new_notes = [{"time": t0 + k * interval, "note": place_note,
+                      "vel": 80, "lane_idx": lane_idx}
+                     for k in range(count)]
+        self._me_push_undo()
+        self.me_notes.extend(new_notes)
+        self.me_notes.sort(key=lambda n: n["time"])
+        placed_set = {id(n) for n in new_notes}
+        self._me_selected_notes = {
+            i for i, n in enumerate(self.me_notes) if id(n) in placed_set}
+        self._me_last_clicked_note = -1   # stale positional index after sort
+        self.me_duration = max(self.me_duration, new_notes[-1]["time"] + 0.5)
+        self._me_snare_roll_disarm()
+        self.me_note_info_var.set(
+            f"⋙  Snare roll: {count} notes @ {self._me_fmt_time(t0)} — selected")
+        self.me_status_var.set(
+            "⋙  Snare roll placed — zoom in and fine-tune each note's timing "
+            "against the waveform. Ctrl+Z removes the whole roll.")
+        self.root.after(6000, lambda: self.me_status_var.set(self.ME_DEFAULT_STATUS))
+        self._me_redraw()
+        self._me_update_info()
+
     def _me_quantize(self, notes=None):
         """Snap selected (or all) notes to nearest grid subdivision."""
         if self.me_bpm <= 0:
@@ -26881,7 +27095,7 @@ demucs.separate.main()
         self.me_duration = max(self.me_duration, max(n["time"] for n in new_notes) + 0.5)
         self._me_redraw()
         self._me_update_info()
-        self.me_status_var.set(f"⧈  Pasted {len(new_notes)} note(s) at {self._me_fmt_time(paste_t)} — Ctrl+Z to undo")
+        self.me_status_var.set(f"⧈  Pasted {len(new_notes)} note(s) at {self._me_fmt_time(paste_t)} — selected; drag to move, Ctrl+Z to undo")
 
     def _me_dedup(self):
         """Remove duplicate notes — exact (same time+lane) plus near-dupes within a gap.
@@ -30103,7 +30317,13 @@ demucs.separate.main()
             except Exception:
                 pass
 
-    def _a2m_count_note_ons(self, midi_path):
+    #: GM pitches that read back as the KICK lane, verbatim from the note-mapping
+    #: contract in parakit_cleanup/midi_io.py (35/36 -> kick). Used to measure the
+    #: kick share of a cleanup deletion off the chart itself rather than trusting
+    #: the separately-versioned sidecar's self-report.
+    _A2M_KICK_PITCHES = (35, 36)
+
+    def _a2m_count_note_ons(self, midi_path, pitches=None):
         """v4.7.19 — raw note-on count of a chart on disk, or None if it can't be read.
 
         The one place that knows how ParaKit counts a note (``note_on`` with velocity > 0
@@ -30111,13 +30331,20 @@ demucs.separate.main()
         than a number on failure, so callers can tell "0 notes" apart from "couldn't look",
         which is exactly the distinction the old fallback blurred.
 
+        v4.9.14 — optional ``pitches``: when given, count only note-ons whose note is in
+        that collection. Added so the cleanup pass can attribute its deletions to a lane
+        by MEASURING them, now that the pass deletes cymbals as well as kicks and a bare
+        total can no longer be reported as "phantom kicks".
+
         Worker-safe: pure file I/O, no Tk.
         """
         try:
             import mido as _mido
+            _want = None if pitches is None else set(pitches)
             return sum(1 for _tr in _mido.MidiFile(midi_path).tracks
                        for _msg in _tr
-                       if _msg.type == "note_on" and _msg.velocity > 0)
+                       if _msg.type == "note_on" and _msg.velocity > 0
+                       and (_want is None or _msg.note in _want))
         except Exception:
             return None
 
@@ -30484,6 +30711,10 @@ demucs.separate.main()
             # failed re-count reports (breaker INV12). Counting before/after is exact
             # regardless of what the sidecar says, and costs one small file read.
             _n_pre = self._a2m_count_note_ons(midi_path)
+            # v4.9.14 — and the KICK share, because the cleanup now deletes cymbals too
+            # (same-lane doubles) and the total delta alone can no longer be labelled
+            # "phantom kicks". Measured off the chart for the same reason the total is.
+            _k_pre = self._a2m_count_note_ons(midi_path, self._A2M_KICK_PITCHES)
             # v4.7.21 — and the CONTENT, so the except can tell a count-preserving relabel
             # apart from a genuine skip (breaker INV16).
             _sig_pre = self._a2m_chart_sig(midi_path)
@@ -30545,15 +30776,40 @@ demucs.separate.main()
                 # Measured off the chart, so a drifted sidecar can't under-report it.
                 # NOT "always right": max(0, …) floors a negative delta, so this is only
                 # exact while the cleanup can never ADD note-ons. That holds on the shipped
-                # path (breaker-verified: relabel is count-preserving, kick removal only
-                # deletes) — it is a property of the sidecar, not a guarantee of this line.
+                # path (the relabel never adds an onset, and both the kick remover and the
+                # cymbal-double drop only delete) — it is a property of the sidecar, not a
+                # guarantee of this line.
+                #
+                # ⚠ v4.9.14 — THIS TOTAL IS NO LONGER ALL KICKS. The cymbal relabel used to
+                # be count-preserving, so every deleted note-on was a phantom kick and the
+                # log said so. `_drop_cymbal_doubles` broke that premise deliberately: it
+                # deletes same-lane cymbal stacks. Splitting the delta by lane here keeps
+                # the log honest — reporting the whole thing as "phantom kick(s) removed"
+                # would have quietly mislabelled every cymbal double as a kick.
                 _n_removed = max(0, _n_pre - _n_post)
             else:
                 # Couldn't read the chart either side; the self-report is all we have left.
+                # v4.9.14 — and it must include the CYMBAL doubles, not just kicks.
+                # `n_kicks_removed` alone made this branch report the kick count as
+                # the whole deletion, so the cymbal share computed to ~0 below and
+                # the log went SILENT about stacked cymbals it had actually deleted.
+                # The sidecar is separately versioned, so both keys are read
+                # defensively and a missing one degrades to 0 rather than raising.
                 try:
-                    _n_removed = int((summary or {}).get("n_kicks_removed", 0) or 0)
+                    _n_removed = (int((summary or {}).get("n_kicks_removed", 0) or 0)
+                                  + int((summary or {}).get("n_cymbal_doubles_removed", 0) or 0))
                 except Exception:
                     _n_removed = 0
+            # v4.9.14 — attribute the delta. Kick is measured directly (pitches 35/36);
+            # whatever is left over is the cymbal-double drop, which is the only other
+            # deleting pass. If either kick read failed we cannot split, so both
+            # sub-counts go None and the log says so rather than guessing a lane.
+            _k_post = self._a2m_count_note_ons(midi_path, self._A2M_KICK_PITCHES)
+            if _k_pre is not None and _k_post is not None:
+                _n_kick_removed = max(0, _k_pre - _k_post)
+                _n_cym_removed = max(0, _n_removed - _n_kick_removed)
+            else:
+                _n_kick_removed = _n_cym_removed = None
             self._a2m_post_pass_removed = (
                 int(getattr(self, "_a2m_post_pass_removed", 0) or 0) + _n_removed)
             _tallied = True     # v4.7.20 — so the except can't double-count it
@@ -30577,8 +30833,20 @@ demucs.separate.main()
                     # should agree with the chart on disk, not with the sidecar's opinion.
                     # v4.9.0 — the measured delta already includes any BLEED removals, so
                     # show the count whenever either kick pass ran.
-                    + (f"{_n_removed} phantom kick(s) removed"
-                       if (do_kick or do_bleed) else "kick remover off"))
+                    # v4.9.14 — the kick figure is now the MEASURED kick-lane delta, not
+                    # the whole deletion count. `_n_removed` is reported when the split
+                    # could not be read, and is labelled as unattributed rather than
+                    # silently called kicks.
+                    + ((f"{_n_removed} note(s) removed (lane unread)"
+                        if _n_kick_removed is None
+                        else f"{_n_kick_removed} phantom kick(s) removed")
+                       if (do_kick or do_bleed) else "kick remover off")
+                    # The cymbal-double drop runs whenever the cymbal pass runs, so it
+                    # is reported independently of the kick passes. Silent at zero: on
+                    # most songs there are none, and a "0 removed" line every run would
+                    # train the reader to skip the line that matters on the 27% that do.
+                    + ((f", {_n_cym_removed} stacked cymbal(s) removed")
+                       if (do_cymbal and _n_cym_removed) else ""))
             except Exception:
                 pass
             # v4.9.0 — F12 review tier: kicks in the lower-confidence bleed band were

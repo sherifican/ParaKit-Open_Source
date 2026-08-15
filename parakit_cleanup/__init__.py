@@ -4,7 +4,9 @@ sidecar for ParaKit.
 
 Reproduces the VALIDATED detection-harness post-pass EXACTLY with NO sklearn /
 joblib / onnx at runtime:
-  - cymbal re-classifier: relabel hihat/crash/ride lanes (count-preserving),
+  - cymbal re-classifier: relabel hihat/crash/ride lanes, then collapse any
+    same-lane stack the relabel created (NOT count-preserving since 4.9.14 -
+    that invariant is what let one onset in two lanes survive as two notes),
   - kick phantom-remover: delete false-positive kicks (kick lane only).
 
 The trained models ship as dependency-free .npz (numpy_rf.NumpyRF, bit-exact to

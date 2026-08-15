@@ -162,16 +162,37 @@ def _onset_multiset(arr):
     return Counter(round(float(t) / _MATCH_TOL) for t in np.asarray(arr, dtype=float))
 
 
-def apply_cleanup(notes, cleaned_est, do_cymbal=True, do_kick=True):
+#: Two cymbal notes in the SAME lane closer than this are a doubling artifact,
+#: not playing. The observed population sits at 16-24 ms (see the module note on
+#: `_drop_cymbal_doubles`); 25 ms leaves headroom below any real subdivision —
+#: a 32nd note is 31 ms at 240 BPM and 25 ms only at 300 BPM. Raising it past
+#: ~30 ms starts eating genuine fast hi-hat work, which is why it is not wider.
+CYM_DOUBLE_GAP_S = 0.025
+
+
+def apply_cleanup(notes, cleaned_est, do_cymbal=True, do_kick=True,
+                  drop_doubles=True, double_gap_s=CYM_DOUBLE_GAP_S):
     """Rewrite ``notes`` to match ``cleaned_est`` preserving velocity + timing.
 
     - KICK (if do_kick): drop every kick NoteRec whose onset is no longer in
       cleaned_est["kick"]. Never adds a kick.
-    - CYMBAL (if do_cymbal): the three cymbal lanes are a relabel — the multiset
-      of cymbal ONSETS is identical before/after, only lane assignment changes.
-      For each cymbal NoteRec we look up which cymbal lane its onset now belongs
-      to in cleaned_est and rewrite its pitch to that lane's canonical pitch,
-      keeping time + velocity. Non-cymbal, non-kick notes pass through untouched.
+    - CYMBAL (if do_cymbal): the three cymbal lanes are a relabel. For each
+      cymbal NoteRec we look up which cymbal lane its onset now belongs to in
+      cleaned_est and rewrite its pitch to that lane's canonical pitch, keeping
+      time + velocity. Non-cymbal, non-kick notes pass through untouched.
+    - DOUBLES (if do_cymbal and drop_doubles): same-lane cymbal notes within
+      ``double_gap_s`` are collapsed. See `_drop_cymbal_doubles`.
+
+    ⛔ THE CYMBAL RELABEL IS NO LONGER COUNT-PRESERVING, AND THAT IS THE POINT.
+    It used to be, and the docstring advertised it: "the multiset of cymbal
+    ONSETS is identical before/after, only lane assignment changes." That
+    invariant is exactly what produced the bug `_drop_cymbal_doubles` fixes —
+    folding two lanes onto one instant while promising to preserve every onset
+    means the collision is preserved too. Callers that compare cymbal counts
+    before/after must read the returned note list, not assume equality;
+    `cleanup.py` computes `cymbal_relabeled` from ``cleaned_est`` and is
+    unaffected, while `n_notes_after` is taken from the returned list and
+    tracks removals correctly.
 
     Returns a NEW list (input ``notes`` is not mutated)."""
     out = []
@@ -218,12 +239,20 @@ def apply_cleanup(notes, cleaned_est, do_cymbal=True, do_kick=True):
                     cym_assign[i] = lane
                     break
 
+    #: parallel to ``out``: was this note RELABELLED into its lane, or did it
+    #: already live there? Only meaningful for cymbals. `_drop_cymbal_doubles`
+    #: uses it to break an exact tie in favour of the note that was already
+    #: home, so a collision cannot silently rewrite a hi-hat articulation the
+    #: cleanup had no opinion about.
+    moved = []
+
     for i, n in enumerate(notes):
         if do_kick and n.lane == "kick":
             key = round(n.time / _MATCH_TOL)
             if kick_keep.get(key, 0) > 0:
                 kick_keep[key] -= 1
                 out.append(NoteRec(n.time, n.pitch, n.velocity, n.lane))
+                moved.append(False)
             # else: phantom — dropped (no append)
             continue
 
@@ -232,10 +261,11 @@ def apply_cleanup(notes, cleaned_est, do_cymbal=True, do_kick=True):
             # consumed there, so nothing is decremented here.
             new_lane = cym_assign.get(i)
             if new_lane is None:
-                # Onset not found in any cymbal lane (should not happen — cymbal
-                # is a count-preserving relabel). Keep the note as-is to avoid
-                # silently dropping it.
+                # Onset not found in any cymbal lane (should not happen — the
+                # relabel hands out one slot per cymbal onset). Keep the note
+                # as-is to avoid silently dropping it.
                 out.append(NoteRec(n.time, n.pitch, n.velocity, n.lane))
+                moved.append(False)
                 continue
             # A note that kept its lane keeps its ORIGINAL pitch: the cleanup had no
             # opinion about it, and re-stamping the canonical pitch here would flatten
@@ -243,13 +273,151 @@ def apply_cleanup(notes, cleaned_est, do_cymbal=True, do_kick=True):
             # class of gratuitous rewrite write_midi's docstring warns about for toms.
             pitch = n.pitch if new_lane == n.lane else LANE_TO_PITCH[new_lane]
             out.append(NoteRec(n.time, pitch, n.velocity, new_lane))
+            moved.append(new_lane != n.lane)
             continue
 
         # untouched lane
         out.append(NoteRec(n.time, n.pitch, n.velocity, n.lane))
+        moved.append(False)
 
-    out.sort(key=lambda x: (x.time, x.pitch))
+    order = sorted(range(len(out)), key=lambda i: (out[i].time, out[i].pitch))
+    out = [out[i] for i in order]
+    moved = [moved[i] for i in order]
+
+    if do_cymbal and drop_doubles:
+        out = _drop_cymbal_doubles(out, moved, double_gap_s)
     return out
+
+
+def _drop_cymbal_doubles(notes, moved, gap_s=CYM_DOUBLE_GAP_S):
+    """Collapse same-lane cymbal notes that land on top of each other.
+
+    ⛔ WHY THIS EXISTS. Owner report 2026-08-14, with a MIDI-Editor screenshot:
+    the detector places a cymbal — "pretty much only hi-hats" — right on top of
+    another note in the same lane. It is easy to miss in review and only shows
+    up in game, where the player has to go back and clean it by hand.
+
+    Measured on the 290-pack corpus dump, the cymbal lanes carry TWO distinct
+    doubling populations, and they need different treatment:
+
+    A. EXACT duplicates, gap ~ 0, IDENTICAL velocity. 57 pairs (25 hi-hat,
+       17 crash, 15 ride) — and all 57 have matching velocities, 0 exceptions.
+       That signature is the cross-lane collision this relabel can create: one
+       audio onset present in two cymbal lanes, both folded into the same lane.
+       Per-lane dedup ran BEFORE the relabel and never saw across lanes, and
+       nothing dedupes after it, so the pair survives to the chart.
+
+    B. NEAR doubles, 78% DIFFERENT velocity. At the shipped 25 ms gap: 125 pairs
+       spanning 9.7-24.5 ms, 115 of them hi-hat. (An earlier version of this note
+       said "129 pairs, 119 hi-hat, 16-24 ms" - those came from a 30 ms survey
+       window, not the rule that ships.) Two genuinely distinct detections that squeaked past the
+       per-lane hi-hat gap (20 ms spectral / 12 ms hybrid). Clustered by song —
+       51 of 290 packs, and an affected song usually has several.
+
+    WHICH ONE IS DROPPED:
+
+    - A (exact): the notes are the same instant at the same velocity, so the
+      only real choice is which ARTICULATION survives. Keep the note that was
+      already in this lane over one relabelled into it — the cleanup expressed
+      no opinion about the stayer's pitch, and discarding it would flatten e.g.
+      a hi-hat read at 46 down to 42 for no reason. With no stayer, or two, keep
+      the earlier.
+    - B (near): drop the LATER note. Measured, not assumed - see the block at
+      the decision itself. The pair is one strike seen by two producers: the
+      earlier note carries the ML timestamp and the later one the spectral
+      timestamp, 81 times out of 81 in the corpus, and the app's own hybrid
+      merge already prefers ML for exactly this case.
+
+    ⚠ WHY THE OBVIOUS CHECKS CANNOT SETTLE THIS, so they are not attempted:
+    per-hit velocity is `band_energy[fr:fr+3].max()`, a ~35 ms FORWARD window at
+    11.6 ms/frame, so two notes 16-24 ms apart share frames and read the same
+    peak (median delta -3; member velocity medians 82-89, IQR ~78-98; 25 of 125
+    pairs exactly equal). An
+    onset-envelope test is circular for the same reason - a rise-fire plus a
+    peak-fire puts the later note on the envelope max by construction. The chart
+    is blind: pairs sit ~20 ms apart inside a +/-50 ms match window, so both
+    members match the same charted note. The clocks are the only non-circular
+    evidence available.
+
+    ⚠ It also runs AFTER the relabel deliberately: pass A of the assignment
+    needs both notes present to hand out lane slots correctly. Dropping earlier
+    would change which note keeps its lane.
+
+    ``moved[i]`` marks whether ``notes[i]`` was relabelled into its lane.
+    ``notes`` must already be sorted by (time, pitch). Returns a NEW list."""
+    if not notes:
+        return list(notes)
+
+    drop = set()
+    by_lane = {}
+    for i, n in enumerate(notes):
+        if n.lane in CYM_LANES:
+            by_lane.setdefault(n.lane, []).append(i)
+
+    for _lane, idxs in by_lane.items():
+        # Greedy left-to-right against the last SURVIVOR, so a run of three
+        # collapses to one rather than alternating kept/dropped.
+        keep = idxs[0]
+        for j in idxs[1:]:
+            gap = notes[j].time - notes[keep].time
+            # `- _MATCH_TOL` because the boundary is not float-exact: two notes
+            # a nominal 25 ms apart subtract to 0.024999999999999911, which
+            # would put a gap sitting exactly ON the threshold inside it and
+            # delete a note the rule means to keep.
+            if gap >= gap_s - _MATCH_TOL:
+                keep = j
+                continue
+            if gap <= _MATCH_TOL:
+                # A — identical instant. Prefer the note already in this lane.
+                if moved[keep] and not moved[j]:
+                    drop.add(keep)
+                    keep = j
+                else:
+                    drop.add(j)
+            else:
+                # B — two producers, one strike. Keep the EARLIER note.
+                #
+                # ⛔ THIS DIRECTION WAS REVERSED ON 2026-08-14 AFTER MEASURING IT.
+                # It first shipped as drop-the-earlier, from a report that the
+                # phantom is "95% of the time the note on the left" when reviewed
+                # against the waveform in the editor. The provenance measurement
+                # (`tools/cymbal_double_provenance_2026-08-14.py`) says otherwise,
+                # and says it unanimously: of the 81 corpus pairs whose members sit
+                # on distinguishable clocks, the earlier note is on the ML grid and
+                # the later on the spectral grid in 81 cases and the reverse in 0.
+                #
+                # The app already resolves this exact pair the same way 3 ms lower
+                # down: `_smart_merge` prefers ML timing "for hits both engines saw"
+                # because the model "was trained on precisely timed annotations",
+                # and DISCARDS the spectral twin inside its 18 ms window.
+                #
+                # The twin survives to here for TWO reasons, and an earlier version
+                # of this comment gave only the first: (a) part of the population is
+                # wider than 18 ms, but (b) 23 of the 81 sit INSIDE it, at
+                # 12.2-18.9 ms, and survived because `_smart_merge` matches by class
+                # NAME - those members were in different cymbal classes until this
+                # relabel folded them into one lane, so the merge never compared
+                # them. Dropping the earlier member here would delete the ML
+                # timestamp the merge deliberately keeps, making the pipeline
+                # resolve identical pairs oppositely depending on which class they
+                # happened to start in.
+                #
+                # ⚠ A RESIDUAL BAND IS LEFT ON PURPOSE: two-producer pairs 25-30 ms
+                # apart escape the merge, this rule (gap 25 ms) and the ML cymbal
+                # min-gap (30 ms). Four exist in the corpus. Closing it would need a
+                # gap above 30 ms, which starts eating real 32nd-note hi-hats.
+                #
+                # The eyeball report is not evidence against this, because it is not
+                # independent of it: spectral flux peaks after the attack, so the
+                # later note sits on the visible energy blob and the earlier one
+                # looks misplaced. Reading the waveform, per-hit velocity, and an
+                # onset envelope are all the same measurement, and all three favour
+                # the blob over the true leading edge.
+                drop.add(j)
+
+    if not drop:
+        return list(notes)
+    return [n for i, n in enumerate(notes) if i not in drop]
 
 
 def write_midi(path, notes, ticks_per_beat=DEFAULT_TPB, tempo=DEFAULT_TEMPO):

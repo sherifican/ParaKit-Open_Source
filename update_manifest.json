@@ -1,10 +1,10 @@
 {
-  "version": "4.9.13",
+  "version": "4.9.14",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "3dd3a0ca8cc37c49c140bb1a288b9981fe81a12350d35056eab7bc04338b8016"
+      "sha256": "e8449fee2d0398913ec3f2598575d7c8d94f64ee6758bad34b1224d984c4daca"
     },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
@@ -56,7 +56,7 @@
     },
     {
       "path": "README.txt",
-      "sha256": "8d6e63eb6d9e1a85e69d9d148033ddb39b5d7560eeda922ea43d02c7a4147d02"
+      "sha256": "75bf2f7f8fb75d6c80f2e3d9431c8da92b5a4f761c1cc88e00493ed9f4c5794e"
     },
     {
       "path": "Run ParaKit v4.0.bat",
@@ -112,7 +112,7 @@
     },
     {
       "path": "parakit_cleanup/__init__.py",
-      "sha256": "ab6d815022d9c98c024a99981c9a0c5ae85678514398aa91a59f6c8c3a8459bc"
+      "sha256": "de215ef0ca9e3e1cd84d451bcd3dd8321ad1b6f664959f5b09cf4d0083389f0e"
     },
     {
       "path": "parakit_cleanup/bleed.py",
@@ -120,7 +120,7 @@
     },
     {
       "path": "parakit_cleanup/cleanup.py",
-      "sha256": "c5a98313bc5175a01d9c0a1cdc1f7c96792fcd885e67438385be6262fd52a04d"
+      "sha256": "660ec1260a4cbd994a3478c67e3f6cd67a92e830d892b8fef239d3faf36c7242"
     },
     {
       "path": "parakit_cleanup/features.py",
@@ -128,7 +128,7 @@
     },
     {
       "path": "parakit_cleanup/midi_io.py",
-      "sha256": "2cc2aefa9ceb09fe15297da434e5b7461df50cd592b118e3316af799228a3447"
+      "sha256": "9f873dae76108c07008074a64a629c80a973b790b48e6767bdb8188c639b6e7c"
     },
     {
       "path": "parakit_cleanup/numpy_rf.py",

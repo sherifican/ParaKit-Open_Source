@@ -133,6 +133,16 @@ def clean_a2m_midi(midi_path, audio_path, do_cymbal=True, do_kick=True,
     # edits, so honor them even when the decay kick pass (do_kick) is off.
     new_notes = midi_io.apply_cleanup(notes, cleaned, do_cymbal=do_cymbal,
                                       do_kick=(do_kick or n_bleed_removed > 0))
+    # Same-lane cymbal doubles removed by apply_cleanup. Counted here rather
+    # than returned from it so the relabel keeps a single return type: the
+    # cymbal lanes are otherwise untouched by note COUNT, so the difference is
+    # attributable. Kick removals are excluded because they are counted from
+    # `cleaned` above and never reach the cymbal lanes.
+    n_cym_doubles_removed = 0
+    if do_cymbal:
+        _cym_before = sum(1 for n in notes if n.lane in midi_io.CYM_LANES)
+        _cym_after = sum(1 for n in new_notes if n.lane in midi_io.CYM_LANES)
+        n_cym_doubles_removed = max(0, _cym_before - _cym_after)
     mid = midi_io.mido.MidiFile(midi_path)
     tpb = mid.ticks_per_beat or midi_io.DEFAULT_TPB
     tempo = _first_tempo(mid)
@@ -150,6 +160,7 @@ def clean_a2m_midi(midi_path, audio_path, do_cymbal=True, do_kick=True,
         "n_bleed_kicks_removed": n_bleed_removed,
         "bleed_review_flags": bleed_review_flags,
         "cymbal_relabeled": cym_relabeled,
+        "n_cymbal_doubles_removed": n_cym_doubles_removed,
     }
 
 
