@@ -6159,7 +6159,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.14"
+    VERSION = "4.9.15"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -26895,9 +26895,27 @@ demucs.separate.main()
         Spacing is TEMPO-SCALED, not a millisecond constant: measured over
         1,194 charts (tools/snare_roll_spacing_2026-08-14.py), roll spacing
         clusters on beat fractions (67.6% within ±10% of a beat fraction vs
-        32.4% for the best fixed-ms cluster). Default = 32nd notes (0.125
-        beat): the detector already catches 16ths — the rolls it misses are
-        the fast ones, so the fast subdivision is the right default.
+        32.4% for the best fixed-ms cluster).
+
+        DEFAULT = 16th notes (0.25 beat) as of 4.9.15. It shipped as the 32nd in
+        4.9.14 on the reasoning "the detector already catches 16ths, so the
+        rolls it misses are the fast ones". THAT REASONING WAS MEASURED AND IS
+        WRONG (tools/roll_recovery_by_subdivision_2026-08-14.py, 1,266 rolls
+        across 171 curated packs): recovery is FLAT across subdivisions — 16th
+        76.9%, sextuplet 83.3%, 32nd 80.0%, each 54-66 points above its own
+        circular-shift chance floor. The detector misses ~23% of 16th-roll
+        notes, MORE than the ~20% it misses of 32nds, so there is no falloff to
+        default toward and the old argument cannot select any subdivision.
+
+        The surviving evidence is frequency: 67.6% of human-charted rolls are
+        16ths, and they are the ones missed most often, so the 16th is what a
+        user reaches for most. Falloff is governed by absolute time, not
+        notation (recovery arches: 66.7% at 40-60 ms, 82.6% at 80-100 ms, 66.9%
+        above 130 ms — the fast end partly restating
+        A2M_HYBRID_ML_ONLY_MIN_GAP["snare"] = 55 ms), which is why a
+        beat-fraction default cannot be derived from recovery at all and is a
+        product call. Full reasoning + both audits:
+        RESULTS_roll_recovery_by_subdivision_2026-08-14.md.
         """
         # Second press while armed = cancel/disarm (the visible escape hatch).
         if getattr(self, '_me_snare_roll_armed', None):
@@ -26930,10 +26948,13 @@ demucs.separate.main()
         tk.Label(f, text="Spacing (scales with the chart's tempo):",
                  bg=APP_BG, fg="#e0e0e0",
                  font=("Segoe UI", 9)).pack(anchor="w", pady=(8, 2))
-        sub_var = tk.DoubleVar(value=0.125)
-        for label, frac in (("32nd notes  (default — fast roll)", 0.125),
+        # 16th is the default as of 4.9.15 - see the docstring: the 32nd's
+        # justification was measured and refuted. Order is coarse -> fine so the
+        # default reads first.
+        sub_var = tk.DoubleVar(value=0.25)
+        for label, frac in (("16th notes  (default — most common in charts)", 0.25),
                             ("Sextuplets", 1.0 / 6.0),
-                            ("16th notes", 0.25)):
+                            ("32nd notes  (fastest)", 0.125)):
             ttk.Radiobutton(f, text=label, variable=sub_var,
                             value=frac).pack(anchor="w", padx=(8, 0))
 
@@ -26990,7 +27011,10 @@ demucs.separate.main()
         """
         armed = self._me_snare_roll_armed or {}
         count     = max(3, int(armed.get("count", 3)))
-        beat_frac = float(armed.get("beat_frac", 0.125)) or 0.125
+        # fallback matches the DIALOG default (4.9.15: 16th). These two constants
+        # must move together - if they disagree, a malformed armed-state dict
+        # silently places the old subdivision with no visible symptom.
+        beat_frac = float(armed.get("beat_frac", 0.25)) or 0.25
         beat      = 60.0 / self.me_bpm if self.me_bpm > 0 else 0.5
         interval  = beat * beat_frac
         t0 = max(0.0, self._me_snap_time(self._me_x_to_secs(cx)))

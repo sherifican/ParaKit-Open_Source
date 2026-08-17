@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.14  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.15  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,36 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.15   --   2026-08-17
+------------------------------------------------------------------------------
+  Add Snare Roll now defaults to sixteenth notes instead of thirty-second notes.
+
+  ADD SNARE ROLL DEFAULTS TO SIXTEENTHS
+  The tool shipped last version defaulting to the fastest spacing, on the
+  reasoning that conversion already catches slower rolls, so the ones worth
+  placing by hand must be the fast ones.
+
+  That turned out to be wrong. Measured across 1,266 rolls in 171 community
+  charts, conversion misses roughly the same share of rolls at every speed --
+  about a fifth -- and it misses sixteenth-note rolls slightly more often than
+  thirty-second-note ones, not less. There is no speed conversion reliably
+  catches, so "default to the one it misses" cannot pick a spacing at all.
+
+  What does decide it is how often each spacing actually appears: about two
+  thirds of rolls in real charts are sixteenths, and those are also the ones
+  missed most often. So sixteenths are what a roll usually needs to be, and the
+  default now matches. Sextuplets and thirty-second notes are still one click
+  away, and the list is ordered from slowest to fastest.
+
+  WHY SPACING IS STILL WORTH CHECKING BY EAR
+  Whether a roll survives conversion depends on how far apart the hits are in
+  real time rather than on how they are written -- recovery is best around a
+  twelfth of a second between hits and falls off both above and below that. So
+  the spacing that suits a particular song is worth hearing either way. After
+  placing a roll, zoom in and nudge each note against the waveform; real rolls
+  drift around the grid.
 
 ------------------------------------------------------------------------------
   v4.9.14   --   2026-08-14
