@@ -156,6 +156,15 @@ in Firefox before I had fixed the MIDI config, see below for details, although C
 
 *Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
 
+**v4.9.17**<br>2026-08-17
+
+Spectral Comparison — a third view, and a spectrogram that keeps its detail
+
+<img src="screenshots/app-06d-spectral-waveform.png?v=20260817" width="900" alt="Spectral Comparison, Waveform view — mirrored amplitude with the chart's note rows below">
+
++ **A Waveform view.** The toolbar toggle now offers a third view alongside Per-Lane and Spectrogram: a mirrored amplitude trace, left channel above the centre line and right below, both on one shared scale so a genuinely lopsided mix reads as lopsided instead of being flattened into symmetry. Mono files are drawn as a matched pair. It exists because the heatmap is not always the most readable picture — on a noisy recording, a heavily compressed mix or a low-bitrate source it can wash out until nothing stands out, while the amplitude trace still shows plainly where hits land and how hard they were struck. The two views answer different questions, so neither replaces the other. Monochrome for now.
++ **The spectrogram was discarding its own detail on long songs.** It was drawn on a fixed 6000-column grid stretched across the whole song regardless of length, so past roughly 70 seconds that grid was coarser than the analysis behind it and detail already computed never reached the screen — on a ten-minute track about an eighth of it survived. The symptom was zooming in and getting a bigger version of the same coarse picture instead of a sharper one. It now renders from the full analysis across the visible window, so zooming in genuinely reveals more. Short clips look identical to before, because on those nothing was being discarded — which is also why it went unnoticed.
+
 **v4.9.8**<br>2026-07-31
 
 MIDI Editor — sharper chart, note selection, reactive notes and new toolbar buttons
@@ -393,6 +402,9 @@ or exported. Detection itself is untouched — the tab only reads audio and char
 
 *Spectrogram view — full heatmap with note rows:*
 <img src="screenshots/app-06c-spectral-spectrogram.png?v=20260725" width="900" alt="Spectral Comparison, Spectrogram view">
+
+*Waveform view — mirrored amplitude, for when the heatmap is hard to read:*
+<img src="screenshots/app-06d-spectral-waveform.png?v=20260817" width="900" alt="Spectral Comparison, Waveform view">
 
 ### 8 · Sheet Music → MIDI
 <img src="screenshots/app-07-sheet-music-to-midi.png" width="900" alt="Sheet Music to MIDI">
