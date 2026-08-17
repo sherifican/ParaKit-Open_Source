@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.16  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.17  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,43 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.17   --   2026-08-17
+------------------------------------------------------------------------------
+  A Waveform view on the Spectral tab, and a spectrogram that stops throwing
+  away detail on long songs.
+
+  A WAVEFORM VIEW ON THE SPECTRAL TAB
+  The Spectral tab's toolbar toggle now offers a third view alongside Per-Lane
+  and Spectrogram. It draws the audio as a mirrored amplitude trace: the left
+  channel above the centre line, the right channel below, both on one shared
+  scale so a genuinely lopsided mix reads as lopsided instead of being flattened
+  into symmetry. Mono files are drawn as a matched pair.
+
+  It exists because the spectrogram is not always the most readable picture. On
+  a noisy recording, a heavily compressed mix, or a low-bitrate source, the
+  heatmap can wash out to the point where nothing useful stands out -- while the
+  amplitude trace still shows plainly where hits land and how hard they were
+  struck. The two views answer different questions, so neither replaces the
+  other; use whichever the audio is being clearer about.
+
+  The view is monochrome for now. Colouring it by frequency content is a
+  possible later addition, not a promise.
+
+  THE SPECTROGRAM WAS DISCARDING ITS OWN DETAIL
+  The spectrogram was drawn on a fixed 6000-column grid stretched across the
+  whole song, no matter how long the song was. For anything past roughly 70
+  seconds that grid is coarser than the analysis behind it, so detail the app
+  had already computed was being thrown away before it ever reached the screen.
+  On a ten-minute track it was drawing about an eighth of what it knew.
+
+  The practical symptom was zooming in and getting a bigger version of the same
+  coarse picture rather than a sharper one, which is the opposite of what
+  zooming is for. It now renders from the full analysis across the visible
+  window, so zooming in genuinely reveals more. Short clips look the same as
+  before, because on those there was nothing being discarded -- which is also
+  why this went unnoticed for so long.
 
 ------------------------------------------------------------------------------
   v4.9.16   --   2026-08-17

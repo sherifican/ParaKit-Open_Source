@@ -1072,6 +1072,11 @@ class MockSpectralModel:
         self.gram_fmin = GRAM_FMIN
         self.gram_fmax = GRAM_FMAX
         self.gram_rows = self._build_gram(rng, tau)
+        # The mock has no audio file to read an amplitude envelope from, so it
+        # leaves this None ON PURPOSE: that is the state GramView's Waveform
+        # style must survive, and the demo/self-test path is where it gets
+        # exercised. Do not synthesize one here just to make the view prettier.
+        self.wave_env = None
 
     def _build_gram(self, rng, tau):
         rows, cols = GRAM_ROWS, GRAM_COLS
@@ -1175,12 +1180,117 @@ def _build_gram_rows(spec: dict):
     return rows
 
 
+# Envelope resolution, in samples per SECOND of audio -- deliberately NOT tied to
+# GRAM_COLS. The spectrogram's 6000-column master grid is a whole-song grid: on a
+# 581 s song that is 10.3 columns/second, so at 300 px/s a 4.4 s viewport spans ~46
+# columns stretched across ~1300 pixels and the trace renders as ~29 px blocks. A
+# heatmap degrades into a smear and still reads; a waveform degrades into visible
+# stair-steps, which defeats the one thing this view is for. GramView's zoom ceiling
+# is 1400 px/s, so ~800/s keeps roughly one envelope sample per pixel through the
+# useful range and the cap bounds memory on very long files (float32: 1.5M samples
+# per channel = 6 MB).
+WAVE_ENV_RATE = 800.0
+WAVE_ENV_MAX = 1_500_000
+
+
+def _build_wave_env(path, mono_samples, sr):
+    """Max-pooled amplitude envelope for the Waveform view: ``(top, bot)`` as
+    float32 arrays in 0..1, or ``None`` if nothing usable could be read.
+
+    WHY AMPLITUDE AND NOT THE SPECTROGRAM GRID. This view exists because the
+    heatmap gets hard to read on rough audio, so the whole point is transient
+    legibility. Measured on a real drum stem (peak-to-median of the drawn
+    extent, higher = transients stand out): amplitude max-pool **2.75** vs
+    **1.09** for a spectral column collapsed with mean() and **1.18** with
+    max(). Collapsing the grid across frequency destroys the very thing that
+    made it informative, by any reducer -- so this deliberately does NOT reuse
+    ``gram_rows``, cheap though that would have been.
+
+    STEREO, WITH A MONO FALLBACK. Left drives the upper half and right the
+    lower, which is what makes the two sides differ and carry information; 12
+    real drum stems measured a median L/R difference of 0.42 with **none**
+    effectively mono. A mono source (or any decode failure) sets both halves to
+    the same envelope, so the view degrades to an ordinary symmetric waveform
+    instead of breaking -- the same fallback the MIDI Editor's two-tone
+    waveform already uses.
+
+    ⚠ BOTH CHANNELS SHARE ONE DIVISOR. Normalising each side by its own peak
+    would rescale a quiet channel to full height and manufacture an asymmetry
+    that is not in the audio -- the asymmetry is the signal here, so faking it
+    would be worse than showing none.
+
+    Never raises: a failure here must not take down Compare, since the other
+    two views do not need this data at all.
+    """
+    import numpy as np
+
+    # One column count for both channels, from the audio's own length, so the two
+    # halves stay index-aligned and the caller can map time -> index without
+    # knowing which channel it is looking at.
+    try:
+        _n = int(np.asarray(mono_samples).size)
+    except Exception:
+        _n = 0
+    _dur = (_n / float(sr)) if (sr and _n) else 0.0
+    cols = int(min(WAVE_ENV_MAX, max(GRAM_COLS, round(_dur * WAVE_ENV_RATE))))
+
+    def pool(a):
+        a = np.abs(np.asarray(a, dtype=np.float32))
+        if a.size < cols:
+            a = np.pad(a, (0, cols - a.size))
+        chunk = a.size // cols
+        # MAX, not mean: a drum hit is one or two samples of peak inside a window
+        # of near-silence, and averaging it away is exactly how the spectral-ridge
+        # variants of this view ended up unreadable.
+        return a[:chunk * cols].reshape(cols, chunk).max(axis=1)
+
+    left = right = None
+    try:
+        import librosa
+        y = librosa.load(path, sr=None, mono=False)[0]
+        y = np.asarray(y)
+        if y.ndim == 2 and min(y.shape) >= 2:
+            # channels is always the smaller axis, whichever layout the decoder
+            # used -- the same channels-first/channels-last ambiguity the engine
+            # guards against (see compute_spectral's mean(axis=...) note).
+            if y.shape[0] > y.shape[1]:
+                y = y.T
+            left, right = pool(y[0]), pool(y[1])
+        elif y.size:
+            left = right = pool(y.reshape(-1))
+    except Exception:
+        left = right = None
+
+    if left is None:                       # stereo read failed -> reuse the mono
+        try:                               # samples the caller already decoded
+            a = np.asarray(mono_samples)
+            if a.ndim > 1:
+                a = a.mean(axis=(1 if a.shape[0] > a.shape[1] else 0))
+            if not a.size:
+                return None
+            left = right = pool(a)
+        except Exception:
+            return None
+
+    peak = float(max(left.max(), right.max()))
+    if not (peak > 0.0) or not math.isfinite(peak):
+        return None                        # silent or non-finite -> no view
+    # float32 arrays, not lists of Python floats: at 800 samples/s a 10-minute song
+    # is ~480k values per channel, which as boxed floats costs ~12 MB per channel
+    # against ~2 MB here.
+    return ((left / peak).astype(np.float32), (right / peak).astype(np.float32))
+
+
 class _SpectralModel:
     """Adapter wrapping the real ``parakit_spectral_engine`` output into the
     same shape MockSpectralModel provides, so the views need no changes."""
 
-    def __init__(self, spec: dict, notes, issues, bpm):
+    def __init__(self, spec: dict, notes, issues, bpm, wave_env=None):
         self._spec = spec
+        # Optional: (top, bot) amplitude envelopes for the Waveform render
+        # style. None is a supported state -- GramView falls back to deriving a
+        # shape from gram_rows so the view is never blank.
+        self.wave_env = wave_env
         self.dur = float(spec.get("dur", 0.0))
         self.bpm = _safe_bpm(bpm)
         self.notes = list(notes)
@@ -1818,8 +1928,12 @@ class GramView(tk.Frame):
         self.opt = dict(notes=True, flags=True, bands=True, chart_colors=True,
                         hz_readout=False, grid=False, grid_div=4, flash=True,
                         note_shape="diamond", lane_visible=None)
+        # style: "gram" = the log-freq heatmap; "wave" = the mirrored amplitude
+        # waveform. Both live on THIS view rather than in a separate widget so
+        # the ruler, playhead, note strip, scroll-sync and zoom are shared code
+        # instead of a second copy that drifts.
         self.render = dict(brightness=1.15, fmax=16000.0, log_scale=True,
-                           cmap="magma")
+                           cmap="magma", style="gram")
 
         self.axis = tk.Canvas(self, width=AXIS_W, height=200,
                               background=CANVAS_BG, highlightthickness=0)
@@ -2091,7 +2205,6 @@ class GramView(tk.Frame):
         vx0 = max(0.0, min(vx0, total))
         win = int(max(1, min(8192, min(vw + 4, total - vx0 + 4))))
         self._img_x0 = vx0
-        lut = cmap_lut(self.render["cmap"], float(self.render["brightness"]))
         dur = m.dur
         last = GRAM_COLS - 1
         col_idx = []
@@ -2099,6 +2212,21 @@ class GramView(tk.Frame):
             cm = int((vx0 + i) / pps / dur * last) if dur > 0 else 0
             col_idx.append(0 if cm < 0 else (last if cm > last else cm))
         gh = int(round(self.gram_h))
+        if self.render.get("style") == "wave":
+            # vx0/pps, NOT col_idx: col_idx indexes the 6000-column whole-song
+            # spectrogram grid, and the waveform envelope is much finer (see
+            # WAVE_ENV_RATE). Reusing col_idx would throw that resolution away and
+            # render ~29 px stair-steps at 300 px/s.
+            self._photo = self._build_wave_photo(m, vx0, pps, win, gh)
+            return
+        # FULL-RESOLUTION heatmap straight from the STFT, when the model carries one.
+        # Falls through to the gram_rows path below for models that do not (the demo
+        # mock, and anything hand-built) — see _build_gram_photo_hires.
+        _hi = self._build_gram_photo_hires(m, vx0, pps, win, gh)
+        if _hi is not None:
+            self._photo = _hi
+            return
+        lut = cmap_lut(self.render["cmap"], float(self.render["brightness"]))
         rows_bytes = []
         append = rows_bytes.append
         for y in range(gh):
@@ -2109,6 +2237,179 @@ class GramView(tk.Frame):
         header = ("P6 %d %d 255\n" % (win, gh)).encode("ascii")
         self._photo = tk.PhotoImage(data=header + b"".join(rows_bytes),
                                     format="PPM")
+
+    def _build_gram_photo_hires(self, m, vx0, pps, win, gh):
+        """The visible heatmap window built straight from the STFT. None if the model
+        has no spectrum, in which case the caller uses the gram_rows grid.
+
+        WHY THIS EXISTS — the master grid was throwing away most of the analysis.
+        `_build_gram_rows` resamples the STFT into a fixed GRAM_COLS x GRAM_ROWS
+        (6000 x 300) WHOLE-SONG grid. Measured on a 581 s stem at the engine's own
+        N_FFT=2048 / HOP=512: the STFT produces **86.1 frames/sec** (50,034 frames),
+        while 6000 columns over 581 s is **10.33 columns/sec** — so **8.3x of the
+        time resolution that was already computed and paid for** was discarded
+        before anything was drawn. On screen each master column then stretched to
+        ~19 px at 200 px/s, ~29 px at 300, **~87 px at 900**, and ~136 px at the
+        1400 px/s zoom ceiling: the heatmap read as blocks, not as spectral detail.
+        The loss is duration-dependent and begins past 6000/86.1 = ~70 s of audio,
+        which is why no short test fixture could reproduce it.
+        (Owner report: the spectrogram is "sometimes not very helpful". A large part
+        of that was this, not the audio.)
+        This is the same coarse-grid trap that made the Waveform style stair-step
+        until its envelope was decoupled from GRAM_COLS.
+
+        WINDOWED, NOT A BIGGER GRID. The image is already windowed to the viewport,
+        so the fix is to build only the visible span at display resolution rather
+        than to enlarge the stored grid — a full-resolution 300 x 50,034 grid would
+        cost ~15 MB per model, and this costs nothing beyond the (gh x win) image
+        that was being produced anyway.
+
+        The vertical mapping is deliberately IDENTICAL to `_build_gram_rows` — same
+        `arange(1, half) * bin_hz` search — so nothing moves on screen; only the
+        detail changes. Display rows now resolve to STFT bins directly instead of
+        being quantised through 300 grid rows first, which removes a second
+        rounding step on the frequency axis as well.
+        """
+        try:
+            import numpy as np
+
+            spec = getattr(m, "_spec", None)
+            if not isinstance(spec, dict):
+                return None
+            db = spec.get("db")
+            if db is None or getattr(db, "ndim", 0) != 2 or db.size == 0:
+                return None
+            half, n_frames = db.shape
+            if half < 2 or n_frames < 1:
+                return None
+            bin_hz = float(spec.get("binHz", 0.0) or 0.0)
+            if not (bin_hz > 0.0):
+                return None
+            floor = float(spec.get("maxDb", -80.0)) - 80.0
+            dur = float(m.dur)
+
+            # time: display pixel -> song seconds -> STFT frame
+            t = (np.arange(win, dtype=np.float64) + float(vx0)) / max(1e-9, float(pps))
+            fr = np.clip(np.rint(np.clip(t / dur, 0.0, 1.0) * (n_frames - 1)),
+                         0, n_frames - 1).astype(np.intp)
+
+            # frequency: display row -> Hz -> STFT bin, matching _build_gram_rows
+            src_freqs = np.arange(1, half) * bin_hz
+            freqs = np.array([self._y_to_freq(RULER_H + y + 0.5) for y in range(gh)],
+                             dtype=np.float64)
+            ri = np.clip(np.searchsorted(src_freqs, freqs), 0, src_freqs.size - 1).astype(np.intp)
+
+            # Outer-product indexing, NOT db[ri][:, fr]: the latter materialises an
+            # intermediate (gh x n_frames) — 250 x 50,034 float32 = ~50 MB on a
+            # 10-minute song, on the MAIN thread, every repaint.
+            vals = db[ri[:, None], fr[None, :]]
+            norm = np.clip(((vals - floor) / 80.0) * 255.0, 0, 255).astype(np.uint8)
+
+            lut = cmap_lut(self.render["cmap"], float(self.render["brightness"]))
+            lut_arr = np.frombuffer(b"".join(lut), dtype=np.uint8).reshape(256, 3)
+            img = lut_arr[norm]
+            header = ("P6 %d %d 255\n" % (win, gh)).encode("ascii")
+            return tk.PhotoImage(data=header + img.tobytes(), format="PPM")
+        except Exception:
+            # Never let this take the tab down: the gram_rows path below is a
+            # complete, working renderer and is a correct answer, just a coarser one.
+            return None
+
+    # ----- Waveform render style ------------------------------------------------
+    #
+    # Monochrome by owner direction (2026-08-17): get the SHAPE working first,
+    # colour later. So there is deliberately no colormap, no brightness and no
+    # per-channel hue here -- one foreground colour, and the only information
+    # carried is the outline. Left drives the upper half, right the lower, so
+    # the two halves differ on a stereo source and the asymmetry is real audio
+    # rather than decoration.
+    WAVE_FG = (0x00, 0xd4, 0xd4)        # CYAN, the app accent
+    WAVE_MID = (0x46, 0x46, 0x5a)       # centre reference line
+    WAVE_BG = (0x07, 0x07, 0x10)        # CANVAS_BG, so the strip matches the canvas
+
+    def _build_wave_photo(self, m, vx0, pps, win, gh):
+        """Mirrored amplitude waveform as a PPM, same geometry as the heatmap.
+
+        Time axis is derived from the SAME (vx0, pps) the heatmap uses, so the
+        trace lands on exactly the same time positions as the spectrogram, the
+        ruler, the note strip and the playhead -- that shared mapping is the
+        reason this is a style of GramView rather than a separate widget. What it
+        does NOT share is the column INDEX, because the envelope is finer than
+        the 6000-column spectrogram grid.
+        """
+        import numpy as np
+
+        env = getattr(m, "wave_env", None)
+        top_src = bot_src = None
+        if env is not None and len(env) == 2:
+            try:
+                _t = np.asarray(env[0], np.float32)
+                _b = np.asarray(env[1], np.float32)
+                # `.size` and not just `is not None`: an EMPTY envelope passed the
+                # not-None check, and then `size - 1` = -1 turned the index clamp
+                # into a negative bound -> IndexError on the MAIN thread, past the
+                # worker's try/except. Non-finite values would silently become a
+                # zero-height trace, so they are rejected here too rather than
+                # drawn as a flat line that looks like real silence.
+                if _t.size and _b.size and np.isfinite(_t).all() and np.isfinite(_b).all():
+                    top_src, bot_src = _t, _b
+            except (TypeError, ValueError):
+                top_src = bot_src = None
+        if top_src is None:
+            # No amplitude envelope (the demo model, or a decode that failed).
+            # Derive a shape from the spectrogram grid so the view is never
+            # blank. This is measurably WORSE at showing transients (~1.2 vs
+            # ~2.8 peak-to-median) and is a fallback, not the intended path.
+            g = np.asarray([bytes(r) for r in m.gram_rows], dtype=np.uint8) \
+                if not isinstance(m.gram_rows[0], (bytes, bytearray)) \
+                else np.frombuffer(b"".join(bytes(r) for r in m.gram_rows),
+                                   dtype=np.uint8).reshape(len(m.gram_rows), -1)
+            col_max = g.max(axis=0).astype(np.float32)
+            peak = float(col_max.max()) or 1.0
+            top_src = bot_src = col_max / peak
+
+        # Display pixel -> song time -> envelope index, at the envelope's own
+        # resolution. `dur` is already known finite and > 0 (checked by the caller).
+        dur = float(m.dur)
+        t = (np.arange(win, dtype=np.float64) + float(vx0)) / max(1e-9, float(pps))
+        frac = np.clip(t / dur, 0.0, 1.0)
+        # np.clip on the index too: rounding at frac==1.0 can land one past the end,
+        # and an IndexError here surfaces on the MAIN thread past the worker's
+        # try/except. Also covers a short/hand-built envelope.
+        ti = np.clip((frac * (top_src.size - 1)).astype(np.int64), 0, top_src.size - 1)
+        bi = np.clip((frac * (bot_src.size - 1)).astype(np.int64), 0, bot_src.size - 1)
+        top = top_src[ti]
+        bot = bot_src[bi]
+        # One display pixel can span MANY envelope samples when zoomed out (at
+        # 30 px/s each pixel is ~27 samples at 800/s). Point-sampling would then
+        # drop peaks between samples and the trace would flicker as it scrolls, so
+        # reduce each pixel's whole span by max() instead of picking one value.
+        step = float(top_src.size - 1) / max(1e-9, dur) / max(1e-9, float(pps))
+        if step >= 2.0:
+            k = int(min(64, step))          # cap the work; 64 is ample past ~8 px/s
+            offs = np.linspace(0, step, k, endpoint=False).astype(np.int64)[None, :]
+            top = top_src[np.clip(ti[:, None] + offs, 0, top_src.size - 1)].max(axis=1)
+            bot = bot_src[np.clip(bi[:, None] + offs, 0, bot_src.size - 1)].max(axis=1)
+
+        mid = gh // 2
+        room = max(1, mid - 1)
+        # gamma < 1 lifts quiet detail. Ghost notes and hi-hat articulation sit
+        # far below the kick/snare peaks, and on a linear scale they flatten to
+        # nothing -- which is the exact complaint this view exists to answer.
+        g_exp = 0.55
+        t_px = np.clip(np.power(np.clip(top, 0.0, 1.0), g_exp) * room, 0, room)
+        b_px = np.clip(np.power(np.clip(bot, 0.0, 1.0), g_exp) * room, 0, room)
+
+        yy = np.arange(gh, dtype=np.float32)[:, None]
+        dy = yy - mid
+        on = np.where(dy < 0, (-dy) <= t_px[None, :], dy <= b_px[None, :])
+        img = np.empty((gh, win, 3), np.uint8)
+        img[:] = np.asarray(self.WAVE_BG, np.uint8)
+        img[on] = np.asarray(self.WAVE_FG, np.uint8)
+        if 0 <= mid < gh:
+            img[mid] = np.asarray(self.WAVE_MID, np.uint8)
+        header = ("P6 %d %d 255\n" % (win, gh)).encode("ascii")
+        return tk.PhotoImage(data=header + img.tobytes(), format="PPM")
 
     # ----- drawing ------------------------------------------------------------------
     def request_redraw(self):
@@ -2683,12 +2984,17 @@ class SpectralTab(ttk.Frame):
                                 "view analyzes the Drums.")
 
         self._sep(inner).pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=2)
-        self.view_seg = Segmented(inner, ("Per-Lane", "Spectrogram"),
+        self.view_seg = Segmented(inner, ("Per-Lane", "Spectrogram", "Waveform"),
                                   command=self._on_view_switch)
         self.view_seg.pack(side=tk.LEFT)
         Tooltip(self.view_seg, "Per-Lane: one energy strip per drum lane.\n"
                                "Spectrogram: the full frequency heatmap + a "
-                               "note strip.")
+                               "note strip.\n"
+                               "Waveform: a mirrored amplitude trace on the "
+                               "same time axis — easier to read than the\n"
+                               "heatmap when the audio is rough, since it shows "
+                               "hit shape rather than colour intensity.\n"
+                               "Left channel above the line, right below.")
 
         # v4.9.0 — Grid + subdivision + note-shape apply to BOTH views.
         self._sep(inner).pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=2)
@@ -3424,6 +3730,21 @@ class SpectralTab(ttk.Frame):
             notes = eng.load_chart_notes(cand)
             bpm = eng.chart_bpm(cand)
             issues = eng.find_issues(spec, notes)
+            # Waveform-view envelope. Built HERE because this is the worker
+            # thread where the heavy lifting belongs, and because `ref` (the
+            # audio path) is in scope only at this point.
+            #
+            # `decode_audio` is left strictly alone. Its contract is
+            # mono (`librosa.load(..., mono=True)`), the two existing views and
+            # every issue/onset number downstream derive from that exact array,
+            # and widening it to stereo would push the channel mixdown into
+            # compute_spectral -- arithmetically equivalent, but not
+            # bit-for-bit, which is enough to shift a threshold comparison. So
+            # the envelope does its own separate stereo read instead of
+            # reshaping the analysis path. Measured cost of that read on a
+            # 581 s song: ~0.6 s, and stereo decoding is if anything slightly
+            # CHEAPER than mono because librosa skips the mixdown.
+            wave_env = _build_wave_env(ref, samples, sr)
             q.put({
                 "ok": {
                     "spec": spec,
@@ -3432,6 +3753,7 @@ class SpectralTab(ttk.Frame):
                     "bpm": bpm,
                     "ref": ref,
                     "cand": cand,
+                    "wave_env": wave_env,
                 }
             })
         except Exception as e:
@@ -3476,7 +3798,11 @@ class SpectralTab(ttk.Frame):
             self._status("Compare failed: the audio decoded to no usable "
                          "duration -- is the file empty or corrupt?", AMBER)
             return
-        self._model = _SpectralModel(spec, notes, issues, bpm)
+        # .get(), not ["wave_env"]: a result dict queued by an older/other code
+        # path (or a hand-built one in a test) has no such key, and a missing
+        # waveform must not break a Compare the other two views can serve.
+        self._model = _SpectralModel(spec, notes, issues, bpm,
+                                     wave_env=data.get("wave_env"))
         self._undo_stack.clear()
         self._redo_stack.clear()
         cand = data["cand"]
@@ -3538,8 +3864,26 @@ class SpectralTab(ttk.Frame):
 
     # ----- view switching ------------------------------------------------------------
     def _on_view_switch(self, index):
-        (self._gram_page if index == 1 else self._lane_page).tkraise()
-        (self._opt_gram if index == 1 else self._opt_lane).tkraise()
+        # index 1 = Spectrogram, 2 = Waveform. Both are GramView render styles
+        # sharing one page, so `>= 1` raises the same page for either and only
+        # the style differs -- that is what keeps the ruler, playhead, note
+        # strip, scroll-sync and zoom as one implementation.
+        # set_render_params, NOT a direct poke at render["style"].
+        # `_draw_static` only re-PLACES the cached `self._photo`; nothing in the
+        # redraw path rebuilds it. So assigning the style and calling
+        # request_redraw() left the previous image on screen and the view
+        # silently never changed — caught by a render-hash check, because to the
+        # eye "the spectrogram is still there" looks like a switch that did
+        # nothing rather than like a bug. set_render_params is the API that
+        # rebuilds on change.
+        self.gram_view.set_render_params(style=("wave" if index == 2 else "gram"))
+        (self._gram_page if index >= 1 else self._lane_page).tkraise()
+        (self._opt_gram if index >= 1 else self._opt_lane).tkraise()
+        # The advanced panel (colormap / brightness / fmax / log) is
+        # spectrogram-only, and _sync_adv_panel's `== 1` keeps it hidden on the
+        # Waveform view on purpose: those four controls do nothing to a
+        # monochrome amplitude trace, and showing inert controls is worse than
+        # showing none.
         self._sync_adv_panel()
 
     def _on_render_chip(self, _on):
@@ -3738,7 +4082,7 @@ class SpectralTab(ttk.Frame):
         if self._model is None:
             self._status("Run Compare first -- Fit zooms the analyzed song.")
             return
-        view = self.gram_view if self.view_seg.get() == 1 else self.lane_view
+        view = self.gram_view if self.view_seg.get() >= 1 else self.lane_view
         vw = max(100, view.canvas.winfo_width() - 4)
         # ui_clamp=False (breaker R3E-2, 2026-07-20): Fit's whole job is to go
         # BELOW the slider's ZOOM_MIN for songs longer than ~viewport/30 px/s
@@ -3921,7 +4265,7 @@ class SpectralTab(ttk.Frame):
         self._follow_playhead()
 
     def _follow_playhead(self):
-        view = self.gram_view if self.view_seg.get() == 1 else self.lane_view
+        view = self.gram_view if self.view_seg.get() >= 1 else self.lane_view
         px = view.playhead_x()
         if px is None:
             return

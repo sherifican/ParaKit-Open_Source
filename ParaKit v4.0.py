@@ -6159,7 +6159,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.16"
+    VERSION = "4.9.17"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -40756,8 +40756,10 @@ demucs.separate.main()
               "    (default Drums; switch to Full Mix for masking context)\n\n"
               "Shortcut: the 📊 Spectral button on the MIDI Editor, Audio → MIDI,\n"
               "Song Tester and Preview tabs sends that song's drums + chart here.\n\n"
-              "Two views (toolbar toggle): Per-Lane (energy ribbon + notes per\n"
-              "drum) and Spectrogram (full heatmap with the chart's note rows).\n"
+              "Three views (toolbar toggle): Per-Lane (energy ribbon + notes\n"
+              "per drum), Spectrogram (full heatmap with the chart's note rows)\n"
+              "and Waveform (mirrored stereo amplitude — useful when a noisy or\n"
+              "heavily compressed mix makes the heatmap hard to read).\n"
               "Zoom with the slider, Ctrl+wheel, or Fit. The Render panel on the\n"
               "Spectrogram view adjusts brightness, top frequency and colormap.")
 
