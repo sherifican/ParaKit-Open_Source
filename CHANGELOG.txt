@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.15  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.16  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,27 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.16   --   2026-08-17
+------------------------------------------------------------------------------
+  Song library badges now update as soon as a job finishes.
+
+  BADGES UPDATE WITHOUT A RESTART
+  Splitting stems or converting a MIDI for a song in the library left that song's
+  OGG, STEMS and MIDI badges grey. They only caught up after pressing one of the
+  library's own buttons, or after closing and reopening ParaKit - so a song you
+  had just worked on looked untouched.
+
+  The badges were never reading stale information. Each one checks the disk every
+  time it is drawn, so the answer was always correct; the rows simply were not
+  being redrawn when a job ended. They now redraw as soon as a stem split, an
+  .ogg conversion, or an Audio to MIDI conversion finishes, including when one
+  fails partway - a run that stops early can still leave a file behind, and that
+  file should show up too.
+
+  Nothing about how the badges decide what exists has changed, so a badge that was
+  right before is still right; it is just no longer late.
 
 ------------------------------------------------------------------------------
   v4.9.15   --   2026-08-17

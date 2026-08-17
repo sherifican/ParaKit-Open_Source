@@ -6159,7 +6159,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.15"
+    VERSION = "4.9.16"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -15137,6 +15137,15 @@ demucs.separate.main()
             # Hard-null OGG-badge walk so the next library refresh shows the
             # just-split song's purple badge immediately (else ≤45 s TTL).
             self._yt_ogg_scan_set = None
+            # …AND ACTUALLY TRIGGER THAT REFRESH (4.9.16). Invalidating the memo
+            # only made the NEXT refresh honest; nothing scheduled one, so the
+            # OGG/STEMS badges for a song split in this session stayed grey until
+            # the user happened to press a library action button (those DO call
+            # `_libraries_refresh_all`) or restarted the app. The badge readers
+            # `_stem_is_split` / `_midi_paired` hit disk with no cache of their
+            # own, so the rows were never wrong — they were never re-rendered.
+            # Marshalled to the main thread: this is the worker.
+            self.root.after(0, self._libraries_refresh_all)
 
             self._last_drums_ogg = drums_ogg
             self._last_detector_drums = drums_detector_flac or drums_ogg
@@ -18052,8 +18061,33 @@ demucs.separate.main()
         # _me_open_chart together close the cross-chart leak (breaker: F12 stash leak).
         self._a2m_bleed_review_flags = None
 
+        def _convert_then_refresh(*a):
+            """Run the conversion, then re-render the library rows (4.9.16).
+
+            A finished conversion left the MIDI badge grey until the user pressed
+            a library action button or restarted — `_midi_paired` reads disk with
+            no cache, so the row was never wrong, it was just never re-rendered.
+
+            THE REFRESH LIVES HERE, IN THE THREAD TARGET, ON PURPOSE. The natural
+            home is beside the "Done!" log inside `_a2m_do_convert`, but that is a
+            PROTECTED function and this is a UI-refresh bug, not a detection
+            change — no reason to spend a protected edit on it. Wrapping the
+            target gets the same guarantee from outside the protected body.
+
+            `finally`, so a conversion that raises still re-reads disk: a partial
+            run can leave a MIDI behind, and a stale grey badge after a failure is
+            the same bug wearing a different hat.
+            """
+            try:
+                self._a2m_do_convert(*a)
+            finally:
+                try:
+                    self.root.after(0, self._libraries_refresh_all)
+                except Exception:
+                    pass        # app closing mid-convert — nothing to refresh
+
         thread = threading.Thread(
-            target=self._a2m_do_convert,
+            target=_convert_then_refresh,
             args=(input_path, output_dir, onset, frame, ride_detect, mode,
                   kick_detect, debug_log, genre, dedup_gaps,
                   peak_scan_ms, trigger_align_ms,
@@ -47758,8 +47792,12 @@ demucs.separate.main()
             self._ogg_log(f"{'='*50}")
             # Hard-null OGG-badge walk so the next library refresh picks up
             # just-converted .ogg files immediately (else ≤45 s TTL).
+            # …and schedule that refresh (4.9.16) — same defect as the split and
+            # convert paths: the memo was invalidated but no redraw was queued, so
+            # the OGG badge stayed grey for the rest of the session.
             if success_count > 0:
                 self._yt_ogg_scan_set = None
+                self.root.after(0, self._libraries_refresh_all)
 
             # The branch that used to sit here read cfg["ogg_skip_mp3_warning"] — a key
             # NOTHING in this app has ever written. The only MP3-warning preference is
