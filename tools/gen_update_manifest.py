@@ -50,18 +50,20 @@ ROOT_FILES = [
     "README.md", "README.txt",
     "parakit.ico", "parakit_header_logo.png", "parakit_logo_FINAL.png",
     "dot_lit_v2.png", "dot_lit_v3_tight.png", "dot_unlit.png",
-    # v4.9.3 -- runtime modules for the three new tabs (Spectral Comparison,
-    # Preview, Practice) plus the built-in drum synth. These are IMPORTED BY THE
-    # MAIN .py, so an updater that skips them leaves the app unable to START:
-    # the main .py is written LAST, and would then import modules that never
-    # arrived. Added in the same release that shipped them, per the standing
-    # "a release adding a root asset adds it to this list" rule above.
+    # Tab sidecars imported by 'ParaKit v4.0.py' at runtime -- must ship next
+    # to the main .py or the tab fails to load. The Spectral tab (v4.8.0) and
+    # the native Preview + Practice tab replacements (v4.9.x) each ship as
+    # root-level sidecars; add any new one here the moment it is imported.
+    # Spectral Comparison tab (v4.8.0):
     "parakit_spectral_tab.py", "parakit_spectral_engine.py",
+    # Preview tab (native TTK replacement, v4.9.x):
     "parakit_preview_tab.py", "parakit_preview_engine.py",
     "parakit_preview_sprites.py",
-    "parakit_practice_tab.py", "parakit_practice_engine.py",
-    "parakit_practice_home.py", "parakit_practice_widgets.py",
+    # Practice tab (native TTK replacement, v4.9.x):
+    "parakit_practice_tab.py", "parakit_practice_home.py",
+    "parakit_practice_engine.py", "parakit_practice_widgets.py",
     "parakit_practice_sprites.py",
+    # Shared drum-synth voices (Preview + Practice synth toggle, v4.9.x):
     "parakit_synth_voices.py",
 ]
 
@@ -110,6 +112,27 @@ def _skip(name):
     return low.endswith(EXCLUDE_SUFFIX) or any(s in low for s in EXCLUDE_SUBSTR)
 
 
+def _gitignored_set(root):
+    """Relative paths (forward-slash) git IGNORES under `root`. The CONTENT_DIRS
+    walk below did NOT consult .gitignore (breaker 2026-07-23, codex), so a
+    git-ignored file — e.g. `parakit_cleanup/test_bleed.py` via `.gitignore`'s
+    `test_*.py` — would enter the manifest and be DOWNLOADED to public users.
+    Empty set when `root` is not a git work tree / git is unavailable (then only
+    the name-based excludes apply)."""
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["git", "-C", root, "ls-files", "--others", "--ignored",
+             "--exclude-standard", "-z"],
+            capture_output=True, timeout=30)
+        if out.returncode != 0:
+            return set()
+        return {p.replace("\\", "/")
+                for p in out.stdout.decode("utf-8", "replace").split("\0") if p}
+    except Exception:
+        return set()
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     root = os.path.abspath(args[0] if args else ".")
@@ -126,11 +149,60 @@ def main():
     if ver == "?":
         missing.append("VERSION constant (ParaKit v4.0.py unreadable or pattern mismatch)")
 
+    # --- release surface: the README version table must cover THIS release --------
+    #
+    # WHY THIS LIVES HERE. A release touches several user-facing surfaces —
+    # CHANGELOG.txt, both "Version in this release" lines, and the README's
+    # version-history table. 4.9.15 and 4.9.16 updated the first two and silently
+    # skipped the third, so for two consecutive releases the changelog was correct
+    # and live while the first thing anyone reads on GitHub still ended at v4.9.14.
+    # Nothing caught it; it was found by eye, days later.
+    #
+    # This generator is the right place to catch it because it is the one step
+    # documented to run FROM THE PUBLIC REPO after every release, so it is the only
+    # tool that sees the shipped README and the shipped VERSION at the same moment.
+    # (The _breaker invariant suite cannot do this job: it runs against the DEV tree,
+    # whose README.md is a different, independently-maintained file — currently
+    # topping out at a different version entirely — and pointing an invariant at an
+    # absolute path outside the app tree reddens the mutation sandbox and blames the
+    # app for it. That trap has been hit four times.)
+    #
+    # Appended to `missing`, so it reuses the existing refuse-to-write behaviour and
+    # the existing --allow-missing escape hatch rather than inventing a second one.
+    try:
+        with open(os.path.join(root, "README.md"), encoding="utf-8") as f:
+            _readme = f.read()
+        # Rows are `| **vX.Y.Z**<br>date | ... |`, newest first. The bold markers vary
+        # (v4.9.9 is ***italic-bold*** because it was staged and never released), so
+        # the count of asterisks is not fixed.
+        _rows = re.findall(r"^\|\s*\*+v([0-9][0-9.]*)\*+", _readme, re.M)
+        if not _rows:
+            missing.append(
+                "README.md version-history table: no rows matched — the table was "
+                "moved, renamed, or reformatted, so this check is no longer looking "
+                "at anything")
+        elif ver != "?" and _rows[0] != ver:
+            missing.append(
+                "README.md version table is stale: newest row is v%s but this "
+                "release is v%s — add the row before shipping" % (_rows[0], ver))
+    except OSError as _e:
+        missing.append("README.md unreadable for the version-table check (%s)"
+                       % type(_e).__name__)
+
+    ignored = _gitignored_set(root)
+    skipped_ignored = []
+
     files = []
     for rel in ROOT_FILES:
         p = os.path.join(root, rel)
+        rel_fs = rel.replace("\\", "/")
+        if rel_fs in ignored:
+            # A whitelisted root file that git ignores is a config error — surface
+            # it loudly rather than silently ship (or silently drop) it.
+            missing.append(f"root file is .gitignore'd (will NOT ship): {rel}")
+            continue
         if os.path.isfile(p) and not _skip(rel):
-            files.append((rel.replace("\\", "/"), _sha256(p)))
+            files.append((rel_fs, _sha256(p)))
         else:
             missing.append(f"root file: {rel}")
 
@@ -146,9 +218,15 @@ def main():
                     continue
                 full = os.path.join(dirpath, fn)
                 rel = os.path.relpath(full, root).replace("\\", "/")
+                if rel in ignored:
+                    skipped_ignored.append(rel)   # .gitignore'd -> never manifest/ship
+                    continue
                 files.append((rel, _sha256(full)))
 
     files.sort()
+    if skipped_ignored:
+        print("   (skipped %d .gitignore'd file(s) that would otherwise ship: %s)"
+              % (len(skipped_ignored), ", ".join(sorted(set(skipped_ignored))[:6])))
 
     allow = "--allow-missing" in sys.argv
     if missing:
