@@ -4214,8 +4214,15 @@ class SpectralTab(ttk.Frame):
         self._playing = True
         self._paused = False
         self.play_btn.configure(text="\u25aa\u25aa Pause")
-        self._tick_last = time.monotonic()
+        # ANCHOR AFTER THE STREAM STARTS (2026-08-17). _start_stream decodes and
+        # resamples synchronously -- on a cold _spec_sound_cache miss that is the
+        # full file (0.9 s for a 6.5-minute 48 kHz mix), and the 4-entry LRU only
+        # shrinks a warm hit, it does not remove it. Anchoring _tick_last first
+        # meant the FIRST _play_tick added the whole decode to _play_t, so the
+        # playhead jumped ahead of the audio and stayed there. _on_seek below
+        # already had this order right; this path was the odd one out.
         self._start_stream(self._play_t)
+        self._tick_last = time.monotonic()
         self._tick_job = self.after(30, self._play_tick)
 
     def _pause(self):
@@ -4239,9 +4246,14 @@ class SpectralTab(ttk.Frame):
         # mirror image of the R4B3-5 stale-"Playing" fix.
         self._status("Playing (%.2fx)." % self._speed)
         self.play_btn.configure(text="\u25aa\u25aa Pause")
-        self._tick_last = time.monotonic()
+        # Same order as _on_play / _on_seek. Unpause is cheap today (it resumes an
+        # existing channel rather than decoding), so this is consistency rather
+        # than a live fix -- but it removes the last place in this file where the
+        # clock is anchored before a hook call, so the rule holds without an
+        # exception a later edit could widen.
         if self.hooks and "mixer_unpause" in self.hooks:
             self._hook_call("mixer_unpause")
+        self._tick_last = time.monotonic()
         self._tick_job = self.after(30, self._play_tick)
 
     def _play_tick(self):

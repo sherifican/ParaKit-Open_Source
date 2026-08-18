@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.17  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.18  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -27,6 +27,40 @@
 ==============================================================================
 
 ------------------------------------------------------------------------------
+  v4.9.18   --   2026-08-17
+------------------------------------------------------------------------------
+  Preview and Spectral no longer start the chart ahead of the music.
+
+  THE CHART STARTED AHEAD OF THE AUDIO
+  Pressing Play in the Preview tab started the chart running immediately, then
+  went away and decoded the audio before any sound came out. The time spent
+  decoding was counted as song time, so the notes were already ahead of the
+  music by the time it started -- and stayed exactly that far ahead for the rest
+  of the song. On a six-and-a-half-minute song with a 48 kHz full mix and a
+  separate drums stem that came to about 1.3 seconds, which is more than three
+  beats at 157 BPM.
+
+  It was a constant lead rather than a drift, which is why it looked wrong from
+  the very first note instead of slowly wandering. The cost depends on how long
+  the song is and whether the file needs converting to the mixer's rate, so a
+  short clip looked fine and a long one looked badly out.
+
+  The same thing happened on every seek during playback -- dragging the position
+  slider, a loop jumping back to its start, and nudging the audio-offset slider
+  -- because moving the audio mid-song re-decodes it exactly like starting does.
+  All four now wait for the audio before the clock counts.
+
+  THE SPECTRAL TAB HAD IT TOO
+  Play from stopped had the same order, so the playhead jumped ahead of the
+  audio by however long the decode took. It has a small cache of recently played
+  audio, so this came and went depending on whether the file was still in it --
+  a fresh file was worst.
+
+  The Practice tab and the MIDI Editor were never affected: Practice takes its
+  position from the audio itself rather than from a clock of its own, and the
+  MIDI Editor plays from audio it has already decoded.
+
+------------------------------------------------------------------------------
   v4.9.17   --   2026-08-17
 ------------------------------------------------------------------------------
   A Waveform view on the Spectral tab, and a spectrogram that stops throwing
@@ -35,18 +69,18 @@
   A WAVEFORM VIEW ON THE SPECTRAL TAB
   The Spectral tab's toolbar toggle now offers a third view alongside Per-Lane
   and Spectrogram. It draws the audio as a mirrored amplitude trace: the left
-  channel above the centre line, the right channel below, both on one shared
+  channel above the center line, the right channel below, both on one shared
   scale so a genuinely lopsided mix reads as lopsided instead of being flattened
   into symmetry. Mono files are drawn as a matched pair.
 
   It exists because the spectrogram is not always the most readable picture. On
-  a noisy recording, a heavily compressed mix, or a low-bitrate source, the
-  heatmap can wash out to the point where nothing useful stands out -- while the
+  a noisy recording, a heavily compressed mix, or a low-bit rate source, the
+  heat-map can wash out to the point where nothing useful stands out -- while the
   amplitude trace still shows plainly where hits land and how hard they were
   struck. The two views answer different questions, so neither replaces the
   other; use whichever the audio is being clearer about.
 
-  The view is monochrome for now. Colouring it by frequency content is a
+  The view is monochrome for now. Coloring it by frequency content is a
   possible later addition, not a promise.
 
   THE SPECTROGRAM WAS DISCARDING ITS OWN DETAIL

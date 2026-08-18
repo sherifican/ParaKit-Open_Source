@@ -2638,9 +2638,35 @@ class PreviewTab(ttk.Frame):
         playing = self.canvas.is_playing
         self.play_btn.configure(text="⏸ Pause" if playing else "▶ Play")
         if playing:
-            self._synth_prev_t = self.canvas.now
-            ok, res = self._hook_call("mixer_play", self.canvas.now,
+            start_at = self.canvas.now
+            self._synth_prev_t = start_at
+            ok, res = self._hook_call("mixer_play", start_at,
                                       self._speed)
+            # RE-ANCHOR THE CLOCK (owner-reported desync, 2026-08-17): the chart
+            # ran ahead of the audio from the very first note, on a song that
+            # lined up correctly in the MIDI Editor.
+            #
+            # canvas.toggle() above calls play(), which anchors _anchor_wall to
+            # perf_counter() IMMEDIATELY. The host's mixer_play then decodes and
+            # resamples on THIS thread before a single sample sounds -- measured
+            # 1.31 s for the reported song (a 6.5-minute 48 kHz full mix needing
+            # 48k->44.1k resample_poly, 0.91 s, plus a 44.1 kHz drums stem,
+            # 0.40 s). Every one of those seconds was already being counted as
+            # song time, so the highway started that far ahead and STAYED there:
+            # the error is constant, not drift, and nothing healed it, because
+            # sync_clock has no other caller and mixer_song_time is DEFERRED.
+            #
+            # Re-anchoring here keeps _anchor_song at the requested position and
+            # resets _anchor_wall to the moment audio actually began. It is
+            # unconditional on purpose: a failed or missing mixer costs no decode
+            # time, so the call is a no-op there rather than a special case.
+            #
+            # The MIDI Editor is unaffected because it plays from its cached
+            # _me_sound_cache (decode already done); Practice is unaffected
+            # because it hands position authority to the mixer, whose own anchor
+            # is taken AFTER the decode -- Preview is the only tab that keeps the
+            # clock locally AND never re-syncs.
+            self.canvas.sync_clock(start_at)
             # The hook can FAIL BY RETURN VALUE, not just by raising (same
             # contract as Spectral's _start_stream, breaker R2B2-1): the host
             # returns False when stems were loaded but NONE decoded — before
@@ -2665,6 +2691,27 @@ class PreviewTab(ttk.Frame):
         self._synth_prev_t = 0.0
         self._metro_k = -1
         self.play_btn.configure(text="▶ Play")
+
+    def _mixer_recue(self, t):
+        """Re-cue the audio to song-second `t`, then re-anchor the clock to the
+        moment the audio actually resumed.
+
+        WHY THIS EXISTS AS A HELPER RATHER THAN THREE CALL SITES. The host's
+        mixer_seek is NOT cheap while playing: _pp_mix_seek routes straight back
+        into _pp_mix_play, which re-decodes and re-resamples every loaded stem
+        (measured 1.31 s for a 6.5-minute 48 kHz mix plus a 44.1 kHz drums stem).
+        Every caller that moved the canvas and then asked the mixer to follow was
+        therefore leaving the clock running across that decode, re-opening the
+        exact gap _on_play_toggle closes -- scrubbing, loop-back and the
+        audio-offset nudge each did it (found by an independent audit after the
+        play-path fix, which covered none of them).
+
+        Routing every re-cue through here means a FOURTH such site cannot be
+        added wrong by accident, and gives the invariant one thing to check
+        instead of an open-ended search for raw mixer_seek calls.
+        """
+        self._hook_call("mixer_seek", t)
+        self.canvas.sync_clock(t)
 
     def _on_speed_changed(self, _event=None):
         text = self.speed_var.get()
@@ -2959,7 +3006,7 @@ class PreviewTab(ttk.Frame):
         t = v / _SEEK_STEPS * self.canvas.duration
         self._synth_prev_t = t
         self.canvas.seek(t)
-        self._hook_call("mixer_seek", t)
+        self._mixer_recue(t)
 
     def _update_seek_from_view(self, t):
         if self.canvas.duration <= 0:
@@ -2983,7 +3030,7 @@ class PreviewTab(ttk.Frame):
                                             n.vel)
             a = self._loop_a
             self.canvas.seek(a)
-            self._hook_call("mixer_seek", a)
+            self._mixer_recue(a)
             self._synth_prev_t = a
             return
         self.time_label.configure(text=fmt_time(t))
@@ -3312,7 +3359,7 @@ class PreviewTab(ttk.Frame):
         self.audio_offset_readout.configure(text="%d ms" % v)
         self._cfg_set(T9_OFFSET_KEY, v)
         if "mixer_seek" in self.hooks:
-            self._hook_call("mixer_seek", self.canvas.now)   # re-cue nudge
+            self._mixer_recue(self.canvas.now)   # re-cue nudge
 
     # ----- editing ---------------------------------------------------------
     def _on_edit_toggled(self, checked):
