@@ -2,10 +2,10 @@
 
 **An all-in-one drum-charting tool for [Paradiddle](https://www.paradiddleapp.com/) (`.rlrr`), with Clone Hero (`.chart`) support.**
 
->ParaKit is actively developed and supported. **v4.x is the current, actively-developed line** — it is not
->in maintenance mode and is not waiting on anything. New features land here (recent releases added three
->new tabs), and it will keep getting regular updates.
->
+>ParaKit is actively being developed / supported. v4.0+ is the current public stable build.
+
+>I'm currently working on attempting to find tune a ParaKit specific AI model that's trained specifically on transcription, onsets, velocity/volume dynamics, and audio/MIDI onset / placement synchronization. I'm not making any promises about potential results, but essentially I'm attempting to create a super lightweight model that can be used as an optional add-on (free) to ParaKit to assist with some of the aspects that the current Jarredou Stem Iso model & other built in processes may help, but dont completely solve.
+
 >The **v5 rebuild** (PySide6/Qt) is still in development and **no longer has a target date** — the earlier
 >mid-2026 estimate is out of date. v5 is a UI-framework rebuild rather than a feature release, so instead
 >of holding work back for it, features ship in v4 as they're ready. **v4 support continues regardless of
