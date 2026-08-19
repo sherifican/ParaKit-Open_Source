@@ -6159,7 +6159,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.18"
+    VERSION = "4.9.19"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -32537,11 +32537,17 @@ demucs.separate.main()
                 try:
                     bpm = float(bpm_override)
                     self._sm_log(f"BPM override: {bpm:.1f}")
-                    for mm in score.flat.getElementsByClass('MetronomeMark'):
+                    for mm in score.flatten().getElementsByClass('MetronomeMark'):
                         mm.number = bpm
-                    if not score.flat.getElementsByClass('MetronomeMark'):
+                    if not score.flatten().getElementsByClass('MetronomeMark'):
                         mm = m21.tempo.MetronomeMark(number=bpm)
-                        score.flat.insert(0, mm)
+                        # NOT score.flatten().insert(...): flatten returns a NEW stream, so the
+                        # insert landed in a throwaway and the override silently did nothing
+                        # (verified: the written MIDI came out at 120, not the requested BPM).
+                        # The loop above works because it MUTATES existing marks in place --
+                        # flattened streams hold references -- but a fresh object has to go
+                        # into the score itself.
+                        score.insert(0, mm)
                 except ValueError:
                     self._sm_log("BPM override invalid — ignored")
 
@@ -32549,25 +32555,25 @@ demucs.separate.main()
                 try:
                     ts = m21.meter.TimeSignature(f"{ts_num_override}/{ts_den_override}")
                     self._sm_log(f"Time sig override: {ts_num_override}/{ts_den_override}")
-                    for existing in score.flat.getElementsByClass('TimeSignature'):
+                    for existing in score.flatten().getElementsByClass('TimeSignature'):
                         existing.activeSite.replace(existing, ts)
                         break
                 except Exception:
                     self._sm_log("Time sig override invalid — ignored")
 
             # ── Extract tempo and time sig for log ────────────────────────────
-            tempos = score.flat.getElementsByClass('MetronomeMark')
+            tempos = score.flatten().getElementsByClass('MetronomeMark')
             bpm_log = f"{tempos[0].number:.1f}" if tempos else "120 (default)"
             self._sm_log(f"BPM: {bpm_log}")
 
-            timesigs = score.flat.getElementsByClass('TimeSignature')
+            timesigs = score.flatten().getElementsByClass('TimeSignature')
             ts_log = str(timesigs[0]) if timesigs else "4/4 (default)"
             self._sm_log(f"Time sig: {ts_log}")
 
             # ── Extract full tempo map from music21 (its key advantage over basic mode) ──
             bpm_val = 120.0
             tempo_map = []  # list of (offset_quarterLength, bpm)
-            for mm in score.flat.getElementsByClass('MetronomeMark'):
+            for mm in score.flatten().getElementsByClass('MetronomeMark'):
                 try:
                     offset_ql = float(mm.offset)
                     tempo_map.append((offset_ql, float(mm.number)))
@@ -32588,7 +32594,7 @@ demucs.separate.main()
 
             self._sm_log(f"BPM: {bpm_val:.1f}" + (f"  ({len(tempo_map)} tempo sections)" if len(tempo_map) > 1 else ""))
 
-            timesigs = score.flat.getElementsByClass('TimeSignature')
+            timesigs = score.flatten().getElementsByClass('TimeSignature')
             ts_log = str(timesigs[0]) if timesigs else "4/4 (default)"
             self._sm_log(f"Time sig: {ts_log}")
 

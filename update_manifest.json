@@ -1,10 +1,10 @@
 {
-  "version": "4.9.18",
+  "version": "4.9.19",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "92e7918a9554faedcc837ca8d08625e2553020aa4cde147b13d1822c71694454"
+      "sha256": "cedb521c64e007219c34cfb6737dbc80c5a67ff551afa7cbcc3d2610618e5859"
     },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
@@ -52,7 +52,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "b5274060b72006141ab27572da0599c5ceabf151d1bc8f085972f71bdea8f936"
+      "sha256": "cf9498e3c86e2626756d9062d003e308dd1bfdffd5ac3ce21a920096697d4510"
     },
     {
       "path": "README.txt",
@@ -76,7 +76,7 @@
     },
     {
       "path": "docs/TROUBLESHOOTING.md",
-      "sha256": "4ce2fc7d2fd0073264f09f15e80d14140f2f8fa0c46cbde07ac64203341abc19"
+      "sha256": "e9f7fd8d7b614257add970e11d206c3deffd7aee9c4d56827ff457125318a723"
     },
     {
       "path": "dot_lit_v2.png",
@@ -468,7 +468,7 @@
     },
     {
       "path": "requirements.txt",
-      "sha256": "ca6282438cdd8c16862a1a54574f10fe3e84dd1505715b35514b09cac5cbd5d2"
+      "sha256": "20d0131b0175f53fd6e9151431734be5a2489591a48336f746ccf520cc0da153"
     },
     {
       "path": "rlrr_parse.py",

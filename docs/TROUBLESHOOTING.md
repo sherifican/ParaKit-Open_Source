@@ -92,18 +92,29 @@ bundle is present and up to date. yt-dlp 2025+ may also need a JavaScript runtim
 specific guidance when it detects this.
 
 ## Stem Splitter is very slow / not using my GPU
-GPU acceleration (CUDA) works on NVIDIA **GTX 10-series → RTX 40-series**. On other GPUs
-(AMD, Intel) and on **RTX 50-series** cards, splitting runs on **CPU**. It still works —
-just slower. See the next section for the RTX 50-series situation.
+**On Windows, a standard install runs the splitter on CPU no matter which graphics card you
+have** — including a 3090 or a 4090. This is not a ParaKit setting and nothing is broken.
+
+The reason is the PyTorch package itself. `pip install -r requirements.txt` fetches PyTorch
+from PyPI, and **the Windows build published there contains no CUDA support at all** (it is
+a ~116 MB download; a CUDA-enabled build is over 2 GB). So there are no GPU kernels present
+for any card, and Demucs correctly uses the CPU.
+
+To use your GPU you install a CUDA build of PyTorch yourself, from PyTorch's own package
+index — see the next section. That applies to every NVIDIA card, not only the 50-series.
+
+AMD and Intel graphics have no CUDA at all and always run on CPU.
 
 ---
 
 ## RTX 50-series (Blackwell: 5070 / 5080 / 5090) GPU acceleration
 
-**The situation.** The stem splitter uses Demucs (PyTorch). The PyTorch build that ships
-with ParaKit does not include kernels for Blackwell GPUs (compute capability **sm_120**),
-so on an RTX 50-series card the splitter correctly falls back to **CPU**. Everything still
-works — just at CPU speed.
+**The situation.** The stem splitter uses Demucs (PyTorch). As explained just above, the
+PyTorch that a standard install brings in has **no CUDA support of any kind**, so the
+splitter runs on CPU on every card. Blackwell has one extra wrinkle on top of that: it needs
+a build made for compute capability **sm_120**, so an older CUDA build that works on a 40-series
+card still will not drive a 50-series one. You need a **CUDA 12.8 (`cu128`)** build
+specifically. Everything works either way — CPU is just slower.
 
 **Recommended fix — wait for the dedicated build.** We're packaging a separate,
 **creator-verified RTX 50-series build** that has GPU acceleration configured and tested
@@ -114,21 +125,30 @@ watch the [releases page](https://github.com/sherifican/ParaKit---Releases).
 straightforward and confirmed working on a 5070: install a CUDA 12.8 (`cu128`) PyTorch build
 in your Python 3.12 environment:
 ```
-py -3.12 -m pip install --index-url https://download.pytorch.org/whl/cu128 torch torchaudio torchvision
+py -3.12 -m pip install --index-url https://download.pytorch.org/whl/cu128 torch
 ```
+`torch` on its own is enough — current Demucs does its audio reading and writing without
+`torchaudio`, so there is no need to pull that (or `torchvision`) in. Leaving them out also
+avoids the file-writing problem described below. Add them only if something else on your
+machine needs them, and keep their versions matched to `torch`.
 Verify it sees the card with no compatibility warning:
 ```
 py -3.12 -c "import torch; print(torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0))"
 ```
 
-**The catch (be aware).** Newer PyTorch (2.11) changed how `torchaudio` writes audio files —
-it now routes saving through **TorchCodec**, which additionally needs **FFmpeg _shared
-libraries_** (the full "shared" FFmpeg build, not the static `ffmpeg.exe`-only one). Without
-that, the GPU split itself succeeds but **writing the output stems fails**. Sorting that out
-cleanly (TorchCodec + matching FFmpeg shared libs, or a save-path tweak) is exactly what the
-dedicated 50-series build packages for you — which is why we recommend it over hand-rolling
-the upgrade. Note also that swapping PyTorch versions in your main Python environment can
-affect anything else that uses it.
+**The catch (only if you install `torchaudio` as well).** From PyTorch 2.11 onward,
+`torchaudio` writes audio files through **TorchCodec**, which needs **FFmpeg _shared
+libraries_** — the full "shared" FFmpeg build, not the static `ffmpeg.exe`-only one that
+most people have. When that combination is in play the GPU split itself succeeds but
+**writing the output stems fails**, which looks like the split silently doing nothing.
+
+Current Demucs does not use `torchaudio` for this, so following the command above as written
+avoids the problem entirely. It bites only if you install `torchaudio` too, or if you are on
+an older Demucs that still saved through it.
+
+Also worth knowing: changing PyTorch in your main Python environment affects everything else
+on the machine that uses PyTorch. If that is a concern, install ParaKit into its own virtual
+environment rather than system-wide.
 
 > **Python 3.12 is required either way** — do not upgrade ParaKit's Python to "fix" this.
 

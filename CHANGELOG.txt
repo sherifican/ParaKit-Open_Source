@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.18  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.19  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,39 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.9.19   --   2026-08-18
+------------------------------------------------------------------------------
+  Sheet music conversion works again on a fresh install, and the tempo box in
+  that converter finally does something.
+
+  SHEET MUSIC TO MIDI FAILED ON A NEW INSTALL
+  Converting a MusicXML file said only "conversion failed" and gave no reason.
+  Anyone who installed ParaKit recently got this every time, while an older
+  install kept working -- which made it look random. The cause was outside
+  ParaKit: the music notation library it uses removed a piece of itself that
+  had been marked for removal for years, and the new version ships to anyone
+  installing today. ParaKit now uses the replacement, which exists in both the
+  old and new versions, so it works whichever one you have. Converted files are
+  byte-for-byte identical to before.
+
+  THE TEMPO OVERRIDE IN SHEET MUSIC CONVERSION NEVER WORKED
+  Found while fixing the above. If a score carried no tempo marking of its own
+  and you typed a tempo into the converter, ParaKit wrote 120 BPM into the MIDI
+  and ignored what you asked for -- silently, with no error, in every version
+  that has ever had the box. Scores that already carried a tempo marking were
+  fine, which is why this went unnoticed. Typing a tempo now sets that tempo.
+
+  THE GPU NOTES IN THE DOCUMENTATION WERE WRONG
+  The troubleshooting guide said the Stem Splitter used the graphics card on
+  most NVIDIA cards and fell back to the processor only on AMD, Intel, or the
+  newest RTX 50-series. That was wrong for every Windows install: the standard
+  Windows build of the machine-learning library ParaKit installs contains no
+  graphics-card support at all, so the Stem Splitter has always run on the
+  processor unless a graphics build was installed by hand. The documentation now
+  says so, and the instructions for adding graphics support were corrected.
+  No code changed -- the splitter behaves exactly as it did.
 
 ------------------------------------------------------------------------------
   v4.9.18   --   2026-08-17

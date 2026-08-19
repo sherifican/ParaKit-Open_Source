@@ -34,6 +34,9 @@ mutagen>=1.47          # read / write audio tags (FLAC / MP3 / MP4 / OGG)
 # --- Stem splitter (HEAVY — optional) --------------------------------------
 # demucs pulls in torch + torchaudio (~2-3 GB download). Only needed for the
 # Stem Splitter tab; skip this line if you will not split stems.
-# RTX 50-series (Blackwell) GPU owners: stock torch runs the splitter on CPU.
-# See docs/TROUBLESHOOTING.md for the CUDA 12.8 (cu128) GPU fix.
+# GPU: on Windows this line installs the PyPI build of PyTorch, which has NO CUDA in it
+# (~116 MB; a CUDA build is over 2 GB) - so the splitter runs on CPU on EVERY card, not
+# just AMD/Intel or the RTX 50-series. Enabling the GPU means installing a CUDA build of
+# torch yourself from PyTorch's own index; RTX 50-series (Blackwell, sm_120) specifically
+# needs the cu128 one. See docs/TROUBLESHOOTING.md.
 demucs>=4.0
