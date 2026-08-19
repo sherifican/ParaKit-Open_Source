@@ -6,10 +6,10 @@
 
 >I'm currently working on attempting to find tune a ParaKit specific AI model that's trained specifically on transcription, onsets, velocity/volume dynamics, and audio/MIDI onset / placement synchronization. I'm not making any promises about potential results, but essentially I'm attempting to create a super lightweight model that can be used as an optional add-on (free) to ParaKit to assist with some of the aspects that the current Jarredou Stem Iso model & other built in processes may help, but dont completely solve.
 
->The **v5 rebuild** (PySide6/Qt) is still in development and **no longer has a target date** — the earlier
+>The **v5 rebuild** (PySide6/Qt) is still in development and **no longer has a target date**,the earlier
 >mid-2026 estimate is out of date. v5 is a UI-framework rebuild rather than a feature release, so instead
 >of holding work back for it, features ship in v4 as they're ready. **v4 support continues regardless of
->when v5 arrives** — this is not an end-of-life countdown.
+>when v5 arrives**, this is not an end-of-life countdown.
 
 > **Version in this release:** `4.9.19`  •  **Runtime:** Python **3.12** (required)
 
