@@ -1925,6 +1925,24 @@ def sanitize_fs_component(name, fallback="Untitled"):
     return cleaned or fallback
 
 
+# Human charters place a note fractionally AFTER the physical onset it stands for.
+# Measured over the ParaDB corpus, community .rlrr charts sit a median ~6.5 ms later
+# than the drum stem's actual attack -- consistently enough that a chart landing exactly
+# on the acoustic onset reads as marginally early to a player. Detection itself is NOT
+# biased: validated against ENST-Drums (135 takes, 10,651 matched onsets) the detector's
+# median error is +1.00 ms and the separator's is -1.00 ms, so the whole ~6.5 ms is the
+# human convention rather than an error to correct. That is why this is opt-in and OFF
+# by default: it deliberately moves charts AWAY from physical truth, toward what people
+# actually author.
+#
+# WHERE it is applied is load-bearing, so it is stated here rather than left to be
+# rediscovered: NOT via build_rlrr's `offset` argument, and not anywhere else upstream of
+# difficulty reduction. It is applied by _apply_chart_timing_shift AFTER the reducer has
+# run, which is the only placement that keeps the chart sliding as one piece -- see that
+# method for why the obvious placement silently re-picks which notes survive.
+CHART_CONVENTION_OFFSET_SEC = 0.0065
+
+
 def build_rlrr(midi_notes, ticks_per_beat, bpm, offset, title, artist, creator,
                song_tracks, drum_tracks, cover_image, complexity, difficulty,
                description=""):
@@ -2449,13 +2467,139 @@ def _paradiddle_rlrr_to_ch_events(rlrr_notes_list, bpm,
     return _ch_dedupe_same_pad(events)
 
 
+# ── 2x bass pedal (Expert+) ───────────────────────────────────────────────────
+# .chart note 32 is the "double kick" gem: it is HIDDEN with one pedal and plays
+# alongside note 0 when the player enables 2x bass. Verified against the community
+# .chart spec 2026-08-19 (TheNathannator/GuitarGame_ChartFormats, Tracks/Drums):
+# kick 0 / red 1 / yellow 2 / blue 3 / green 4, 2x kick 32, cymbal markers 66-68,
+# accents 34-37, ghosts 40-43. ParaKit's cymbal + accent/ghost numbers all matched
+# that spec exactly; note 32 was the one thing it never emitted, so every chart
+# shipped as 1x no matter how fast the kick line was.
+#
+# Neither source format ParaKit converts from (.rlrr, MIDI) marks 2x, so which
+# kicks are "the second pedal" has to be inferred. The rule here is the standard
+# one: in a rapid kick PAIR, the second hit becomes the 2x gem, which keeps the
+# 1x chart playable instead of demanding a roll no single pedal can hit.
+_CH_TWO_KICK_NOTE = 32
+_CH_TWO_KICK_GAP_S = 0.175          # ~16ths at 100 BPM; below this a pair needs two pedals
+_CH_KICK_PAD = 0
+
+
+def _ch_promote_2x_kicks(events, bpm, resolution, gap_s=_CH_TWO_KICK_GAP_S,
+                         promote_ticks=None):
+    """Rewrite the 2nd kick of each rapid kick pair to the 2x gem (note 32).
+
+    `events` are (tick, note, cymbal_flag[, velocity_flag]) in TICKS, so the gap is
+    converted to ticks via the chart's own bpm/resolution rather than assumed.
+    Non-kick events pass through untouched and ordering is preserved.
+
+    The gap is measured from the previous KEPT kick, not the previous kick, which gives
+    the rule its useful property: **whatever survives on note 0 is always spaced at least
+    `gap_s` apart, so the 1x chart is playable by construction.** In a sustained run at
+    30 ms spacing that keeps roughly one kick per 175 ms and sends the rest to the 2x
+    line, rather than alternating 0/32 — alternation would leave the 1x player a line at
+    half the run's speed, which for fast double-kick is still unplayable.
+
+    ⚠ Verified by test, not by assumption: a 6-kick run at 80 ms yields [0,32,32,0,32,32],
+    NOT [0,32,0,32,0,32]. An earlier version of this docstring claimed alternation and was
+    wrong about its own code.
+
+    `promote_ticks`, when given, is the decision already taken in the SECONDS domain by
+    `_ch_two_kick_promote_ticks` — this function then only applies it. Deciding here, from
+    ticks, is correct on its own but not stable under a uniform time shift; see that
+    function for why. Callers that pass nothing keep the original tick-domain behaviour.
+    """
+    if not events or bpm <= 0:
+        return events
+    if promote_ticks is not None:
+        return [(ev[0], _CH_TWO_KICK_NOTE) + tuple(ev[2:])
+                if ev[1] == _CH_KICK_PAD and ev[0] in promote_ticks else ev
+                for ev in sorted(events, key=lambda e: (e[0], e[1]))]
+    gap_ticks = float(gap_s) * (float(bpm) / 60.0) * float(resolution)
+    if gap_ticks <= 0:
+        return events
+    out, last_kept_kick = [], None
+    for ev in sorted(events, key=lambda e: (e[0], e[1])):
+        if ev[1] != _CH_KICK_PAD:
+            out.append(ev)
+            continue
+        tick = ev[0]
+        if last_kept_kick is not None and (tick - last_kept_kick) < gap_ticks:
+            out.append((tick, _CH_TWO_KICK_NOTE) + tuple(ev[2:]))
+        else:
+            out.append(ev)
+            last_kept_kick = tick
+    return out
+
+
+def _ch_two_kick_promote_ticks(rlrr_events, bpm, resolution=192,
+                               gap_s=_CH_TWO_KICK_GAP_S):
+    """Decide 2x-pedal promotion from the .rlrr times (SECONDS) and return the set of
+    Clone Hero ticks to promote.
+
+    WHY THIS EXISTS, since deciding in ticks looks equivalent: CH ticks are
+    `round(sec * bpm/60 * resolution)`, rounded PER NOTE. So a uniform shift in seconds
+    is NOT a uniform shift in ticks — neighbouring notes round in opposite directions and
+    the gap between two kicks moves by ±1 tick. With the human-chart-timing toggle on that
+    flipped promotion for pairs sitting within a tick of the 175 ms threshold: 34 of 984
+    swept configurations changed, in both directions.
+
+    Seconds are exact here. Both .rlrr times sit on the same 0.0001 s grid and the timing
+    shift moves both by exactly 65 grid steps, so their DIFFERENCE is untouched — measured
+    over 400,000 samples with zero divergence. The emitted ticks still round individually,
+    so the charted 6.5 ms is delivered in full; only the decision leaves the tick domain.
+    (Rounding the whole chart to one integer tick instead would preserve gaps too, but at
+    120 BPM it delivers 5.21 ms of the intended 6.5 ms — fixing the gap by under-shipping
+    the feature.)
+
+    Mirrors the gap-from-last-KEPT-kick rule of `_ch_promote_2x_kicks` exactly, so the two
+    agree whenever tick rounding is not in play.
+
+    Accepts BOTH event shapes in circulation: `{"name": "BP_Kick_C_1", ...}` from a freshly
+    built chart, and `{"note": 35, ...}` from a .rlrr parsed off disk by the Paradiddle→
+    Clone Hero converter. Both routes feed the same decision so a chart cannot be promoted
+    one way when converted fresh and another way when round-tripped through a file.
+    """
+    if bpm <= 0 or gap_s <= 0:
+        return set()
+    kicks = []
+    for ev in rlrr_events or ():
+        note = _RLRR_NAME_TO_NOTE.get(ev.get("name")) if ev.get("name") else None
+        if note is None:
+            try:
+                note = int(ev.get("note"))
+            except (TypeError, ValueError):
+                continue
+        if _CH_NOTE_MAP.get(note, (None, None))[0] != _CH_KICK_PAD:
+            continue
+        try:
+            t = float(ev.get("time", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if t >= 0:                      # matches the drop in _paradiddle_rlrr_to_ch_events
+            kicks.append(t)
+    kicks.sort()
+    promote, last_kept = set(), None
+    for t in kicks:
+        if last_kept is not None and (t - last_kept) < gap_s:
+            promote.add(int(round(t * bpm / 60.0 * resolution)))
+        else:
+            last_kept = t
+    return promote
+
+
 def build_chart_multi_difficulty(events_by_difficulty, bpm, title, artist,
                                   album="", year="", charter="ParaKit",
-                                  resolution=192, music_stream="song.ogg"):
+                                  resolution=192, music_stream="song.ogg",
+                                  two_kick=False, promote_ticks=None):
     """Sibling to `build_chart` that emits MULTIPLE difficulty sections
     in one notes.chart. events_by_difficulty: dict keyed Expert/Hard/
     Medium/Easy. Accepts 3-tuple or 4-tuple event shapes (4th is CH
-    accent/ghost flag note number)."""
+    accent/ghost flag note number).
+
+    two_kick: emit Expert as a 2x bass chart (note 32 for the 2nd kick of a rapid
+    pair). Default False, so existing exports stay byte-identical. Expert only —
+    the lower difficulties are reduced charts and are not 2x material."""
     bpm_int = int(round(bpm * 1000))
     lines = [
         "[Song]", "{",
@@ -2495,6 +2639,9 @@ def build_chart_multi_difficulty(events_by_difficulty, bpm, title, artist,
         events = events_by_difficulty.get(diff_key)
         if not events:
             continue
+        if two_kick and diff_key == "Expert":
+            events = _ch_promote_2x_kicks(events, bpm, resolution,
+                                          promote_ticks=promote_ticks)
         lines += [section_header, "{"]
         for ev in events:
             if len(ev) >= 4:
@@ -3590,10 +3737,27 @@ A2M_HYBRID_ML_ONLY_MIN_CONF = {
     # lower. Pre-registered SHIP_ABS absolutes, validated BLIND on 39 fresh training-blind tracks
     # (macroF +0.048, crash +0.051 [+0.030,+0.076]; unanimous 3-leg reconcile). crash 0.35 is the
     # CALIB-tuned override (base abs 0.21). Tom lanes re-applied per run by the Moderate/OFF preset.
-    "kick": 0.17,
+    #
+    # 2026-08-20 per-lane operating points, 72 gate-passing songs. The previous sweep moved all
+    # six lanes at once while being read as six independent curves, and could not reach below
+    # each lane's effective floor, so the loosening direction had never been measured for five of
+    # six lanes. Re-measured one lane at a time (tools/lane_operating_points_single.py) and the
+    # three changes below were then verified TOGETHER as one configuration
+    # (tools/combined_config_test.py): macro-F1 0.5292 -> 0.5518, additivity exact.
+    #   kick  0.17 -> 0.35   P 0.693->0.720, -2,396 spurious for -210 real. No other lane moves.
+    #                        The notes it removes are ~80% second-of-pair (2x-pedal) kicks, so the
+    #                        2x toggle emits ~1.3% fewer note-32 events at this floor.
+    #   crash 0.35 -> 0.25   LOOSENED. Gains crash (+493 TP) AND ride (+232 TP) AND hi-hat, because
+    #                        this gate is the intake valve for the whole cymbal group -- a tight
+    #                        crash starves the cleanup re-classifier upstream. Ride improves ~10%
+    #                        relative without the ride lane being touched. Hi-hat pays 702 FPs.
+    #                        0.25 not 0.21/0.17: the hi-hat cost grows faster than the crash gain
+    #                        (1.66 vs 1.83 FP per TP), and 0.25 is ~1:1 real-per-spurious.
+    # snare and hi-hat are deliberately UNCHANGED: both measured negative in either direction.
+    "kick": 0.35,
     "snare": 0.15,
     "hihat": 0.13,
-    "crash": 0.35,
+    "crash": 0.25,
     "ride": 0.21,
     "floor_tom": 0.45,
     "tom_mid": 0.45,
@@ -3659,8 +3823,22 @@ A2M_ML_CLASS_MIN_GAP = {
 #   Aggressive  0.28 /-0.22 / -0.32  more recall for tom-heavy songs (more phantoms)
 #   OFF         1.01 / 0.00 /  0.00  gate above max confidence → no ML-only toms pass
 A2M_TOM_SENSITIVITY_PRESETS = {
+    # (MIN_CONF, THRESH_BOOST, CONF_BOOST). The effective ML-only gate is
+    #     max(ml_threshold + THRESH_BOOST, MIN_CONF)
+    # so MIN_CONF alone cannot lower the gate below `0.50 + THRESH_BOOST` — Moderate's old
+    # (0.45, -0.05, ...) pinned tom at max(0.45, 0.45) = 0.45 no matter what MIN_CONF said.
+    # CONF_BOOST is a separate, UPSTREAM floor inside the peak picker: no tom candidate below
+    # `0.50 + CONF_BOOST` = 0.38 is ever emitted, so 0.38 is the real bottom of this lane.
     "Strict":       (0.58,  0.05, -0.02),
-    "Moderate":     (0.45, -0.05, -0.12),  # DEFAULT
+    # 2026-08-20: Moderate lowered 0.45 -> 0.38, moving BOTH terms so the gate actually reaches
+    # it. That aligns the gate with the peak-picker floor, i.e. every tom candidate the model
+    # emits can now be judged rather than discarded by a gate set above the supply.
+    # Measured over 72 songs: tom F1 0.2786 -> 0.3521 (+26% relative), +654 real toms for +825
+    # spurious, precision essentially flat (-0.003) because recall rose in step. Largest single
+    # lane gain found in the campaign, and fully uncoupled — no other lane moves.
+    # Tom's curve previously looked FLAT and was read as "model-limited"; that was this pin,
+    # not the model. Below 0.38 nothing changes, which is the upstream floor, not a plateau.
+    "Moderate":     (0.38, -0.12, -0.12),  # DEFAULT
     "Aggressive":   (0.28, -0.22, -0.32),
     "OFF":          (1.01,  0.00,  0.00),
 }
@@ -6159,7 +6337,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.9.19"
+    VERSION = "4.10.0"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -7214,6 +7392,7 @@ class MidiToRlrrApp:
                 charter_str = f"{original_charter}, {additional_creator}"
 
             events_by_difficulty = {}
+            expert_notes_for_2x = None
             highest_rating = 0
             # Audit E8 (2026-07-10): ONE reference BPM (the first usable
             # file's) converts EVERY difficulty's absolute note-times, and that
@@ -7253,6 +7432,10 @@ class MidiToRlrrApp:
                          f"events (no mappable MIDI notes).")
                     continue
                 events_by_difficulty[diff] = ev_list
+                if diff == "Expert":
+                    # 2x promotion only runs on Expert, and it must be decided
+                    # from these SECONDS rather than the rounded ticks above.
+                    expert_notes_for_2x = notes
                 rating = _PdToChConverterWindow._DIFF_TO_RATING.get(diff, 3)
                 if rating > highest_rating:
                     highest_rating = rating
@@ -7305,6 +7488,12 @@ class MidiToRlrrApp:
                 album=album, year=year,
                 charter=charter_str,
                 music_stream=music_stream_filename,
+                two_kick=bool(getattr(self, "two_kick_var", None) is not None
+                               and self.two_kick_var.get()),
+                # Decide the pairs from the Expert .rlrr's seconds, not rounded
+                # ticks, so a round-trip agrees with a fresh conversion.
+                promote_ticks=_ch_two_kick_promote_ticks(
+                    expert_notes_for_2x, bpm_used),
             )
 
             song_len_ms = 0
@@ -49266,6 +49455,9 @@ demucs.separate.main()
                 if slot["reduce_var"].get() and diff != "Expert":
                     rlrr["events"] = reduce_notes_for_difficulty(rlrr["events"], bpm, diff)
 
+                # AFTER reduction, never before — see _apply_chart_timing_shift.
+                self._apply_chart_timing_shift(rlrr)
+
                 # v4.7.26 fold (breaker 4726, Fable) — the zero-event guard the Single
                 # Song Creator has had all along (its _convert: "ERROR: No events
                 # generated. Check MIDI file and BPM." and nothing written). This slot —
@@ -49322,6 +49514,8 @@ demucs.separate.main()
                     if slot["reduce_var"].get() and diff != "Expert":
                         rlrr["events"] = reduce_notes_for_difficulty(
                             rlrr["events"], bpm, diff)
+                    # Only this branch built the rlrr; the other one already shifted.
+                    self._apply_chart_timing_shift(rlrr)
                 _g = bool(getattr(self, "ghost_notes_var", None)
                           and self.ghost_notes_var.get())
                 _a = bool(getattr(self, "accent_notes_var", None)
@@ -49357,6 +49551,11 @@ demucs.separate.main()
                         title=title, artist=artist,
                         album="", year="", charter=creator,
                         music_stream=f"song{_ch_audio_ext}",
+                        two_kick=bool(getattr(self, "two_kick_var", None) is not None
+                                       and self.two_kick_var.get()),
+                        # Decide the pairs from .rlrr seconds, not rounded ticks.
+                        promote_ticks=_ch_two_kick_promote_ticks(
+                            rlrr["events"], bpm),
                     )
                     with open(os.path.join(ch_dir, "notes.chart"), "w", encoding="utf-8", newline="\n") as f:
                         f.write(chart_str)
@@ -49409,7 +49608,7 @@ demucs.separate.main()
         adv_content = ttk.LabelFrame(parent, text=" Advanced Options ", padding=10)
         adv_content.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(adv_content, text="For hand-authored MIDI only",
+        ttk.Label(adv_content, text="Extra options for the chart exports",
                   style="Sub.TLabel", foreground="#8a8aa2").grid(
                   row=0, column=0, sticky="w", pady=(0, 4))
 
@@ -49449,14 +49648,99 @@ demucs.separate.main()
             "    to practice dynamic control on their e-drum kit."
         )
 
+        # 2x bass pedal checkbox
+        self.two_kick_var = tk.BooleanVar(
+            value=load_config().get("ch_two_kick", False))
+        two_kick_cb = ttk.Checkbutton(
+            adv_content,
+            text="Emit 2x bass pedal notes (Expert+)",
+            variable=self.two_kick_var
+        )
+        two_kick_cb.grid(row=3, column=0, sticky="w", pady=(0, 2))
+        self._add_tooltip(
+            two_kick_cb,
+            "Marks the second kick of a fast double-kick pair as a 2x bass\n"
+            "pedal note, so Clone Hero loads the chart as Expert+.\n\n"
+            "Only the second kick of a pair closer together than 175 ms is\n"
+            "marked; single kicks and ordinary spacing are untouched, so a\n"
+            "song without double-kick work converts exactly as before.\n\n"
+            "Leave this OFF for a standard Expert chart. Turning it on does\n"
+            "not add or remove any notes — it only changes how the existing\n"
+            "fast kicks are labelled."
+        )
+        self.two_kick_var.trace_add("write", lambda *_: save_config(
+            {"ch_two_kick": self.two_kick_var.get()}))
+
+        # Chart timing convention checkbox
+        self.chart_timing_offset_var = tk.BooleanVar(
+            value=load_config().get("chart_convention_offset", False))
+        timing_cb = ttk.Checkbutton(
+            adv_content,
+            text="Match human chart timing (+6.5 ms)",
+            variable=self.chart_timing_offset_var
+        )
+        timing_cb.grid(row=4, column=0, sticky="w", pady=(0, 2))
+        self._add_tooltip(
+            timing_cb,
+            "Shifts every note 6.5 ms later so the chart sits where a human\n"
+            "charter would place it rather than exactly on the drum hit.\n\n"
+            "Community charts are consistently a few milliseconds late, and a\n"
+            "chart landing precisely on the onset can read as slightly early\n"
+            "in game. This does not correct a detection error — the detected\n"
+            "times are accurate to about a millisecond.\n\n"
+            "Leave this OFF for timing that matches the audio exactly. It is a\n"
+            "feel preference rather than an accuracy setting: the whole chart\n"
+            "slides as one piece, so nothing is added, removed or re-voiced,\n"
+            "and reduced difficulties keep exactly the notes they had."
+        )
+        self.chart_timing_offset_var.trace_add("write", lambda *_: save_config(
+            {"chart_convention_offset": self.chart_timing_offset_var.get()}))
+
         # Info label
         ttk.Label(
             adv_content,
-            text="ℹ  These options rely on velocity data in the MIDI file. "
-            "Most MIDIs exported from DAWs use flat velocity (96) and "
-            "will not benefit from these settings.",
+            text="ℹ  The ghost and accent options rely on velocity data in the "
+            "MIDI file, and apply to hand-authored MIDI only. Most MIDIs exported "
+            "from DAWs use flat velocity (96) and will not benefit from them.",
             style="Sub.TLabel", wraplength=280, justify=tk.LEFT
-        ).grid(row=3, column=0, sticky="w", pady=(8, 0))
+        ).grid(row=5, column=0, sticky="w", pady=(8, 0))
+
+    def _chart_timing_shift(self):
+        """Seconds to add to every charted note time when the human-timing
+        toggle is on. OFF (the default) returns exactly 0.0, so the toggle is
+        output-neutral until someone asks for it."""
+        v = getattr(self, "chart_timing_offset_var", None)
+        return CHART_CONVENTION_OFFSET_SEC if (v is not None and v.get()) else 0.0
+
+    def _apply_chart_timing_shift(self, rlrr):
+        """Translate every charted note by the human-timing offset.
+
+        ORDER MATTERS, and the obvious placement is the wrong one. Folding this
+        into build_rlrr's `offset` argument looks equivalent and is not: the
+        difficulty reducer scores each note against a beat-grid anchor built
+        from the MODE PHASE of the kick/snare backbone, quantised into 24 bins.
+        One bin is ~21 ms at 120 BPM, so a 6.5 ms shift moves every note's phase
+        while leaving the anchor in the same bin -- the grid stops tracking the
+        notes, borderline hits cross the 0.12-beat scoring tolerance, and the
+        reducer silently keeps a DIFFERENT set of notes. Measured on a jittered
+        rock groove: up to 35 of 144 notes swapped on a Medium reduction, 53 of
+        81 tested configurations affected. The note COUNT is unchanged, which is
+        why this hides -- only the selection moves.
+
+        Applying it here, after reduction, keeps selection byte-identical and
+        makes the toggle a pure translation. It also means build_rlrr's
+        `time_sec >= 0` drop has already run against the true times, so the
+        shift can no longer resurrect a note from just before zero.
+        """
+        c = self._chart_timing_shift()
+        if not c:
+            return rlrr
+        for e in rlrr["events"]:
+            e["time"] = "%.4f" % (float(e["time"]) + c)
+        meta = rlrr.get("recordingMetadata")
+        if meta and "length" in meta:
+            meta["length"] = meta["length"] + c
+        return rlrr
 
     def _make_collapsible_tips(self, parent, title="💡  Click for Tips", start_open=False, pack_kw=None):
         """Returns (toggle_btn, content_frame). Pack content inside content_frame."""
@@ -50551,7 +50835,13 @@ demucs.separate.main()
 
         # Paradiddle export
         if fmt in ("paradiddle", "both"):
-            self.log(f"\nBuilding .rlrr at {bpm:.2f} BPM with {offset:+.3f}s offset...")
+            # Report the two parts separately. build_rlrr receives the detected offset
+            # ALONE — the chart-timing shift is added after reduction — so folding them
+            # into one number here would misdescribe what the file was built with.
+            _cts = self._chart_timing_shift()
+            self.log(f"\nBuilding .rlrr at {bpm:.2f} BPM with {offset:+.3f}s offset"
+                     + (f" (+{_cts * 1000:.1f} ms human chart timing)" if _cts else "")
+                     + "...")
             rlrr = build_rlrr(
                 midi_notes=drum_notes, ticks_per_beat=ticks_per_beat,
                 bpm=bpm, offset=offset, title=title, artist=artist,
@@ -50571,6 +50861,9 @@ demucs.separate.main()
                     self.log(            # the friendly "No events" check below
                         f"  Notes removed: {original_count - reduced_count} "
                         f"({(original_count - reduced_count) / original_count * 100:.1f}%)")
+
+            # AFTER reduction, never before — see _apply_chart_timing_shift.
+            self._apply_chart_timing_shift(rlrr)
 
             total_events = len(rlrr["events"])
             if total_events == 0:
@@ -50652,6 +50945,8 @@ demucs.separate.main()
                 if self.reduce_difficulty_var.get() and difficulty != "Expert":
                     rlrr["events"] = reduce_notes_for_difficulty(
                         rlrr["events"], bpm, difficulty)
+                # Only this branch built the rlrr; the other one already shifted.
+                self._apply_chart_timing_shift(rlrr)
             _g = bool(self.ghost_notes_var.get())
             _a = bool(self.accent_notes_var.get())
             ch_events = rlrr_events_to_ch_events(
@@ -50670,6 +50965,10 @@ demucs.separate.main()
                 year=self.sc_year_var.get().strip(),
                 charter=creator,
                 music_stream=f"song{_ch_audio_ext}",
+                two_kick=bool(getattr(self, "two_kick_var", None) is not None
+                               and self.two_kick_var.get()),
+                # Decide the pairs from .rlrr seconds, not rounded ticks.
+                promote_ticks=_ch_two_kick_promote_ticks(rlrr["events"], bpm),
             )
             with open(os.path.join(ch_dir, "notes.chart"), "w", encoding="utf-8", newline="\n") as f:
                 f.write(chart_str)

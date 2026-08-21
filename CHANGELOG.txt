@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.9.19  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.10.0  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,57 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.10.0   --   2026-08-20
+------------------------------------------------------------------------------
+  Converted charts land closer to what a person would have charted, and two new
+  optional switches let you decide how the result feels.
+
+  KICK, TOM AND CYMBAL DETECTION RETUNED
+  The point at which ParaKit decides a detected hit is real has been re-measured
+  for three drums, against 72 songs that have human-made charts to compare with.
+  Kicks are now stricter, which removes roughly one spurious kick in eight
+  without losing the real ones. Toms are looser: the tom setting had been sitting
+  above the level the detector actually produces, so it was rejecting toms that
+  had been found correctly, and toms had looked like something the detector was
+  simply bad at. It was not. Crashes are looser too, and that one has a knock-on
+  effect worth knowing about: the crash setting is the gate the whole cymbal
+  group passes through, so opening it also recovers ride cymbals and hi-hats that
+  were never reaching the part of ParaKit that tells cymbals apart. Rides improve
+  by about a tenth without the ride setting being touched at all.
+
+  Measured against human charts on a rock song and a non-rock song, the new
+  settings are closer to the human chart on both, produce fewer spurious notes,
+  and throw away fewer correct ones. Snare and hi-hat were deliberately left
+  alone; both measured worse in either direction.
+
+  If you preferred the old behavior, the tom control in the Audio to MIDI
+  advanced options still offers Strict, and every other setting is unchanged.
+
+  CLONE HERO EXPORTS CAN NOW EMIT THE 2X BASS PEDAL NOTE (OPTIONAL)
+  Clone Hero has a separate note for the second pedal of a double-kick pair, and
+  ParaKit never emitted it, so fast kick lines always exported as a one-pedal
+  chart no matter how quick they were. A new checkbox in the export's advanced
+  options marks the second kick of any pair closer together than 175 milliseconds
+  as a 2x pedal note, so the chart loads as Expert+. Nothing is added or removed
+  when you turn it on -- the same kicks are there, some of them simply labeled
+  differently -- and a song without fast double-kick work converts exactly as it
+  did before. Leave it off for a standard Expert chart.
+
+  AN OPTION TO MATCH THE TIMING OF HUMAN-MADE CHARTS (OPTIONAL)
+  People who chart by hand place notes a few thousandths of a second after the
+  drum hit they stand for, consistently enough that a chart landing exactly on
+  the hit can read as very slightly early while playing. A new checkbox slides
+  every note 6.5 milliseconds later to match that habit.
+
+  This is a feel preference, not an accuracy fix. ParaKit's detected times are
+  accurate to about a millisecond, checked against a research drum recording set
+  with 10,651 hand-marked hits, so turning this on deliberately moves the chart
+  away from where the drum actually is and toward where a person would have put
+  it. The whole chart slides as one piece: nothing is added, removed or moved to
+  a different drum, and reduced difficulties keep exactly the notes they had.
+  Leave it off for timing that matches the audio exactly.
 
 ------------------------------------------------------------------------------
   v4.9.19   --   2026-08-18
