@@ -46,9 +46,49 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan
 | If you want to… | Go to |
 |---|---|
 | **Install and run it** | [Download & run](#️-download--run-parakit-copy-paste-setup) — copy-paste setup |
+| **Check if your PC can run it** | [System requirements](#️-system-requirements) — measured, not guessed |
 | **See how the pieces fit together** | **[System Chart](docs/SYSTEM_CHART.html)** — the pipeline, all 14 tabs, what's risky to change. Download and open in a browser |
 | **Know what's in the repo** | [What's in this repository](#whats-in-this-repository) |
 | **Fix something that won't run** | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) |
+
+---
+
+## 🖥️ System requirements
+
+None of the libraries this app is built on publishes a real hardware minimum, and no calculator exists for this kind of combined workload — so the figures below come from three sources reconciled together: a benchmark of the actual app on the development machine, the published guidance for the heavy dependencies (demucs, ONNX Runtime, librosa), and what the closest comparable apps publish (Ultimate Vocal Remover, AnthemScore). One test machine means the minimums are estimates — if ParaKit struggles on hardware that meets them, please open an issue with your specs.
+
+| | Minimum (works, slower) | Recommended (comfortable) |
+|---|---|---|
+| **OS** | 64-bit Windows 10 22H2 * | 64-bit Windows 11 |
+| **CPU** | 4-core x86-64, Core i5 / Ryzen 5 class or better (Pentium/Celeron-class not advised) | Recent 6–8-core Core i5/i7 or Ryzen 5/7 |
+| **RAM** | 8 GB — one conversion at a time, other memory-heavy apps closed | 16 GB |
+| **GPU** | None — everything runs on the CPU with the default install | Still none required; an NVIDIA card with 6 GB+ VRAM (8 GB comfortable) speeds up stem splitting via the optional CUDA torch install |
+| **Free disk** | ~3 GB, SSD strongly advised | 10+ GB on SSD — covers the optional CUDA torch (+5.4 GB) and a batch of split stems |
+
+\* Developed and tested on Windows 11. Windows 10 22H2 should work — every dependency supports it — but has not been tested.
+
+### Where these numbers come from
+
+**The development machine** — every timing below was measured here, so calibrate against your own hardware accordingly:
+
+> AMD Ryzen 7 9800X3D (8 cores) · 32 GB DDR5-5200 · NVIDIA RTX 5070 12 GB · NVMe SSD · Windows 11 · Python 3.12.10 with the package versions `requirements.txt` installs (librosa 0.11, onnxruntime 1.25, demucs 4.0.1, pygame 2.6; torch 2.7.1 — the CUDA build on this machine, where the default install is the smaller CPU build)
+
+**Measured on a real 3-minute 44.1 kHz stereo song:**
+
+| Operation | Time | Peak RAM (process) |
+|---|---|---|
+| App launch (full UI built) | ~11 s | 0.2 GB |
+| Audio → MIDI conversion (full pipeline, CPU) | ~16 s per minute of audio | 2.9 GB |
+| Song Tester full analysis | ~7 s | 0.9 GB |
+| Spectral Comparison full-track analysis | ~4 s | 0.4 GB |
+| Stem split (CPU — the default install) | ~31 s per minute of audio | 1.4 GB |
+| Stem split (GPU, RTX 5070) | ~19 s per minute of audio † | 1.6 GB |
+
+† Measured on a 30-second clip, so the fixed model-load overhead dominates the figure; on full songs the GPU pulls much further ahead.
+
+**Reading the table for slower hardware:** the times scale with CPU speed and roughly linearly with track length — on a 4-core minimum-spec machine, expect roughly 2–4× the times above (a 4-minute song converting in ~4 minutes instead of ~1). Peak RAM does **not** shrink on slower machines: the 2.9 GB Audio → MIDI peak is what sets the 8 GB minimum, and it fits an 8 GB machine only with other memory-heavy programs closed.
+
+**Cross-checked against published sources:** demucs's own docs (about 7 GB GPU memory with default settings, 3 GB minimum with reduced segments, CPU time ≈ 1.5× track duration), Ultimate Vocal Remover's published GPU minimum (GTX 1060 6 GB, 8 GB VRAM recommended — VRAM figures, not system RAM), and AnthemScore's ~4 GB free RAM for most songs. None of those projects publishes a complete system minimum for a stack like this one, which is why the table above is benchmark-derived rather than copied from anywhere.
 
 ---
 
