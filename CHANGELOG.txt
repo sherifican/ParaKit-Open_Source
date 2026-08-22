@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.11.0  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.11.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -27,6 +27,40 @@
 ==============================================================================
 
 ------------------------------------------------------------------------------
+  v4.11.1   --   2026-08-22
+------------------------------------------------------------------------------
+  The update window now shows what it is doing, and the Spectral tab's
+  Waveform view gets its own render settings.
+
+  UPDATES NO LONGER LOOK FROZEN WHILE THEY DOWNLOAD
+  The update window listed files that were already current but said nothing
+  at all while it downloaded new ones, so a release carrying many new files
+  -- 4.11.0's icon set is about 1,100 of them -- left the counter parked on
+  the last "up to date" line for several minutes with the Close button
+  disabled. The download was working the whole time; there was no way to
+  tell. Each file now appears as it downloads, the counter moves with it,
+  and the install step is listed separately, so the window reads as busy
+  rather than stuck.
+
+  WAVEFORM VIEW HAS ITS OWN RENDER SETTINGS
+  The Spectral Comparison tab's Render button only ever applied to the
+  Spectrogram view, so it sat there doing nothing on the Waveform view. The
+  Waveform view now has its own panel behind the same button: Style (Filled,
+  Hollow or Bars), two-tone stereo colors, an amplitude scale (boosted,
+  linear or decibel) and a gain slider. The panels swap with the view, and
+  changes redraw immediately.
+
+  WARNINGS IN THE UPDATE NOTICE NOW STAND OUT
+  When a release needs to tell you something BEFORE you press Download --
+  such as an update that takes several minutes and looks stuck -- that
+  paragraph is now shown in bright yellow at the top of the "What's new in
+  this update" preview instead of the same grey as everything else.
+
+  SMALL FIXES
+  - The Send to Spectral buttons on the Audio -> MIDI, MIDI Editor and Song
+    Tester tabs still showed the old chart icon after the tab itself moved
+    to the spectrum-bars icon; all of them match again.
+
   v4.11.0   --   2026-08-22
 ------------------------------------------------------------------------------
   BEFORE YOU START: THIS UPDATE TAKES A FEW MINUTES AND LOOKS STUCK

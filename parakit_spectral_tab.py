@@ -1933,7 +1933,13 @@ class GramView(tk.Frame):
         # the ruler, playhead, note strip, scroll-sync and zoom are shared code
         # instead of a second copy that drifts.
         self.render = dict(brightness=1.15, fmax=16000.0, log_scale=True,
-                           cmap="magma", style="gram")
+                           cmap="magma", style="gram",
+                           # Waveform-view render params (2026-08-22, owner
+                           # request: the Render chip was inert on Waveform)
+                           wave_style="filled",   # filled | hollow | bars
+                           wave_stereo=False,     # L magenta / R cyan
+                           wave_scale="gamma",    # gamma | linear | db
+                           wave_gain=1.0)
 
         self.axis = tk.Canvas(self, width=AXIS_W, height=200,
                               background=CANVAS_BG, highlightthickness=0)
@@ -2317,13 +2323,13 @@ class GramView(tk.Frame):
 
     # ----- Waveform render style ------------------------------------------------
     #
-    # Monochrome by owner direction (2026-08-17): get the SHAPE working first,
-    # colour later. So there is deliberately no colormap, no brightness and no
-    # per-channel hue here -- one foreground colour, and the only information
-    # carried is the outline. Left drives the upper half, right the lower, so
-    # the two halves differ on a stereo source and the asymmetry is real audio
-    # rather than decoration.
-    WAVE_FG = (0x00, 0xd4, 0xd4)        # CYAN, the app accent
+    # Monochrome DEFAULT kept from the 2026-08-17 shape-first direction; the
+    # 2026-08-22 Render-chip settings add opt-in style / stereo colour /
+    # amplitude scale / gain on top (owner request). Left drives the upper
+    # half, right the lower, so the two halves differ on a stereo source and
+    # the asymmetry is real audio rather than decoration.
+    WAVE_FG = (0x00, 0xd4, 0xd4)        # CYAN, the app accent (right / mono)
+    WAVE_FG_L = (0xd6, 0x4f, 0xd6)      # MAGENTA, left channel in Stereo colors
     WAVE_MID = (0x46, 0x46, 0x5a)       # centre reference line
     WAVE_BG = (0x07, 0x07, 0x10)        # CANVAS_BG, so the strip matches the canvas
 
@@ -2393,19 +2399,70 @@ class GramView(tk.Frame):
 
         mid = gh // 2
         room = max(1, mid - 1)
-        # gamma < 1 lifts quiet detail. Ghost notes and hi-hat articulation sit
-        # far below the kick/snare peaks, and on a linear scale they flatten to
-        # nothing -- which is the exact complaint this view exists to answer.
-        g_exp = 0.55
-        t_px = np.clip(np.power(np.clip(top, 0.0, 1.0), g_exp) * room, 0, room)
-        b_px = np.clip(np.power(np.clip(bot, 0.0, 1.0), g_exp) * room, 0, room)
+        top = np.clip(top, 0.0, 1.0)
+        bot = np.clip(bot, 0.0, 1.0)
+        gain = float(self.render.get("wave_gain", 1.0))
+        if gain != 1.0:
+            top = np.clip(top * gain, 0.0, 1.0)
+            bot = np.clip(bot * gain, 0.0, 1.0)
+        scale = self.render.get("wave_scale", "gamma")
+        if scale == "db":
+            # ~40 dB window mapped to 0..1 -- quiet articulation is the point.
+            top = np.log10(1.0 + 99.0 * top) / 2.0
+            bot = np.log10(1.0 + 99.0 * bot) / 2.0
+        elif scale != "linear":
+            # "gamma" (default): < 1 lifts quiet detail. Ghost notes and hi-hat
+            # articulation sit far below the kick/snare peaks, and on a linear
+            # scale they flatten to nothing -- which is the exact complaint
+            # this view exists to answer.
+            g_exp = 0.55
+            top = np.power(top, g_exp)
+            bot = np.power(bot, g_exp)
+        t_px = np.clip(top * room, 0, room)
+        b_px = np.clip(bot * room, 0, room)
+
+        style = self.render.get("wave_style", "filled")
+        if style == "bars":
+            # 3-px bars + 1-px gaps, each bar flat at its span's max. Grouped
+            # on ABSOLUTE display x (vx0 + column) so bars hold their phase
+            # while the view scrolls instead of shimmering.
+            BW = 4
+            ax = np.arange(win, dtype=np.int64) + int(vx0)
+            grp = ax // BW
+            starts = np.flatnonzero(np.diff(grp, prepend=grp[0] - 1))
+            inv = np.cumsum(np.diff(grp, prepend=grp[0]) != 0)
+            t_px = np.maximum.reduceat(t_px, starts)[inv]
+            b_px = np.maximum.reduceat(b_px, starts)[inv]
+            gapcol = (ax % BW) == (BW - 1)
+            t_px = np.where(gapcol, 0.0, t_px)
+            b_px = np.where(gapcol, 0.0, b_px)
 
         yy = np.arange(gh, dtype=np.float32)[:, None]
         dy = yy - mid
-        on = np.where(dy < 0, (-dy) <= t_px[None, :], dy <= b_px[None, :])
+        up = dy < 0
+        a = np.where(up, -dy, dy)
+        lim = np.where(up, t_px[None, :], b_px[None, :])
+        if style == "hollow":
+            # Connected outline: a per-column band alone dissolved into dots
+            # wherever the envelope moved more than the band width between
+            # neighboring columns (owner screenshot, 2026-08-22). Span each
+            # column down to the LOWER of its two neighbors so steep slopes
+            # stay joined, like a stroked line plot.
+            def _lo(px):
+                prev = np.concatenate(([px[0]], px[:-1]))
+                nxt = np.concatenate((px[1:], [px[-1]]))
+                return np.minimum(np.minimum(prev, nxt), px)
+            lo = np.where(up, _lo(t_px)[None, :], _lo(b_px)[None, :])
+            on = (a <= lim) & (a >= lo - 1.6)
+        else:
+            on = a <= lim
         img = np.empty((gh, win, 3), np.uint8)
         img[:] = np.asarray(self.WAVE_BG, np.uint8)
-        img[on] = np.asarray(self.WAVE_FG, np.uint8)
+        if self.render.get("wave_stereo"):
+            img[on & up] = np.asarray(self.WAVE_FG_L, np.uint8)
+            img[on & ~up] = np.asarray(self.WAVE_FG, np.uint8)
+        else:
+            img[on] = np.asarray(self.WAVE_FG, np.uint8)
         if 0 <= mid < gh:
             img[mid] = np.asarray(self.WAVE_MID, np.uint8)
         header = ("P6 %d %d 255\n" % (win, gh)).encode("ascii")
@@ -2730,6 +2787,7 @@ class SpectralTab(ttk.Frame):
         self._build_viewbar()
         self._build_options()
         self._build_advanced()
+        self._build_wave_advanced()
         self._build_inst_panel()
         self._build_canvas()
         self._build_footer()
@@ -3213,9 +3271,11 @@ class SpectralTab(ttk.Frame):
         self.render_chip = Chip(row, "Render \u25bc", accent=PURPLE_LT,
                                 off_edge=PURPLE_EDGE,
                                 command=self._on_render_chip,
-                                tooltip="Spectrogram render controls: "
-                                        "brightness, top frequency, frequency "
-                                        "scale, colormap.")
+                                tooltip="Render controls for the current view.\n"
+                                        "Spectrogram: brightness, top frequency, "
+                                        "frequency scale, colormap.\n"
+                                        "Waveform: style, stereo colors, "
+                                        "amplitude scale, gain.")
         self.render_chip.pack(side=tk.LEFT)
 
     # ----- advanced render panel ---------------------------------------------------
@@ -3890,12 +3950,105 @@ class SpectralTab(ttk.Frame):
         self._sync_adv_panel()
 
     def _sync_adv_panel(self):
-        show = self.render_chip.get() and self.view_seg.get() == 1
-        if show and not self.adv_panel.winfo_ismapped():
+        # INV122 anchors the spelled-out ==1 comparison below as THE one
+        # spectrogram-only site -- keep the comparisons inline, not hoisted.
+        show_gram = self.render_chip.get() and self.view_seg.get() == 1
+        show_wave = self.render_chip.get() and self.view_seg.get() == 2
+        if show_gram and not self.adv_panel.winfo_ismapped():
             self.adv_panel.pack(fill=tk.X, padx=10, pady=(0, 6),
                                 before=self.canvas_box)
-        elif not show and self.adv_panel.winfo_ismapped():
+        elif not show_gram and self.adv_panel.winfo_ismapped():
             self.adv_panel.pack_forget()
+        if show_wave and not self.wave_panel.winfo_ismapped():
+            self.wave_panel.pack(fill=tk.X, padx=10, pady=(0, 6),
+                                 before=self.canvas_box)
+        elif not show_wave and self.wave_panel.winfo_ismapped():
+            self.wave_panel.pack_forget()
+
+    # ----- waveform render panel (2026-08-22) ---------------------------------------
+    def _build_wave_advanced(self):
+        """The Render chip's panel for the WAVEFORM view -- the chip used to be
+        inert there (its panel was spectrogram-only by design, and showing
+        inert controls is worse than none; now the view gets its own)."""
+        self.wave_panel = tk.Frame(self, background=DARKER,
+                                   highlightthickness=1,
+                                   highlightbackground=PURPLE_DEEP)
+        row = tk.Frame(self.wave_panel, background=DARKER)
+        row.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(row, text="Style", style="Spec.Muted.TLabel").pack(side=tk.LEFT)
+        self.wave_style_combo = ttk.Combobox(row, state="readonly", width=8,
+                                             style="Spec.TCombobox",
+                                             values=("Filled", "Hollow", "Bars"))
+        self.wave_style_combo.current(0)
+        self.wave_style_combo.pack(side=tk.LEFT, padx=(6, 14))
+        self.wave_style_combo.bind("<<ComboboxSelected>>", self._on_wave_adv)
+        Tooltip(self.wave_style_combo,
+                "Filled: solid mirrored trace (default).\n"
+                "Hollow: outline only -- dense sections stay readable.\n"
+                "Bars: per-column amplitude bars, the MIDI Editor's Bars look.")
+
+        self.wave_stereo_chip = Chip(row, "Stereo colors",
+                                     command=self._on_wave_stereo,
+                                     tooltip="Two-tone stereo: left channel "
+                                             "magenta (top half), right channel "
+                                             "cyan (bottom half). On a mono "
+                                             "source both halves match.")
+        self.wave_stereo_chip.pack(side=tk.LEFT, padx=(0, 14))
+
+        ttk.Label(row, text="Amp scale",
+                  style="Spec.Muted.TLabel").pack(side=tk.LEFT)
+        self.wave_scale_combo = ttk.Combobox(
+            row, state="readonly", width=15, style="Spec.TCombobox",
+            values=("boosted (default)", "linear", "dB (log)"))
+        self.wave_scale_combo.current(0)
+        self.wave_scale_combo.pack(side=tk.LEFT, padx=(6, 14))
+        self.wave_scale_combo.bind("<<ComboboxSelected>>", self._on_wave_adv)
+        Tooltip(self.wave_scale_combo,
+                "How amplitude maps to height.\n"
+                "boosted: lifts quiet detail (ghost notes, hats).\n"
+                "linear: raw amplitude -- peaks dominate.\n"
+                "dB (log): strongest lift for very quiet content.")
+
+        ttk.Label(row, text="Gain", style="Spec.Muted.TLabel").pack(side=tk.LEFT)
+        _gain_sf = tk.Frame(row, background=DARKER)
+        _gain_sf.pack(side=tk.LEFT, padx=(6, 14))
+        self.wave_gain_scale = ttk.Scale(_gain_sf, from_=50, to=400,
+                                         orient=tk.HORIZONTAL, length=110,
+                                         style="Spec.Horizontal.TScale",
+                                         command=self._on_wave_gain)
+        self.wave_gain_scale.set(100)
+        self.wave_gain_scale.pack(side=tk.TOP)
+        _spec_tick_strip(_gain_sf, 110, bg=DARKER)
+        Tooltip(self.wave_gain_scale,
+                "Amplitude gain (0.5x - 4.0x) before scaling -- boost a quiet\n"
+                "stem so its shape fills the strip. Clips at full height.")
+
+    def _on_wave_adv(self, _e=None):
+        if getattr(self, "gram_view", None) is None:
+            return      # construction-time widget callback; view not built yet
+        style = {"Filled": "filled", "Hollow": "hollow",
+                 "Bars": "bars"}[self.wave_style_combo.get()]
+        scale = {"boosted (default)": "gamma", "linear": "linear",
+                 "dB (log)": "db"}[self.wave_scale_combo.get()]
+        self.gram_view.set_render_params(wave_style=style, wave_scale=scale)
+
+    def _on_wave_stereo(self, _on=None):
+        if getattr(self, "gram_view", None) is None:
+            return
+        self.gram_view.set_render_params(
+            wave_stereo=bool(self.wave_stereo_chip.get()))
+
+    def _on_wave_gain(self, _v=None):
+        # the Scale's construction-time .set(100) fires this before
+        # gram_view exists -- without the guard every app start printed a
+        # callback traceback (caught by the build probe)
+        if getattr(self, "gram_view", None) is None:
+            return
+        try:
+            g = round(float(self.wave_gain_scale.get()) / 100.0, 2)
+        except (TypeError, ValueError):
+            g = 1.0
+        self.gram_view.set_render_params(wave_gain=g)
 
     # ----- per-instrument show/hide (v4.9.2) --------------------------------------
     def _build_inst_panel(self):

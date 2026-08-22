@@ -1,10 +1,10 @@
 {
-  "version": "4.11.0",
+  "version": "4.11.1",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "a264858d4525154545d27dfabbb22545123e6a8b0029bef61ae3880326d135d6"
+      "sha256": "8fb65fd576896a7782ba8b5983ecbcd9192256071aa1660cf0b894f44ea1e83a"
     },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
@@ -52,7 +52,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "db683fd9329d2ec3594ce49514b82f88bb037fb9dfe05d6686d9d4bdbba1cf4b"
+      "sha256": "f583327ad050464ee8a8f45bf6ade2bf800ce8430bdb25e0557df06e41b90f2b"
     },
     {
       "path": "README.txt",
@@ -4548,7 +4548,7 @@
     },
     {
       "path": "parakit_spectral_tab.py",
-      "sha256": "757465b4e2182d74d89cfc939cc1d462b9e7d90419bc319633cea8f8634c2aad"
+      "sha256": "93cf0f89410183c94419940beefacf2a9d49dd902cda7ccff3117b7193da827e"
     },
     {
       "path": "parakit_synth_voices.py",

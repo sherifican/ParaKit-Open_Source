@@ -6459,7 +6459,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.11.0"
+    VERSION = "4.11.1"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -8425,12 +8425,25 @@ class MidiToRlrrApp:
             cl_txt.tag_configure("hdr", font=("Segoe UI", 10, "bold"),
                                  foreground="#b388ff", spacing1=6, spacing3=3)
             cl_txt.tag_configure("bdy", foreground="#d6d6d6", spacing3=2)
+            # A changelog paragraph opening with BEFORE YOU START is a warning
+            # the user must read BEFORE choosing to update (e.g. "this release
+            # downloads ~1,100 files and the window will look stuck"). Body grey
+            # buries it, so that paragraph renders bright yellow.
+            cl_txt.tag_configure("warn", foreground="#ffd230",
+                                 font=("Segoe UI", 9, "bold"), spacing3=2)
             for _idx, (_hdr, _body) in enumerate(changelog_entries):
                 if _idx:
                     cl_txt.insert("end", "\n")
                 cl_txt.insert("end", _hdr + "\n", "hdr")
                 if _body.strip():
-                    cl_txt.insert("end", _body.strip() + "\n", "bdy")
+                    for _pi, _para in enumerate(_body.strip().split("\n\n")):
+                        if not _para.strip():
+                            continue
+                        if _pi:
+                            cl_txt.insert("end", "\n")
+                        _tag = ("warn" if _para.lstrip().upper()
+                                .startswith("BEFORE YOU START") else "bdy")
+                        cl_txt.insert("end", _para.strip("\n") + "\n", _tag)
             cl_txt.configure(state="disabled")
 
         btn_row = ttk.Frame(frame)
@@ -8704,6 +8717,14 @@ class MidiToRlrrApp:
                     except Exception:
                         pass
                 staged.append((rel, local, tmp))
+                # v4.11.1 — count + announce each staged download AS IT LANDS.
+                # Through 4.11.0 only skipped files emitted during staging, so a
+                # release adding many new files (4.11.0's 1,081 icons) left the
+                # dialog sitting silent on the last skipped count for minutes —
+                # a working update indistinguishable from a hang, with Close
+                # disabled and the dialog modal.
+                done += 1
+                _emit("staged", rel)
         except Exception as e:
             for _rel, _local, tmp in staged:
                 try:
@@ -8723,7 +8744,7 @@ class MidiToRlrrApp:
                 os.replace(tmp, local)
                 committed.append(local)
                 updated.append(rel)
-                done += 1
+                # done already counted this file at staging time (v4.11.1)
                 _emit("updated", rel)
         except Exception as e:
             rolled_back, stuck = 0, []
@@ -8907,8 +8928,10 @@ class MidiToRlrrApp:
                 set_prog(0, total)
                 return
             set_prog(done, total)
-            if status == "updated":
+            if status == "staged":
                 log(f"  ⬇  downloaded    {rel}", "dl")
+            elif status == "updated":
+                log(f"  ✓  installed     {rel}", "ok")
             elif status == "skipped":
                 log(f"  ✓  up to date    {rel}", "ok")
             elif status == "failed":
@@ -17309,7 +17332,7 @@ demucs.separate.main()
         # Check the just-made detection in Spectral Comparison (owner 2026-07-20).
         # Gated the same as the preview button (enabled once a MIDI exists).
         self.a2m_spectral_btn = ttk.Button(
-            a2m_action_row, text="Spectral", image=fluent_icon("chart_multiple") or "", compound="left",
+            a2m_action_row, text="Spectral", image=fluent_icon("device_eq") or "", compound="left",
             command=lambda: self._send_to_spectral(
                 drums=getattr(self, "_a2m_source_file", "") or "",
                 chart=getattr(self, "_a2m_last_midi", "") or ""),
@@ -21658,7 +21681,7 @@ demucs.separate.main()
         af_col = ttk.Frame(af_row)
         af_col.pack(side=tk.LEFT)
         self.me_spectral_btn = ttk.Button(
-            af_col, text="Spectral", image=fluent_icon("chart_multiple") or "", compound="left",
+            af_col, text="Spectral", image=fluent_icon("device_eq") or "", compound="left",
             command=lambda: self._send_to_spectral(
                 drums=self.me_audio_var.get().strip(),
                 chart=(getattr(self, "_me_last_midi", None)
@@ -44663,7 +44686,7 @@ demucs.separate.main()
         # Send this song's drums / chart / full-mix to Spectral Comparison
         # (owner 2026-07-20).
         _viz_spectral_btn = ttk.Button(
-            ctrl_row, text="Spectral", image=fluent_icon("chart_multiple") or "", compound="left",
+            ctrl_row, text="Spectral", image=fluent_icon("device_eq") or "", compound="left",
             command=lambda: self._send_to_spectral(
                 drums=self.viz_drum_var.get().strip(),
                 chart=(self.viz_rlrr_override_var.get().strip()
@@ -47202,7 +47225,7 @@ demucs.separate.main()
         # Send this song's drums / chart / full-mix to Spectral Comparison
         # (owner 2026-07-20) -- Song Tester is the conceptual twin of Spectral.
         _tester_spectral_btn = ttk.Button(
-            main, text="Send to Spectral Comparison", image=fluent_icon("chart_multiple") or "", compound="left",
+            main, text="Send to Spectral Comparison", image=fluent_icon("device_eq") or "", compound="left",
             command=lambda: self._send_to_spectral(
                 drums=self.tester_drum_var.get().strip(),
                 chart=(self.tester_rlrr_var.get().strip()
