@@ -451,7 +451,7 @@ or exported. Detection itself is untouched — the tab only reads audio and char
 <img src="screenshots/app-11b-practice.png?v=20260821" width="900" alt="Practice tab">
 
 ### 14 · Quick Start & FAQ
-<img src="screenshots/app-12-quick-start-faq.png" width="900" alt="Quick Start & FAQ">
+<img src="screenshots/app-12-quick-start-faq.png?v=20260821" width="900" alt="Quick Start & FAQ">
 
 </details>
 
