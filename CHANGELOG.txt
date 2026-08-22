@@ -29,6 +29,15 @@
 ------------------------------------------------------------------------------
   v4.11.0   --   2026-08-22
 ------------------------------------------------------------------------------
+  BEFORE YOU START: THIS UPDATE TAKES A FEW MINUTES AND LOOKS STUCK
+  This release adds about 1,100 small icon files, and update windows before
+  4.11.1 only move their counter for files that are already up to date. The
+  window will sit at something like "23/1200" for roughly five minutes while
+  it quietly downloads the rest. It is working -- leave it running and it
+  will finish. Nothing on the install is changed until every file has
+  downloaded and been verified, and the Close button comes back when it is
+  done. From 4.11.1 onward each download is shown as it lands.
+
   Crisp icons across the whole app, and the Song Tester now works from a
   finished chart alone.
 
