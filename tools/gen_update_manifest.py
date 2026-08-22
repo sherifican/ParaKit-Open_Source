@@ -49,6 +49,7 @@ ROOT_FILES = [
     "LICENSE", "Run ParaKit v4.0.bat", "CHANGELOG.txt",
     "README.md", "README.txt",
     "parakit.ico", "parakit_header_logo.png", "parakit_logo_FINAL.png",
+    "parakit_repo_banner.svg",
     "dot_lit_v2.png", "dot_lit_v3_tight.png", "dot_unlit.png",
     # Tab sidecars imported by 'ParaKit v4.0.py' at runtime -- must ship next
     # to the main .py or the tab fails to load. The Spectral tab (v4.8.0) and
@@ -71,6 +72,7 @@ ROOT_FILES = [
 # below). screenshots/ and tools/ are intentionally ABSENT (owner: screenshots not
 # needed; tools = dev-only). Add a new dir here the moment a release ships one.
 CONTENT_DIRS = [
+    "icons",   # Fluent chrome icons (F-FLUENT-ICON-ADOPTION); app degrades to text without them
     "parakit_cleanup",
     "parakit_separators",
     "Detection Research Notes - Web Edition",
