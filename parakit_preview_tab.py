@@ -2636,7 +2636,7 @@ class PreviewTab(ttk.Frame):
             self.edit_chip.set(False)
         self.canvas.toggle()
         playing = self.canvas.is_playing
-        self.play_btn.configure(text="⏸ Pause" if playing else "▶ Play")
+        self.play_btn.configure(text="Ⅱ Pause" if playing else "▶ Play")
         if playing:
             start_at = self.canvas.now
             self._synth_prev_t = start_at
