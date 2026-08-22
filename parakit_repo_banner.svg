@@ -84,7 +84,7 @@
   <text x="352" y="150" font-family="Segoe UI, Segoe UI Variable, Arial, Helvetica, sans-serif" font-size="88" font-weight="800" letter-spacing="1" fill="url(#word)" stroke="#160f2e" stroke-width="2.5" paint-order="stroke">ParaKit</text>
   <rect x="353" y="170" width="310" height="5" rx="2.5" fill="url(#word)"/>
   <text x="352" y="216" font-family="Segoe UI, Segoe UI Variable, Arial, Helvetica, sans-serif" font-size="23" font-weight="600" fill="#e0e0e0">Custom Song Creator for Paradiddle &amp; Clone Hero — All-in-One Drum Chart Tool</text>
-  <text x="352" y="252" font-family="Segoe UI, Segoe UI Variable, Arial, Helvetica, sans-serif" font-size="18.5" fill="#9a9ab0">AI Auto Chart Features + Convert MIDI + Audio into Paradiddle (.rlrr) and Clone Hero (.chart) custom songs</text>
+  <text x="352" y="252" font-family="Segoe UI, Segoe UI Variable, Arial, Helvetica, sans-serif" font-size="18.5" fill="#9a9ab0">AI Auto Chart Features + Convert MIDI &amp; Audio into Paradiddle (.rlrr) and Clone Hero (.chart) custom songs</text>
 
   <rect x="1" y="1" width="1278" height="318" rx="23" fill="none" stroke="#b388ff" stroke-opacity="0.22" stroke-width="1.5"/>
 </svg>

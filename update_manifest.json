@@ -52,7 +52,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "839723127c930b618fd3bf2100684f8affd3ac78bb8641180b063507decc4357"
+      "sha256": "1854600140d57540dab5bbb2596d33b194442739eb01ec13dc9fdcee8cb7c526"
     },
     {
       "path": "README.txt",
@@ -200,7 +200,7 @@
     },
     {
       "path": "parakit_repo_banner.svg",
-      "sha256": "1944a9781b1cdadd52b3da7aee31ef229d553d034d9ba24c23284d6cf956d9af"
+      "sha256": "98189b12bcae8f423da9f4e1df5145e29c0e0c3e015b1ae739beb97559d4166a"
     },
     {
       "path": "parakit_separators/__init__.py",

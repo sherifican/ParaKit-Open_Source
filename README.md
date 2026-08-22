@@ -186,7 +186,7 @@ MIDI Editor — sharper chart, note selection, reactive notes and new toolbar bu
 
 Audio → MIDI — tab polish
 
-<img src="screenshots/app-05-audio-to-midi.png?v=20260713" width="900" alt="Audio → MIDI — middle-column cards tinted, top boxes removed">
+<img src="screenshots/app-05-audio-to-midi.png?v=20260821" width="900" alt="Audio → MIDI — middle-column cards tinted, top boxes removed">
 
 + The **middle column** (Enhanced Detection, Neural Stem Isolation, Settings Profiles, Output) now has a **subtle tint** so it reads as one grouped panel set, distinct from the settings on the left and Advanced / Debug on the right.
 + Removed the **Reality Check** and **Engine Cheat Sheet** boxes from the top of the tab to cut scrolling (that guidance already lives in the Quick Path box and the Detection Engine section).
@@ -214,7 +214,7 @@ Single Song Creator
 + Advanced Options is now an always-visible card (was a hidden drop-down); Offset moved directly under Manual BPM
 + "Your Songs" library — finished songs scanned live from your Paradiddle + Clone Hero folders, with RLRR / CHART badges, E / M / H / X difficulty badges, Delete, right-click Rename, and Extract → MIDI Extractor
 
-<img src="screenshots/app-01-single-song-creator.png?v=20260710" width="900" alt="Single Song Creator (full-tab card redesign + Your Songs library)">
+<img src="screenshots/app-01-single-song-creator.png?v=20260821" width="900" alt="Single Song Creator (full-tab card redesign + Your Songs library)">
 
 ---
 
@@ -390,7 +390,7 @@ How closely do ParaKit's converted charts agree with charts people made by hand?
 ## 📸 Screenshots
 
 <div align="center">
-  <img src="screenshots/app-01-single-song-creator.png?v=20260710" width="820" alt="ParaKit — Single Song Creator">
+  <img src="screenshots/app-01-single-song-creator.png?v=20260821" width="820" alt="ParaKit — Single Song Creator">
 </div>
 
 <details>
@@ -399,7 +399,7 @@ How closely do ParaKit's converted charts agree with charts people made by hand?
 <br>
 
 ### 1 · Single Song Creator
-<img src="screenshots/app-01-single-song-creator.png?v=20260710" width="900" alt="Single Song Creator">
+<img src="screenshots/app-01-single-song-creator.png?v=20260821" width="900" alt="Single Song Creator">
 
 ### 2 · Create Multiple Songs
 <img src="screenshots/app-02-create-multiple-songs.png" width="900" alt="Create Multiple Songs">
@@ -411,7 +411,7 @@ How closely do ParaKit's converted charts agree with charts people made by hand?
 <img src="screenshots/app-04-stem-splitter.png?v=20260704" width="900" alt="Stem Splitter">
 
 ### 5 · Audio → MIDI
-<img src="screenshots/app-05-audio-to-midi.png?v=20260713" width="900" alt="Audio to MIDI">
+<img src="screenshots/app-05-audio-to-midi.png?v=20260821" width="900" alt="Audio to MIDI">
 
 ### 6 · MIDI Editor
 <img src="screenshots/app-06-midi-editor.png?v=20260731b" width="900" alt="MIDI Editor">
@@ -426,7 +426,7 @@ or exported. Detection itself is untouched — the tab only reads audio and char
 <img src="screenshots/app-06b-spectral-comparison.png?v=20260725" width="900" alt="Spectral Comparison, Per-Lane view">
 
 *Spectrogram view — full heatmap with note rows:*
-<img src="screenshots/app-06c-spectral-spectrogram.png?v=20260725" width="900" alt="Spectral Comparison, Spectrogram view">
+<img src="screenshots/app-06c-spectral-spectrogram.png?v=20260821" width="900" alt="Spectral Comparison, Spectrogram view">
 
 *Waveform view — mirrored amplitude, for when the heatmap is hard to read:*
 <img src="screenshots/app-06d-spectral-waveform.png?v=20260817" width="900" alt="Spectral Comparison, Waveform view">
@@ -447,7 +447,7 @@ or exported. Detection itself is untouched — the tab only reads audio and char
 <img src="screenshots/app-11a-preview.png?v=20260725" width="900" alt="Preview tab">
 
 ### 13 · Practice
-<img src="screenshots/app-11b-practice.png?v=20260725" width="900" alt="Practice tab">
+<img src="screenshots/app-11b-practice.png?v=20260821" width="900" alt="Practice tab">
 
 ### 14 · Quick Start & FAQ
 <img src="screenshots/app-12-quick-start-faq.png" width="900" alt="Quick Start & FAQ">
