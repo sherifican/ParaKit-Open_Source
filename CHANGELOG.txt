@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.10.0  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.10.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,36 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.10.1   --   2026-08-21
+------------------------------------------------------------------------------
+  Quality-of-life pass: settings live where they are used, windows open where
+  you are looking, and the app starts faster.
+
+  CHART TIMING MOVED TO THE MIDI EDITOR
+  The human-chart-timing option introduced in 4.10.0 lived on the Song Creator
+  tab, away from where charts are actually reviewed. It is now a Chart Timing
+  button on the MIDI Editor toolbar, next to the Difficulty settings it belongs
+  with. Changing the setting with a song loaded asks whether the loaded chart
+  should be re-timed to match, so the editor view and the setting cannot
+  silently disagree.
+
+  DIALOGS OPEN CENTERED OVER THE APP
+  Popup windows -- settings, pickers, confirmations -- used to appear in the
+  top-left corner of the screen. They now open centered over the ParaKit
+  window, the way the update notice always has, including on multi-monitor
+  setups.
+
+  FASTER STARTUP
+  The Quick Start & FAQ tab now builds the first time it is opened instead of
+  at launch, which takes about a quarter off the app's startup time. The tab
+  looks and behaves exactly as before; its first open takes a moment.
+
+  SMALL FIXES
+  - The Song Info disclaimer on the Song Creator tab no longer gets cut off.
+  - The project README gained a banner and an "Agreement with human charts"
+    section reporting measured detection agreement on the development corpus.
 
 ------------------------------------------------------------------------------
   v4.10.0   --   2026-08-20

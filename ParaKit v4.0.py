@@ -2736,6 +2736,85 @@ def _itunes_fetch_album_art(title, artist, user_agent_version=""):
 # Threading: Convert kicks off a daemon thread; UI updates from the worker
 # go through `self.app.root.after(0, lambda: ...)` per Tk threading rules.
 # ---------------------------------------------------------------------------
+
+def _center_toplevel_over(top, over, bounds_for_point=None):
+    """Place dialog `top` centered over widget `over`, like the update popups do.
+
+    Most ad-hoc Toplevels never set a position, so Windows dropped them at the
+    top-left of the desktop while the update dialogs (which compute +x+y) opened
+    centered -- this is the one shared implementation of that +x+y computation.
+
+    Runs at the END of a dialog builder: the window has never been mapped at that
+    point (mapping needs the event loop, which the builder hasn't returned to), so
+    withdraw/deiconify costs nothing visible and update_idletasks can settle the
+    final requested size without flashing the window at the wrong spot first.
+
+    A grab taken earlier in the builder does not survive the withdraw, so it is
+    re-asserted -- several dialogs (velocity filter, pre-flight validator, MIDI
+    controls) grab immediately after creation, long before their widgets exist.
+
+    `bounds_for_point` is the app's _monitor_bounds_for_point when available: on
+    multi-monitor setups winfo_screenwidth is the PRIMARY monitor only, and
+    clamping against it yanks dialogs off a secondary monitor (the v4.4.53.8
+    lesson). Passing None just clamps to non-negative coordinates.
+    """
+    # Defined before the try: the finally below uses these, and a TclError partway
+    # through the try (dialog destroyed mid-build) must not turn into a NameError
+    # that escapes the TclError-only handlers.
+    w = h = -1
+    try:
+        regrab = str(top.grab_current()) == str(top)
+    except tk.TclError:
+        regrab = False
+
+    def _place(w, h):
+        ox, oy = over.winfo_rootx(), over.winfo_rooty()
+        ow, oh = over.winfo_width(), over.winfo_height()
+        x, y = ox + (ow - w) // 2, oy + (oh - h) // 2
+        if bounds_for_point is not None:
+            try:
+                l, t, r, b = bounds_for_point(ox + ow // 2, oy + oh // 2)
+                x, y = max(l, min(x, r - w)), max(t, min(y, b - h))
+            except Exception:
+                x, y = max(x, 0), max(y, 0)
+        else:
+            x, y = max(x, 0), max(y, 0)
+        top.geometry("+%d+%d" % (x, y))
+
+    try:
+        top.withdraw()
+        top.update_idletasks()
+        # A withdrawn window reports winfo_width 1 until mapped; the requested
+        # geometry (set explicitly or accumulated from packing) is authoritative.
+        w, h = top.winfo_reqwidth(), top.winfo_reqheight()
+        try:
+            g = top.wm_geometry().split("+")[0]
+            gw, gh = (int(v) for v in g.split("x"))
+            if gw > 1 and gh > 1:
+                w, h = gw, gh
+        except Exception:
+            pass
+        _place(w, h)
+    except tk.TclError:
+        return          # dialog was destroyed before it ever showed (e.g. no-result path)
+    finally:
+        try:
+            top.deiconify()
+            # Second pass with the WM's answer. A dialog whose content is
+            # narrower than the Windows minimum caption width gets WIDENED at
+            # map time (the velocity filter: content 200 px, mapped 350 px),
+            # which leaves a first-pass position off-center by half the
+            # difference. Post-deiconify, update_idletasks reports the real
+            # size; still inside the builder, so nothing visibly jumps.
+            top.update_idletasks()
+            w2, h2 = top.winfo_reqwidth(), top.winfo_reqheight()
+            if abs(w2 - w) > 2 or abs(h2 - h) > 2:
+                _place(w2, h2)
+            if regrab:
+                top.grab_set()
+        except tk.TclError:
+            pass
+
 class _PdToChConverterWindow(tk.Toplevel):
     """Tools-menu popup: Paradiddle → Clone Hero batch converter."""
 
@@ -3457,6 +3536,7 @@ class _PdToChConverterWindow(tk.Toplevel):
                     popup.minsize(380, 440)
                 except Exception:
                     pass
+                _center_toplevel_over(popup, self)
                 popup.grab_set()
 
                 frame = ttk.Frame(popup, padding=12)
@@ -3615,6 +3695,7 @@ class _PdToChConverterWindow(tk.Toplevel):
                     popup.minsize(480, 380)
                 except Exception:
                     pass
+                _center_toplevel_over(popup, self)
                 popup.grab_set()
 
                 frame = ttk.Frame(popup, padding=12)
@@ -6337,7 +6418,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.10.0"
+    VERSION = "4.10.1"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -6746,7 +6827,32 @@ class MidiToRlrrApp:
         self._build_preview_tab(tab9)      # v4.9.0 — replaces _build_visualizer_tab
         self._build_practice_tab(tab14)    # v4.9.0 — new Practice v3 tab
         self._build_youtube_tab(tab10)
-        self._build_help_tab(tab11)
+        # Quick Start & FAQ builds LAZILY, on first visit — the pilot of the
+        # measured lazy-tab plan (PLAN_ui_smoothness_experiments_2026-08-21, step 2).
+        # Timed by monkeypatch on 2026-08-21: _build_help_tab is 0.57 s of a 5.4 s
+        # construction — 10% of startup for a tab many sessions never open. Every
+        # navigation path (custom tab buttons, menu, Detection-Troubleshooter deep
+        # links) goes through notebook.select(), which fires <<NotebookTabChanged>>,
+        # so the one hook below covers clicks and programmatic jumps alike. The only
+        # externally-visible state the builder writes (me_flagged) is inside its own
+        # click handlers and getattr-guarded, so nothing at startup misses it.
+        self._help_tab_built = False
+
+        def _ensure_help_built(_e=None, _tab=tab11):
+            if self._help_tab_built:
+                return
+            try:
+                if self.notebook.select() != str(_tab):
+                    return
+            except tk.TclError:
+                return
+            self._help_tab_built = True
+            self._build_help_tab(_tab)
+            # the freshly built widgets missed the startup theme passes; one
+            # re-apply here is what keeps the v4.4.38 styling guarantee intact
+            self._apply_theme()
+        self._ensure_help_built = _ensure_help_built
+        self.notebook.bind("<<NotebookTabChanged>>", _ensure_help_built, add="+")
         self._build_asset_manager_tab(tab12)
         self._build_menu_bar()
         self._build_tab_buttons()   # v4.8.0 custom colored tab bar (native tabs hidden in _apply_theme)
@@ -9220,6 +9326,11 @@ class MidiToRlrrApp:
         except Exception:
             return (1920, 1080)
 
+    def _center_popup(self, top, over=None):
+        """Center an ad-hoc dialog over the app window, monitor-clamped."""
+        _center_toplevel_over(top, over if over is not None else self.root,
+                              self._monitor_bounds_for_point)
+
     def _monitor_bounds_for_point(self, x, y):
         """Return (left, top, right, bottom) of the work area of the
         monitor containing screen-coords (x, y).
@@ -10237,10 +10348,16 @@ class MidiToRlrrApp:
         # ships a FULL chart labelled "Easy" — the label still changes, so
         # nothing looks wrong until it is played. A control that disappears
         # needs to say where it went, at the place it disappeared from.
-        ttk.Label(opts_row,
-                  text="   Note reduction moved → MIDI Editor ▸ ◪ Difficulty",
-                  style="Sub.TLabel", foreground="#c8a24a").pack(
-                      side=tk.LEFT, padx=(14, 0))
+        # Own grid row, not packed after the Complexity combo: side=LEFT gave it
+        # whatever width the row had left, and in the real layout that clipped it
+        # mid-word ("... ◪ Diffi"). A notice that exists to redirect the user
+        # cannot be the thing that gets truncated. wraplength lets it fold to a
+        # second line instead of vanishing when the column is narrow.
+        ttk.Label(info_frame,
+                  text="Note reduction moved → MIDI Editor ▸ ◪ Difficulty",
+                  style="Sub.TLabel", foreground="#c8a24a",
+                  wraplength=430, justify=tk.LEFT).grid(
+                      row=5, column=0, columnspan=3, sticky="w", pady=(0, 2))
 
         self._add_tooltip(diff_combo,
             "The difficulty label saved with the song — it is only a category\n"
@@ -18500,6 +18617,7 @@ demucs.separate.main()
         prog_win = tk.Toplevel(self.root)
         prog_win.title("Downloading model...")
         prog_win.geometry("440x140")
+        self._center_popup(prog_win)
         try:
             prog_win.transient(self.root)
             prog_win.grab_set()
@@ -21315,6 +21433,14 @@ demucs.separate.main()
                      "strongest hits in each lane and drop the rest.\n\n"
                      "Apply it to the open chart (Ctrl+Z undoes it), save it as\n"
                      "a separate file, or save and compare against the original.")
+        _tool_button(edit_frame, "⏱ Chart Timing", self._me_chart_timing,
+                     "Slide the whole chart a few milliseconds later, where a\n"
+                     "human charter would place it, or back onto the audio.\n\n"
+                     "This is a feel preference, not an accuracy fix — the\n"
+                     "detected times are already accurate to about a\n"
+                     "millisecond. Nothing is added, removed or re-voiced.\n\n"
+                     "Applies to the open chart, so you can hear it and undo\n"
+                     "it with Ctrl+Z.")
 
         ttk.Label(edit_col,
                   text=("Ctrl+scroll=zoom  Ctrl+C/V=copy/paste  Ctrl+Q=quantize"
@@ -27206,6 +27332,7 @@ demucs.separate.main()
         ttk.Button(btn_row, text="Arm — then click the chart",
                    command=_arm).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_row, text="Cancel", command=top.destroy).pack(side=tk.LEFT)
+        self._center_popup(top)
         top.grab_set()
 
     def _me_snare_roll_disarm(self, status=None):
@@ -27538,6 +27665,7 @@ demucs.separate.main()
 
         ttk.Button(btn_row, text="Apply", command=_apply).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_row, text="Cancel", command=top.destroy).pack(side=tk.LEFT)
+        self._center_popup(top)
         top.grab_set()
 
     def _me_difficulty_reduction(self):
@@ -27864,6 +27992,7 @@ demucs.separate.main()
         ttk.Button(btn_row, text="Cancel", command=top.destroy).pack(side=tk.LEFT)
         top.bind("<Escape>", lambda e: top.destroy())
         top.protocol("WM_DELETE_WINDOW", top.destroy)
+        self._center_popup(top)
         top.grab_set()
         # grab_set routes EVENTS here but does not move keyboard FOCUS, so a modal that
         # only grabs can sit without focus. Standard practice for a modal, and harmless.
@@ -27877,6 +28006,149 @@ demucs.separate.main()
         # on the shipped 4.9.6 and with either focus_set() or focus_force() here. The
         # harness check has since been rewritten to test the binding + its effect
         # deterministically instead of depending on which window the desktop focused.
+        top.focus_set()
+
+    def _me_chart_timing(self):
+        """Slide the whole open chart onto, or off, the human-charting convention.
+
+        Moved here from the Song Creator's advanced options for the same reason
+        difficulty reduction was: it is a FEEL preference, and a checkbox ticked
+        before the convert can only be judged by converting, importing, listening,
+        and converting again to take it back off. Here it is applied to the open
+        chart, against the waveform, with Ctrl+Z.
+
+        ⚠ THIS RETARGETS, IT DOES NOT ACCUMULATE — the same rule the difficulty
+        button had to learn. "Apply +6.5 ms" twice is +13 ms, and since the shift
+        is far too small to see on the canvas, a doubled chart looks exactly like
+        a correct one. So the radios select the chart's TOTAL offset and the shift
+        actually applied is (target - current).
+
+        Knowing `current` is the whole trick, and it is tracked the way the
+        difficulty base is: any edit, load or undo makes the recorded signature
+        stop matching, the offset drops back to zero, and tracking restarts from
+        the chart in front of us. That self-heals for edits and undo. It is
+        genuinely lossy across a SAVE/RELOAD, because an .rlrr does not record
+        what it was shifted by, so a reopened chart reads as unshifted — the
+        dialog says so rather than pretending otherwise.
+        """
+        if not self.me_notes:
+            self.me_status_var.set("⏱  No notes loaded — open a chart first")
+            self.root.after(3000, lambda: self.me_status_var.set(
+                self.ME_DEFAULT_STATUS))
+            return
+
+        def _sig(notes):
+            return tuple((id(n), n["time"]) for n in notes)
+
+        # Only trust the recorded offset if the chart is still exactly what this
+        # feature last installed.
+        _cur = getattr(self, "_me_timing_offset", 0.0)
+        _tracked = _sig(self.me_notes) == getattr(self, "_me_timing_sig", None)
+        if not _tracked:
+            _cur = 0.0
+            self._me_timing_offset = 0.0
+            self._me_timing_sig = None
+
+        top = tk.Toplevel(self.root)
+        top.title("⏱  Chart Timing")
+        top.resizable(False, False)
+        top.transient(self.root)
+        top.configure(bg=APP_BG)
+        f = tk.Frame(top, bg=APP_BG, padx=14, pady=12)
+        f.pack()
+        tk.Label(f, text="⏱  Chart Timing", bg=APP_BG, fg="#b388ff",
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 4))
+        tk.Label(f,
+                 text="Human charters place notes a few milliseconds after the drum hit they\n"
+                      "stand for. Matching that can read better in game than sitting exactly on\n"
+                      "the onset. This is a feel preference, not an accuracy fix — the detected\n"
+                      "times are already accurate to about a millisecond.",
+                 bg=APP_BG, fg="#888", font=("Segoe UI", 8),
+                 justify=tk.LEFT).pack(anchor="w", pady=(0, 8))
+
+        _ms = CHART_CONVENTION_OFFSET_SEC * 1000.0
+        tk.Label(f, text="Set the chart's timing to:", bg=APP_BG, fg="#e0e0e0",
+                 font=("Segoe UI", 9)).pack(anchor="w")
+        target_var = tk.DoubleVar(value=(CHART_CONVENTION_OFFSET_SEC if _cur == 0.0 else 0.0))
+        ttk.Radiobutton(f, text="Exactly on the audio  (0 ms)",
+                        value=0.0, variable=target_var).pack(anchor="w", pady=(2, 0))
+        ttk.Radiobutton(f, text="Human chart timing  (+%.1f ms)" % _ms,
+                        value=CHART_CONVENTION_OFFSET_SEC,
+                        variable=target_var).pack(anchor="w", pady=(2, 0))
+
+        if _tracked and _cur:
+            _state = "Currently at +%.1f ms, applied here this session." % (_cur * 1000.0)
+        elif _tracked:
+            _state = "Currently sitting on the audio."
+        else:
+            _state = ("This chart is treated as sitting on the audio. A saved .rlrr does\n"
+                      "not record what it was shifted by, so a reopened chart always reads\n"
+                      "as unshifted — if you already shifted it before saving, shifting\n"
+                      "again would double it.")
+        tk.Label(f, text=_state, bg=APP_BG, fg="#888", font=("Segoe UI", 8),
+                 justify=tk.LEFT).pack(anchor="w", pady=(6, 0))
+
+        tk.Label(f,
+                 text="The whole chart slides as one piece — nothing is added, removed or\n"
+                      "re-voiced, and every difficulty keeps exactly the notes it had.",
+                 bg=APP_BG, fg="#888", font=("Segoe UI", 8),
+                 justify=tk.LEFT).pack(anchor="w", pady=(6, 8))
+
+        btn_row = tk.Frame(f, bg=APP_BG)
+        btn_row.pack(pady=(4, 0))
+
+        def _apply():
+            target = float(target_var.get())
+            delta = target - _cur
+            if abs(delta) < 1e-12:
+                # A no-op must not dirty the chart: _me_push_undo also clears the
+                # redo stack and arms the unsaved-changes guard. Same fix already
+                # made for the soft-quantize and difficulty no-ops.
+                self.me_status_var.set("⏱  Already there — chart unchanged")
+                self.root.after(3000, lambda: self.me_status_var.set(
+                    self.ME_DEFAULT_STATUS))
+                top.destroy()
+                return
+            if any(n["time"] + delta < 0 for n in self.me_notes):
+                messagebox.showerror(
+                    "Shift Would Go Negative",
+                    "Shifting by %+.1f ms would put at least one note before the "
+                    "start of the song. Nothing has been changed." % (delta * 1000.0))
+                return
+
+            self._me_push_undo()
+            _sel = self._me_capture_selection()
+            for n in self.me_notes:
+                n["time"] = n["time"] + delta
+            # A uniform translation preserves ordering, so me_notes stays sorted
+            # and no note is removed — no re-sort, and no orphan flags to purge.
+            _last = self.me_notes[-1]["time"]
+            if _last > self.me_duration:
+                self.me_duration = _last + 1.0
+            self._me_restore_selection(_sel)
+            self._me_redraw()
+            self._me_update_info()
+
+            self._me_timing_offset = target
+            self._me_timing_sig = _sig(self.me_notes)
+            # The difficulty button's remembered base is keyed on note times, so
+            # it stops matching after this and that feature quietly retargets off
+            # the shifted chart. That is the correct outcome, not a collision.
+
+            self.me_status_var.set(
+                "⏱  Chart moved %+.1f ms — now at %s — Ctrl+Z to undo"
+                % (delta * 1000.0,
+                   "+%.1f ms" % (target * 1000.0) if target else "0 ms (on the audio)"))
+            self.root.after(4000, lambda: self.me_status_var.set(
+                self.ME_DEFAULT_STATUS))
+            top.destroy()
+
+        ttk.Button(btn_row, text="Apply", command=_apply).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_row, text="Cancel", command=top.destroy).pack(side=tk.LEFT)
+        top.bind("<Escape>", lambda e: top.destroy())
+        top.protocol("WM_DELETE_WINDOW", top.destroy)
+        self._center_popup(top)
+        top.grab_set()
         top.focus_set()
 
     def _me_repeat_pattern(self):
@@ -28139,6 +28411,7 @@ demucs.separate.main()
 
         ttk.Button(btn_row, text="Apply", command=_apply).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_row, text="Cancel", command=top.destroy).pack(side=tk.LEFT)
+        self._center_popup(top)
         top.grab_set()
 
     # ── Feature 3: Re-run ML only ─────────────────────────────────────────────
@@ -28585,6 +28858,7 @@ demucs.separate.main()
                    command=lambda: [self.me_conf_shade_var.set(True), self._me_redraw()]
                    ).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_row, text="Close", command=top.destroy).pack(side=tk.LEFT)
+        self._center_popup(top)
 
 
     def _a2m_capture_settings_snapshot(self):
@@ -28954,6 +29228,7 @@ demucs.separate.main()
 
         ttk.Button(btn_row, text="Apply", command=_apply).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(btn_row, text="Cancel", command=top.destroy).pack(side=tk.LEFT)
+        self._center_popup(top)
 
     def _me_active_audio(self):
         """Return the currently selected audio path based on active stem radio."""
@@ -37447,6 +37722,7 @@ demucs.separate.main()
             try: top.destroy()
             except Exception: pass
             messagebox.showinfo("Alternate art", "No other art found from search.")
+        self._center_popup(top)
 
     def _am_pick_alternate_art(self, art_bytes, top):
         """Set a chosen alternate cover as the current fetched art, then close the
@@ -43981,6 +44257,7 @@ demucs.separate.main()
         ttk.Button(btn_row, text="Close",
                    command=_close).pack(side=tk.RIGHT)
         dlg.protocol("WM_DELETE_WINDOW", _close)
+        self._center_popup(dlg)
 
     def _build_visualizer_tab(self, parent):
         """Tab 9 — falling notes track preview, matching Paradiddle in-game appearance."""
@@ -45115,6 +45392,7 @@ demucs.separate.main()
         ttk.Button(btn_row, text="Apply", command=_apply).pack(side=tk.LEFT)
         ttk.Button(btn_row, text="Cancel", command=dlg.destroy).pack(
             side=tk.LEFT, padx=(4, 0))
+        self._center_popup(dlg)
 
     def _viz_actual_play_pos(self, elapsed=None):
         """Return the current Preview / Practice audio position in seconds."""
@@ -49671,30 +49949,31 @@ demucs.separate.main()
         self.two_kick_var.trace_add("write", lambda *_: save_config(
             {"ch_two_kick": self.two_kick_var.get()}))
 
-        # Chart timing convention checkbox
-        self.chart_timing_offset_var = tk.BooleanVar(
-            value=load_config().get("chart_convention_offset", False))
-        timing_cb = ttk.Checkbutton(
+        # Human chart timing moved to the MIDI Editor (⏱ Chart Timing button),
+        # for the reason difficulty reduction moved there first: a 6.5 ms shift
+        # is a FEEL preference, and judging feel from a checkbox ticked before
+        # the convert means a full convert → re-import round-trip just to hear
+        # it, and another one to take it back off. In the editor it is a
+        # toggle you can apply, listen to, and undo against the waveform.
+        #
+        # The variable STAYS (permanently False) — the four build sites still
+        # call _apply_chart_timing_shift, and False simply means "never shift
+        # at build time". Keeping the call sites is deliberate: they are what
+        # holds the shift AFTER difficulty reduction, which is load-bearing
+        # (see _apply_chart_timing_shift) and guarded by the breaker suite.
+        self.chart_timing_offset_var = tk.BooleanVar(value=False)
+
+        # VISIBLE relocation notice, exactly where the checkbox used to be —
+        # same reasoning as the note-reduction notice on the Song Creator tab.
+        # 4.10.0 shipped this as a checkbox that SAVED ITS STATE, so anyone who
+        # turned it on has it on right now; a control that silently stops
+        # working is worse than one that says where it went.
+        ttk.Label(
             adv_content,
-            text="Match human chart timing (+6.5 ms)",
-            variable=self.chart_timing_offset_var
-        )
-        timing_cb.grid(row=4, column=0, sticky="w", pady=(0, 2))
-        self._add_tooltip(
-            timing_cb,
-            "Shifts every note 6.5 ms later so the chart sits where a human\n"
-            "charter would place it rather than exactly on the drum hit.\n\n"
-            "Community charts are consistently a few milliseconds late, and a\n"
-            "chart landing precisely on the onset can read as slightly early\n"
-            "in game. This does not correct a detection error — the detected\n"
-            "times are accurate to about a millisecond.\n\n"
-            "Leave this OFF for timing that matches the audio exactly. It is a\n"
-            "feel preference rather than an accuracy setting: the whole chart\n"
-            "slides as one piece, so nothing is added, removed or re-voiced,\n"
-            "and reduced difficulties keep exactly the notes they had."
-        )
-        self.chart_timing_offset_var.trace_add("write", lambda *_: save_config(
-            {"chart_convention_offset": self.chart_timing_offset_var.get()}))
+            text="Human chart timing moved → MIDI Editor ▸ ⏱ Chart Timing",
+            style="Sub.TLabel", foreground="#c8a24a", wraplength=280,
+            justify=tk.LEFT
+        ).grid(row=4, column=0, sticky="w", pady=(0, 2))
 
         # Info label
         ttk.Label(
@@ -50566,6 +50845,7 @@ demucs.separate.main()
 
         # Block until closed for the auto-run-on-export path; the standalone
         # button path doesn't care about the return value.
+        self._center_popup(top)
         top.wait_window()
         return result["value"]
 
