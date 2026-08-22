@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.10.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.11.0  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,46 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.11.0   --   2026-08-22
+------------------------------------------------------------------------------
+  Crisp icons across the whole app, and the Song Tester now works from a
+  finished chart alone.
+
+  CRISP ICONS EVERYWHERE
+  Every button, checkbox, section heading, right-click menu item, and tab now
+  carries a crisp Fluent System Icon instead of a blurry color-emoji glyph.
+  Icons are state-aware: Play/Pause buttons, the Dark/Light theme toggle, and
+  the song-library Play chips swap their icons live as their state changes.
+  The icons are Microsoft's MIT-licensed Fluent set, pre-rendered at exact
+  pixel sizes for the dark theme; if the icons folder is missing the app
+  falls back to plain text labels rather than failing. Window titles and
+  Help copy that referred to buttons by their old emoji were cleaned up to
+  match. Three tab icons were hand-picked: Spectral Comparison shows
+  spectrum bars, YouTube -> FLAC a play triangle, and Practice a custom
+  three-lane falling-notes glyph.
+
+  SONG TESTER NOW TESTS A FINISHED .RLRR ALONE
+  The Sync Test previously refused to run unless a MIDI file was set, even
+  with a .rlrr loaded. It now runs from a .rlrr plus audio alone: BPM comes
+  from the chart itself, the report and timeline are labeled by the actual
+  source, and Auto Fetch Audio reads the chart's own audio list first, so
+  picking a finished chart fills the Song Audio and Drum Audio fields from
+  the files sitting beside it. Tools that edit the MIDI (Auto-Fix, opening
+  flagged notes in the MIDI Editor) explain that they need one instead of
+  failing quietly.
+
+  SONG TESTER .RLRR ANALYSIS FIXED
+  Testing with a .rlrr loaded reported "Total notes (.rlrr): 0" and an
+  instrument balance of all zeros, because chart event times are stored as
+  text and the instrument names use the chart's internal class names. Both
+  are now read correctly; a 1,442-note chart tests as a 1,442-note chart.
+
+  SMALL FIXES
+  - The small screen icon on the Preview buttons rendered with its top edge
+    cut off; the icon renderer now positions glyphs by their actual drawn
+    shape, fixing the whole class of small-size clipping.
 
 ------------------------------------------------------------------------------
   v4.10.1   --   2026-08-21

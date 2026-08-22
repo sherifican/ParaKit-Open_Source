@@ -5105,6 +5105,43 @@ def _neon_resource_path(*parts):
     return os.path.join(base, *parts)
 
 
+# ── Fluent chrome icons (F-FLUENT-ICON-ADOPTION) ─────────────────────────────
+# Pre-rendered PNGs in icons/ (tools/gen_fluent_icons.py renders them from the
+# Fluent System Icons font, MIT). Cached per (name, size, tint); a missing file
+# resolves to None so every call site degrades to its text label — an install
+# without the icons directory must never crash a toolbar build.
+_FLUENT_ICON_DIR = _neon_resource_path("icons")
+_FLUENT_ICON_CACHE = {}
+
+
+def fluent_icon(name, size=16, tint="fg"):
+    key = (name, size, tint)
+    if key in _FLUENT_ICON_CACHE:
+        return _FLUENT_ICON_CACHE[key]
+    img = None
+    try:
+        img = tk.PhotoImage(
+            file=os.path.join(_FLUENT_ICON_DIR, "%s_%d_%s.png" % (name, size, tint)))
+    except Exception:
+        img = None
+    _FLUENT_ICON_CACHE[key] = img
+    return img
+
+
+def _fluent_labelframe_title(lf, text, icon):
+    """Give a ttk.LabelFrame an icon + text heading.
+
+    Falls back silently to the frame's plain text= label when the icon PNG
+    is missing (same degradation contract as fluent_icon itself)."""
+    try:
+        img = fluent_icon(icon)
+        if img is not None:
+            lf.configure(labelwidget=ttk.Label(lf, text=text, image=img,
+                                               compound="left"))
+    except Exception:
+        pass
+
+
 def load_changelog_entries(max_entries=None):
     """Parse CHANGELOG.txt -> a newest-first list of (header, body) version entries
     for the in-app "What's New" (the SINGLE SOURCE OF TRUTH for version history,
@@ -6001,7 +6038,11 @@ class MidiExtractorPanel:
                   anchor="w").pack(side=tk.LEFT, fill="x", expand=True, padx=(4, 0))
         self._mk_btn(f_out, "Clear",        self._clear_output_dir).pack(side=tk.RIGHT, padx=(2, 0))
         self._mk_btn(f_out, "Browse…",      self._pick_output_dir).pack(side=tk.RIGHT, padx=(2, 0))
-        self._mk_btn(f_out, "📂 Open",       self._open_output_dir).pack(side=tk.RIGHT)
+        _a2m_open_btn = self._mk_btn(f_out, "Open", self._open_output_dir)
+        _oi = fluent_icon("folder_open")
+        if _oi is not None:
+            _a2m_open_btn.configure(image=_oi, compound="left")
+        _a2m_open_btn.pack(side=tk.RIGHT)
 
         # Action row
         f_act = ttk.Frame(body)
@@ -6418,7 +6459,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.10.1"
+    VERSION = "4.11.0"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -6623,14 +6664,17 @@ class MidiToRlrrApp:
         self._update_status_lbl = ttk.Label(update_btn_frame, text="",
                                              style="Sub.TLabel", foreground="#888")
         self._update_status_lbl.pack(side=tk.RIGHT, padx=(0, 8), anchor="center")
-        update_btn = ttk.Button(update_btn_frame, text="🔄  Check for Updates",
+        update_btn = ttk.Button(update_btn_frame, text="Check for Updates", image=fluent_icon("arrow_sync") or "", compound="left",
                                 command=self._check_for_update_manual)
         update_btn.pack(side=tk.RIGHT)
         # Dark / Light theme toggle — sits just left of Check for Updates.
         # "Dark" = the purple theme; "Light" = the app's original gray.
         self._theme_toggle_btn = ttk.Button(
             update_btn_frame,
-            text=("🌙  Dark" if self._theme_mode == "dark" else "☀  Light"),
+            text=("Dark" if self._theme_mode == "dark" else "Light"),
+            image=(fluent_icon("weather_moon") if self._theme_mode == "dark"
+                   else fluent_icon("weather_sunny")) or "",
+            compound="left",
             command=self._toggle_theme)
         self._theme_toggle_btn.pack(side=tk.RIGHT, padx=(0, 10))
 
@@ -6963,23 +7007,33 @@ class MidiToRlrrApp:
         table below for easy tuning."""
         compact = getattr(self, "_compact_layout", False)
         PUR, WHT, DRK = "#b388ff", "#ffffff", "#12121c"   # default tint / light text / dark text
-        # (icon, label, unselected-bg, unselected-fg) in notebook.add() INDEX ORDER
+        # (fluent-glyph, emoji-fallback, label, unselected-bg, unselected-fg) in
+        # notebook.add() INDEX ORDER. The glyph renders as a tinted image (dark
+        # tint on the bright DRK-text tabs, fg tint elsewhere; selected/hover
+        # states re-tint in _sync_tab_buttons); the emoji is only used when the
+        # icons directory is missing.
         self._tab_btn_meta = [
-            ("🎵", "Single Song Creator",   PUR,       WHT),   # 0
-            ("🎶", "Create Multiple Songs", PUR,       WHT),   # 1
-            ("🔄", "Audio → .ogg",          PUR,       WHT),   # 2
-            ("🥁", "Stem Splitter",         "#46d18a", DRK),   # 3  green
-            ("🎹", "Audio → MIDI",          "#e6c84a", DRK),   # 4  yellow (MIDI-creation flow)
-            ("🎼", "MIDI Editor",           "#ff9f43", DRK),   # 5  orange
-            ("📊", "Spectral Comparison",   "#7b2d8b", WHT),   # 6  Tom-3 purple (v4.8.0)
-            ("🎼", "Sheet Music → MIDI",    "#1a3a8f", WHT),   # 7  Tom-1 navy (owner recolour, v4.8.0)
-            ("▶",  "YouTube → FLAC",        "#e63946", WHT),   # 8  red (snare / YouTube's own brand red)
-            ("🎨", "Asset Manager",         "#00d4d4", DRK),   # 9  cyan
-            ("🔬", "Song Tester",           PUR,       WHT),   # 10
-            ("▶",  "Preview",               "#ff6ec7", DRK),   # 11  pink (v4.9.0 — distinct tint)
-            ("🥁", "Practice",              PUR,       WHT),   # 12  (v4.9.0)
-            ("📖", "Quick Start & FAQ",     "#bd02c1", WHT),   # 13 magenta
+            ("music_note_2",   "🎵", "Single Song Creator",   PUR,       WHT),   # 0
+            ("library",        "🎶", "Create Multiple Songs", PUR,       WHT),   # 1
+            ("arrow_sync",     "🔄", "Audio → .ogg",          PUR,       WHT),   # 2
+            ("arrow_split",    "🥁", "Stem Splitter",         "#46d18a", DRK),   # 3  green
+            ("midi",           "🎹", "Audio → MIDI",          "#e6c84a", DRK),   # 4  yellow (MIDI-creation flow)
+            ("edit",           "🎼", "MIDI Editor",           "#ff9f43", DRK),   # 5  orange
+            ("device_eq",      "📊", "Spectral Comparison",   "#7b2d8b", WHT),   # 6  Tom-3 purple (v4.8.0)
+            ("book_open",      "🎼", "Sheet Music → MIDI",    "#1a3a8f", WHT),   # 7  Tom-1 navy (owner recolour, v4.8.0)
+            ("play",           "▶",  "YouTube → FLAC",        "#e63946", WHT),   # 8  red (snare / YouTube's own brand red)
+            ("image",          "🎨", "Asset Manager",         "#00d4d4", DRK),   # 9  cyan
+            ("beaker",         "🔬", "Song Tester",           PUR,       WHT),   # 10
+            ("tv",             "▶",  "Preview",               "#ff6ec7", DRK),   # 11  pink (v4.9.0 — distinct tint)
+            ("note_lanes",     "🥁", "Practice",              PUR,       WHT),   # 12  (v4.9.0)
+            ("question_circle", "📖", "Quick Start & FAQ",    "#bd02c1", WHT),   # 13 magenta
         ]
+
+        def _tab_icon_for(idx, selected):
+            g, _emo, _lbl, _bg, fg = self._tab_btn_meta[idx]
+            tint = "fg" if (selected or fg == WHT) else "dark"
+            return fluent_icon(g, 16, tint)
+        self._tab_icon_for = _tab_icon_for
         self._tab_sel_bg, self._tab_sel_fg = "#2a1235", "#ffffff"   # dark-purple pressed
         # hide native tabs immediately (also re-asserted in _apply_theme)
         try:
@@ -6988,10 +7042,17 @@ class MidiToRlrrApp:
             pass
         self._tab_buttons = []
         fnt = ("Segoe UI", 8 if compact else 9, "bold")
-        for idx, (icon, label, bg, fg) in enumerate(self._tab_btn_meta):
-            lbl = tk.Label(self._tabbar, text=f" {icon} {label} ", bg=bg, fg=fg,
-                           font=fnt, padx=(4 if compact else 7),
-                           pady=(3 if compact else 5), cursor="hand2", bd=0)
+        for idx, (glyph, emoji, label, bg, fg) in enumerate(self._tab_btn_meta):
+            img = _tab_icon_for(idx, selected=False)
+            if img is not None:
+                lbl = tk.Label(self._tabbar, text=f" {label} ", image=img,
+                               compound="left", bg=bg, fg=fg,
+                               font=fnt, padx=(4 if compact else 7),
+                               pady=(3 if compact else 5), cursor="hand2", bd=0)
+            else:
+                lbl = tk.Label(self._tabbar, text=f" {emoji} {label} ", bg=bg, fg=fg,
+                               font=fnt, padx=(4 if compact else 7),
+                               pady=(3 if compact else 5), cursor="hand2", bd=0)
             # v4.7.13 — GRID (not pack): _relayout_tab_bar reflows these into as many
             # rows as the current width needs. See that method for why.
             lbl.grid(row=0, column=idx, padx=1, pady=1, sticky="w")
@@ -7051,7 +7112,7 @@ class MidiToRlrrApp:
             if self.notebook.index("current") == idx:
                 return
             b = self._tab_buttons[idx]
-            base = self._tab_btn_meta[idx][2]
+            base = self._tab_btn_meta[idx][3]
             b.configure(bg=self._lighten(base) if entering else base)
         except Exception:
             pass
@@ -7065,11 +7126,20 @@ class MidiToRlrrApp:
         except Exception:
             return
         for i, b in enumerate(getattr(self, "_tab_buttons", [])):
-            _icon, _label, bg, fg = self._tab_btn_meta[i]
+            _glyph, _emoji, _label, bg, fg = self._tab_btn_meta[i]
+            _pick = getattr(self, "_tab_icon_for", None)
             if i == cur:
-                b.configure(bg=self._tab_sel_bg, fg=self._tab_sel_fg)
+                _img = _pick(i, selected=True) if _pick else None
+                if _img is not None:
+                    b.configure(bg=self._tab_sel_bg, fg=self._tab_sel_fg, image=_img)
+                else:
+                    b.configure(bg=self._tab_sel_bg, fg=self._tab_sel_fg)
             else:
-                b.configure(bg=bg, fg=fg)
+                _img = _pick(i, selected=False) if _pick else None
+                if _img is not None:
+                    b.configure(bg=bg, fg=fg, image=_img)
+                else:
+                    b.configure(bg=bg, fg=fg)
 
     def _build_menu_bar(self):
         """Build a guarded desktop-style menu bar as alternate access to existing UI."""
@@ -7198,7 +7268,7 @@ class MidiToRlrrApp:
         tools_menu.add_separator()
         add(tools_menu, "Run Song Tester",
             lambda: self._menu_safe_call("tester", self._menu_tester_ready, self._tester_start,
-                                         "Choose MIDI and audio files in Song Tester before running."),
+                                         "Choose audio plus a MIDI or .rlrr in Song Tester before running."),
             guard=lambda: self._menu_is_tab("tester") and self._menu_tester_ready())
         add(tools_menu, "Detection Troubleshooter", lambda: self._menu_go("help"))
         tools_menu.add_separator()
@@ -7785,7 +7855,8 @@ class MidiToRlrrApp:
         return _PdToChConverterWindow._DIFF_ORDER
 
     def _menu_tester_ready(self):
-        return bool(getattr(self, "tester_midi_var", tk.StringVar()).get().strip()
+        return bool((getattr(self, "tester_midi_var", tk.StringVar()).get().strip()
+                     or getattr(self, "tester_rlrr_var", tk.StringVar()).get().strip())
                     and getattr(self, "tester_audio_var", tk.StringVar()).get().strip())
 
     def _menu_about(self):
@@ -9629,7 +9700,9 @@ class MidiToRlrrApp:
         # 4) toggle-button label + persist the choice.
         try:
             self._theme_toggle_btn.configure(
-                text=("🌙  Dark" if new_mode == "dark" else "☀  Light"))
+                text=("Dark" if new_mode == "dark" else "Light"),
+                image=(fluent_icon("weather_moon") if new_mode == "dark"
+                       else fluent_icon("weather_sunny")) or "")
         except Exception:
             pass
         try:
@@ -10153,7 +10226,7 @@ class MidiToRlrrApp:
             self._enable_drop(ent, var)
             _single_update_add_btn()
 
-        _single_add_btn = ttk.Button(_stems_outer, text="➕  Add more stem options",
+        _single_add_btn = ttk.Button(_stems_outer, text="Add more stem options", image=fluent_icon("add") or "", compound="left",
                                      command=_single_add_stem)
         _single_add_btn.pack(anchor="w", pady=(0, 2))
         self._file_row(files_frame, "Drum Audio",   self.drum_audio_var, 3,
@@ -10222,7 +10295,7 @@ class MidiToRlrrApp:
         meta_art_row.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(2, 0))
         ttk.Checkbutton(
             meta_art_row,
-            text="🎨  Use album art from audio file metadata (auto-cropped 512×512)",
+            text="Use album art from audio file metadata (auto-cropped 512×512)", image=fluent_icon("image") or "", compound="left",
             variable=self.use_metadata_art_var,
             command=self._on_metadata_art_toggle).pack(anchor="w")
         # Status sits BELOW the checkbox (was squeezed beside it and clipped in
@@ -10257,7 +10330,9 @@ class MidiToRlrrApp:
         _sc_af_outer.grid(row=7, column=0, columnspan=4, sticky="w", pady=(4, 4))
         _sc_af_border = tk.Frame(_sc_af_outer, bg="#00d4d4")
         _sc_af_border.pack(side=tk.LEFT)
-        _sc_af_btn = ttk.Button(_sc_af_border, text="🎵  Auto Fetch Audio",
+        _sc_af_btn = ttk.Button(_sc_af_border, text="Auto Fetch Audio",
+                                image=fluent_icon("music_note_2") or "",
+                                compound="left",
                                 command=self._creator_auto_fetch_audio, width=21)
         _sc_af_btn.pack(padx=2, pady=2)
         self._add_tooltip(
@@ -10354,7 +10429,7 @@ class MidiToRlrrApp:
         # cannot be the thing that gets truncated. wraplength lets it fold to a
         # second line instead of vanishing when the column is narrow.
         ttk.Label(info_frame,
-                  text="Note reduction moved → MIDI Editor ▸ ◪ Difficulty",
+                  text="Note reduction moved → MIDI Editor ▸ Difficulty",
                   style="Sub.TLabel", foreground="#c8a24a",
                   wraplength=430, justify=tk.LEFT).grid(
                       row=5, column=0, columnspan=3, sticky="w", pady=(0, 2))
@@ -10363,7 +10438,7 @@ class MidiToRlrrApp:
             "The difficulty label saved with the song — it is only a category\n"
             "label shown in Paradiddle's song browser. It does not change any\n"
             "notes. To thin a chart down to Easy, Medium, or Hard, open it in\n"
-            "the MIDI Editor and use the ◪ Difficulty button there.")
+            "the MIDI Editor and use the Difficulty button there.")
 
         # ── BPM / Timing (band col 3, LOWER card — Tools packs above it via
         # pack(before=) when it's built further down) ─────────────────────────
@@ -10504,16 +10579,17 @@ class MidiToRlrrApp:
         tools_frame = ttk.LabelFrame(right_stack, text=" Tools ", padding=8)
         tools_frame.pack(fill=tk.X, pady=(0, 8), before=bpm_frame)
         _sc_tool_btns = [
-            ("🔬  Test Sync Before Converting", self._quick_test_from_converter),
-            ("🔍  Check for Issues",            self._pfv_run_single_button),
-            ("🗑  Clear All Fields",            self._clear_all_fields),
-            ("📋  Copy to Batch",               self._copy_to_batch),
-            ("📺  Send to Preview",             self._creator_send_to_visualizer),
-            ("💾  Save Project",                self._project_save),
-            ("📂  Load Project",                self._project_load),
+            ("Test Sync Before Converting", self._quick_test_from_converter, "beaker"),
+            ("Check for Issues",            self._pfv_run_single_button,     "search"),
+            ("Clear All Fields",            self._clear_all_fields,          "eraser"),
+            ("Copy to Batch",               self._copy_to_batch,             "copy"),
+            ("Send to Preview",             self._creator_send_to_visualizer, "tv"),
+            ("Save Project",                self._project_save,              "save"),
+            ("Load Project",                self._project_load,              "folder_open"),
         ]
-        for _i, (_txt, _cmd) in enumerate(_sc_tool_btns):
-            ttk.Button(tools_frame, text=_txt, command=_cmd).grid(
+        for _i, (_txt, _cmd, _icn) in enumerate(_sc_tool_btns):
+            ttk.Button(tools_frame, text=_txt, command=_cmd,
+                       image=fluent_icon(_icn) or "", compound="left").grid(
                 row=_i // 2, column=_i % 2, sticky="ew",
                 padx=(0, 6) if (_i % 2 == 0) else 0, pady=(0, 4))
         tools_frame.columnconfigure(0, weight=1)
@@ -10587,7 +10663,7 @@ class MidiToRlrrApp:
                 self.sc_ch_meta_frame.pack_forget()
                 self.sc_ch_out_frame.pack_forget()
             try:
-                self.convert_btn.configure(text=self._sc_convert_button_text())
+                self.convert_btn.configure(text=self._sc_convert_button_text(), image=fluent_icon(self._sc_convert_button_icon()) or "")
             except Exception:
                 pass
 
@@ -10633,6 +10709,8 @@ class MidiToRlrrApp:
 
         # ?? Convert button ????????????????????????????????????????????????????
         self.convert_btn = ttk.Button(main, text=self._sc_convert_button_text(),
+                                      image=fluent_icon(self._sc_convert_button_icon()) or "",
+                                      compound="left",
                                       style="Convert.TButton", command=self._start_convert)
         self.convert_btn.pack(fill=tk.X, pady=(5, 4), ipady=8)
         _update_fmt_ui()
@@ -10663,9 +10741,11 @@ class MidiToRlrrApp:
 
         log_btn_row = ttk.Frame(log_frame)
         log_btn_row.pack(fill=tk.X, pady=(0, 4))
-        ttk.Button(log_btn_row, text="📂  Open Output Folder",
+        ttk.Button(log_btn_row, text="Open Output Folder",
+                   image=fluent_icon("folder_open") or "", compound="left",
                    command=self._open_output_folder).pack(side=tk.RIGHT)
-        ttk.Button(log_btn_row, text="📲  Push to Quest",
+        ttk.Button(log_btn_row, text="Push to Quest",
+                   image=fluent_icon("send") or "", compound="left",
                    command=self._adb_push_to_quest).pack(side=tk.RIGHT, padx=(0, 6))
 
         # Log export checkbox — unobtrusive, sits left of the button row
@@ -10953,7 +11033,11 @@ class MidiToRlrrApp:
                 self._sc_src_vars[si].set(self._sc_lib_default_sources()[si])
                 self._sc_library_refresh()
 
-            _bbtn = ttk.Button(_srow, text="📂", width=3, command=_browse)
+            _ic = fluent_icon("folder_open")
+            if _ic is not None:
+                _bbtn = ttk.Button(_srow, image=_ic, width=3, command=_browse)
+            else:
+                _bbtn = ttk.Button(_srow, text="📂", width=3, command=_browse)
             _bbtn.pack(side=tk.LEFT, padx=(4, 0))
             self._add_tooltip(_bbtn, "Choose a different folder for this source")
             _rbtn = ttk.Button(_srow, text="↺", width=3, command=_reset)
@@ -11113,7 +11197,7 @@ class MidiToRlrrApp:
         if not live:
             msg = ("No finished songs found in your source folders yet — "
                    "convert one above and it'll appear here, or point a "
-                   "source (📂) at your songs." if not q else "No matches.")
+                   "source at your songs with its folder button." if not q else "No matches.")
             tk.Label(self._sc_lib_inner, text=msg, bg="#15152a",
                      fg="#7e7e96", font=("Segoe UI", 9),
                      padx=10, pady=14, wraplength=380,
@@ -11754,13 +11838,19 @@ class MidiToRlrrApp:
     # ── Open output folder ────────────────────────────────────────────────────
     def _sc_convert_button_text(self):
         labels = {
-            "paradiddle": "🎵  Convert to .rlrr",
-            "clonehero":  "🎸  Export to Clone Hero",
-            "both":       "🎵🎸  Export Both",
+            "paradiddle": "Convert to .rlrr",
+            "clonehero":  "Export to Clone Hero",
+            "both":       "Export Both",
         }
         fmt_var = getattr(self, "sc_export_fmt", None)
         fmt = fmt_var.get() if fmt_var else "paradiddle"
         return labels.get(fmt, labels["paradiddle"])
+
+    def _sc_convert_button_icon(self):
+        # Matches _sc_convert_button_text: the icon follows the export format.
+        fmt_var = getattr(self, "sc_export_fmt", None)
+        fmt = fmt_var.get() if fmt_var is not None else "paradiddle"
+        return "guitar" if fmt == "clonehero" else "music_note_2"
 
     def _adb_push_to_quest(self):
         """Push the last converted song folder to a connected Meta Quest via ADB."""
@@ -12281,7 +12371,7 @@ class MidiToRlrrApp:
         # installed, GPU visible, ParaKit can access/run on it).
         hw_toggle_btn.pack_configure(side=tk.LEFT)
         self._stem_gpu_check_btn = ttk.Button(
-            hw_toggle_btn.master, text="🔍  Check",
+            hw_toggle_btn.master, text="Check", image=fluent_icon("search") or "", compound="left",
             command=self._stem_check_gpu_accel)
         self._stem_gpu_check_btn.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Label(hardware_content,
@@ -12412,7 +12502,7 @@ class MidiToRlrrApp:
         # ── CARD: Split ───────────────────────────────────────────────────────
         card_act = ttk.LabelFrame(top_band, text=" Split ", padding=8)
 
-        self.stem_btn = ttk.Button(card_act, text="🥁  Split Stems",
+        self.stem_btn = ttk.Button(card_act, text="Split Stems", image=fluent_icon("arrow_split") or "", compound="left",
                                    style="Convert.TButton",
                                    command=self._stem_start)
         self.stem_btn.pack(fill=tk.X, pady=(5, 10), ipady=8)
@@ -12602,11 +12692,11 @@ class MidiToRlrrApp:
                   foreground="#9a9ab0").pack(anchor="w")
         log_btn_row = ttk.Frame(log_col)
         log_btn_row.pack(fill=tk.X, pady=(0, 4))
-        ttk.Button(log_btn_row, text="📄  Export Log",
+        ttk.Button(log_btn_row, text="Export Log", image=fluent_icon("document") or "", compound="left",
                    command=lambda: self._export_log(
                        self.stem_log_text, "stem_splitter_log.txt", "Stem Splitter")
                    ).pack(side=tk.LEFT)
-        ttk.Button(log_btn_row, text="📂  Open Output Folder",
+        ttk.Button(log_btn_row, text="Open Output Folder", image=fluent_icon("folder_open") or "", compound="left",
                    command=self._stem_open_output).pack(side=tk.RIGHT)
         # PREVIEW (v4.5.9.x theming trial): dark-purple log background (LOG_BG)
         # for owner to compare against the current near-black (#0d1117). If
@@ -13291,9 +13381,12 @@ class MidiToRlrrApp:
                     and getattr(self, "_yt_preview_state", None) == "playing")
         _play_bg = YT_PAUSE_CHIP_BG if _playing else YT_PLAY_CHIP_BG
         row._yt_play_chip = _mk_chip(
-            "⏸  Pause" if _playing else "▶  Play",
+            "Pause" if _playing else "Play",
             "#ffffff", self._stem_lib_on_play, 10,
             border=_play_bg, bg=_play_bg, track=False)
+        row._yt_play_chip.configure(
+            image=fluent_icon("pause" if _playing else "play") or "",
+            compound="left")
 
         sep = tk.Frame(parent, bg="#222238", height=1)
         sep.pack(fill=tk.X)
@@ -13774,7 +13867,9 @@ class MidiToRlrrApp:
             try:
                 playing = (getattr(r, "_yt_path", None) == cur and state == "playing")
                 _bg = YT_PAUSE_CHIP_BG if playing else YT_PLAY_CHIP_BG
-                chip.configure(text="⏸  Pause" if playing else "▶  Play",
+                chip.configure(text="Pause" if playing else "Play",
+                               image=fluent_icon("pause" if playing else "play") or "",
+                               compound="left",
                                bg=_bg, highlightbackground=_bg, highlightcolor=_bg)
             except Exception:
                 pass
@@ -14259,9 +14354,12 @@ class MidiToRlrrApp:
                     and getattr(self, "_yt_preview_state", None) == "playing")
         _play_bg = YT_PAUSE_CHIP_BG if _playing else YT_PLAY_CHIP_BG
         row._yt_play_chip = _mk_chip(
-            "⏸  Pause" if _playing else "▶  Play",
+            "Pause" if _playing else "Play",
             "#ffffff", self._a2m_lib_on_play, 10,
             border=_play_bg, bg=_play_bg, track=False)
+        row._yt_play_chip.configure(
+            image=fluent_icon("pause" if _playing else "play") or "",
+            compound="left")
 
         sep = tk.Frame(parent, bg="#222238", height=1)
         sep.pack(fill=tk.X)
@@ -14397,7 +14495,9 @@ class MidiToRlrrApp:
                 playing = (getattr(r, "_yt_path", None) == cur
                            and state == "playing")
                 _bg = YT_PAUSE_CHIP_BG if playing else YT_PLAY_CHIP_BG
-                chip.configure(text="⏸  Pause" if playing else "▶  Play",
+                chip.configure(text="Pause" if playing else "Play",
+                               image=fluent_icon("pause" if playing else "play") or "",
+                               compound="left",
                                bg=_bg, highlightbackground=_bg,
                                highlightcolor=_bg)
             except Exception:
@@ -14763,7 +14863,7 @@ demucs.separate.main()
             self._stem_log(traceback.format_exc())
         finally:
             self.root.after(0, lambda: self.stem_btn.configure(
-                state="normal", text="🥁  Split Stems"))
+                state="normal", text="Split Stems"))
             self.root.after(0, self.stem_progress.stop)
             self.root.after(0, lambda: self._timer_stop(self.stem_timer_lbl))
 
@@ -15169,7 +15269,7 @@ demucs.separate.main()
                     _stop[0] = True
                     self._stem_log(f"  ✗ Download failed: {e}")
                     self.root.after(0, lambda: self.stem_btn.configure(
-                        state="normal", text="🥁  Split Stems"))
+                        state="normal", text="Split Stems"))
                     self.root.after(0, self.stem_progress.stop)
                     self.root.after(0, lambda: self._timer_stop(self.stem_timer_lbl))
                     return
@@ -15471,7 +15571,7 @@ demucs.separate.main()
 
         finally:
             self.root.after(0, lambda: self.stem_btn.configure(
-                state="normal", text="🥁  Split Stems"))
+                state="normal", text="Split Stems"))
             self.root.after(0, self.stem_progress.stop)
             self.root.after(0, lambda: self._timer_stop(self.stem_timer_lbl))
 
@@ -15527,10 +15627,11 @@ demucs.separate.main()
                     self.notebook.select(i)
                     break
 
-        send_text = ("🎹  Send Lossless Drums to MIDI Converter"
-                     if detector_drums_path else "🎹  Send Drums to MIDI Converter")
+        send_text = ("Send Lossless Drums to MIDI Converter"
+                     if detector_drums_path else "Send Drums to MIDI Converter")
         ttk.Button(btn_row, text="OK", command=popup.destroy).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text=send_text,
+                   image=fluent_icon("midi") or "", compound="left",
                    style="Convert.TButton",
                    command=on_send_to_midi).pack(side=tk.LEFT)
 
@@ -16111,7 +16212,7 @@ demucs.separate.main()
         self.a2m_onnx_status_lbl.pack(anchor="w")
         _onnx_btn_row = ttk.Frame(ml_status_row)
         _onnx_btn_row.pack(fill=tk.X, pady=(3, 0))
-        ttk.Button(_onnx_btn_row, text="🔍  Check",
+        ttk.Button(_onnx_btn_row, text="Check", image=fluent_icon("search") or "", compound="left",
                    command=self._a2m_auto_detect_onnx).pack(side=tk.LEFT)
         self._a2m_onnx_get_btn = ttk.Button(
             _onnx_btn_row, text="↓  Download Model",
@@ -16687,7 +16788,7 @@ demucs.separate.main()
         roll_outer = ttk.Frame(dedup_row_frame)
         roll_outer.grid(row=0, column=1, sticky="nsew")
         _, roll_content = self._make_collapsible_tips(
-            roll_outer, title="⚡  Snare / Tom Rapid Roll Fix", start_open=False)
+            roll_outer, title="Snare / Tom Rapid Roll Fix", icon="flash", start_open=False)
         ttk.Label(roll_content,
                   text="If a fast snare or tom roll only registers the first hit correctly "
                        "and the rest appear as hi-hats or crashes at those same positions:\n\n"
@@ -17196,19 +17297,19 @@ demucs.separate.main()
         # ── Convert button ────────────────────────────────────────────────────
         a2m_action_row = ttk.Frame(left_body)
         a2m_action_row.pack(fill=tk.X, pady=(5, 10))
-        self.a2m_btn = ttk.Button(a2m_action_row, text="🎹  Convert Audio to MIDI",
+        self.a2m_btn = ttk.Button(a2m_action_row, text="Convert Audio to MIDI", image=fluent_icon("midi") or "", compound="left",
                                   style="Convert.TButton",
                                   command=self._a2m_start)
         self.a2m_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=8, padx=(0, 4))
         self.a2m_preview_btn = ttk.Button(a2m_action_row,
-                                          text="🎹  Open Last Result in Editor",
+                                          text="Open Last Result in Editor", image=fluent_icon("open") or "", compound="left",
                                           command=self._a2m_preview_last,
                                           state="disabled")
         self.a2m_preview_btn.pack(side=tk.LEFT, ipady=8)
         # Check the just-made detection in Spectral Comparison (owner 2026-07-20).
         # Gated the same as the preview button (enabled once a MIDI exists).
         self.a2m_spectral_btn = ttk.Button(
-            a2m_action_row, text="📊  Spectral",
+            a2m_action_row, text="Spectral", image=fluent_icon("chart_multiple") or "", compound="left",
             command=lambda: self._send_to_spectral(
                 drums=getattr(self, "_a2m_source_file", "") or "",
                 chart=getattr(self, "_a2m_last_midi", "") or ""),
@@ -17236,11 +17337,11 @@ demucs.separate.main()
 
         a2m_log_btn_row = ttk.Frame(a2m_log_frame)
         a2m_log_btn_row.pack(fill=tk.X, pady=(0, 4))
-        ttk.Button(a2m_log_btn_row, text="📄  Export Log",
+        ttk.Button(a2m_log_btn_row, text="Export Log", image=fluent_icon("document") or "", compound="left",
                    command=lambda: self._export_log(
                        self.a2m_log_text, "audio_to_midi_log.txt", "Audio → MIDI")
                    ).pack(side=tk.LEFT)
-        ttk.Button(a2m_log_btn_row, text="📂  Open Output Folder",
+        ttk.Button(a2m_log_btn_row, text="Open Output Folder", image=fluent_icon("folder_open") or "", compound="left",
                    command=self._a2m_open_output).pack(side=tk.RIGHT)
 
         self.a2m_log_text = scrolledtext.ScrolledText(
@@ -17691,7 +17792,7 @@ demucs.separate.main()
                 fname = os.path.basename(path)
                 sz_mb = os.path.getsize(path) / (1024 * 1024) if os.path.exists(path) else 0
                 self.a2m_onnx_status_lbl.configure(
-                    text=f"✅  Model ready  ({fname}, {sz_mb:.1f} MB)",
+                    text=f"✓  Model ready  ({fname}, {sz_mb:.1f} MB)",
                     foreground="#00c853")
             elif state == "missing":
                 self.a2m_onnx_status_lbl.configure(
@@ -17700,7 +17801,7 @@ demucs.separate.main()
                     foreground="#e09a3a")
             elif state == "error":
                 self.a2m_onnx_status_lbl.configure(
-                    text=f"❌  Model error — {path}",
+                    text=f"✗  Model error — {path}",
                     foreground="#e63946")
             elif state == "unknown":
                 # v4.7.26 — neither a tick nor a cross: we genuinely don't know yet, and
@@ -18198,7 +18299,7 @@ demucs.separate.main()
                 "Place parakit_drum_model.onnx next to ParaKit.exe or in Requirements\\, "
                 "or click Browse in the Detection Engine section to locate it.\n\n"
                 "Click '↓ Download Model' to download it from GitHub.")
-            self.a2m_btn.configure(state="normal", text="🎹  Convert Audio to MIDI")
+            self.a2m_btn.configure(state="normal", text="Convert Audio to MIDI")
             self._a2m_set_controls_locked(False)
             return
         if detection_engine in ("ml", "hybrid") and not os.path.exists(onnx_model_path):
@@ -18206,7 +18307,7 @@ demucs.separate.main()
                 "Model File Not Found",
                 f"The model file was not found:\n{onnx_model_path}\n\n"
                 "Check the path in the Detection Engine section and try again.")
-            self.a2m_btn.configure(state="normal", text="🎹  Convert Audio to MIDI")
+            self.a2m_btn.configure(state="normal", text="Convert Audio to MIDI")
             self._a2m_set_controls_locked(False)
             return
         # v4.7.15 — exists() passed a FOLDER named *.onnx and a 0-byte file straight
@@ -18250,7 +18351,7 @@ demucs.separate.main()
                     f"{_model_problem}\n\n{onnx_model_path}\n\n"
                     "Point at parakit_drum_model.onnx, or click '↓ Download Model' to "
                     "fetch a fresh copy.")
-                self.a2m_btn.configure(state="normal", text="🎹  Convert Audio to MIDI")
+                self.a2m_btn.configure(state="normal", text="Convert Audio to MIDI")
                 self._a2m_set_controls_locked(False)
                 return
 
@@ -18993,7 +19094,7 @@ demucs.separate.main()
             self._bg_message(
                 "Missing Dependency", f"Required package missing: {e}")
             self.root.after(0, lambda: self.a2m_btn.configure(
-                state="normal", text="🎹  Convert Audio to MIDI"))
+                state="normal", text="Convert Audio to MIDI"))
             self.root.after(0, lambda: self._a2m_set_controls_locked(False))
             # F4 (owner-approved 2026-07-07): this early return bypasses the
             # main try's finally — mirror its progress/timer cleanup here so a
@@ -20432,7 +20533,7 @@ demucs.separate.main()
             self._a2m_presplit_tmp = None
             self._a2m_presplit_stems = None
             self.root.after(0, lambda: self.a2m_btn.configure(
-                state="normal", text="🎹  Convert Audio to MIDI"))
+                state="normal", text="Convert Audio to MIDI"))
             self.root.after(0, lambda: self._a2m_set_controls_locked(False))
             self.root.after(0, self.a2m_progress.stop)
             self.root.after(0, lambda: self._timer_stop(self.a2m_timer_lbl))
@@ -20642,7 +20743,7 @@ demucs.separate.main()
             f"Tip: difficulty is a LABEL here — copying the song several times\n"
             f"with different difficulty settings produces identical charts under\n"
             f"different names. To make genuinely thinner Easy/Medium/Hard charts,\n"
-            f"reduce them first in the MIDI Editor (◪ Difficulty), then batch the\n"
+            f"reduce them first in the MIDI Editor (Difficulty), then batch the\n"
             f"reduced files.")
 
     def _quick_test_from_converter(self):
@@ -20909,7 +21010,7 @@ demucs.separate.main()
                 self._me_note_mgr_popup = None
         pop = tk.Toplevel(self.root)
         self._me_note_mgr_popup = pop
-        pop.title("🥁  Manual MIDI Note Manager")
+        pop.title("Manual MIDI Note Manager")
         pop.configure(bg=APP_BG)
         pop.transient(self.root)
         pop.resizable(False, False)
@@ -21201,10 +21302,10 @@ demucs.separate.main()
 
         # Song Creator + Preview/Practice Track buttons — created here so they can be
         # placed at the top of right_col after all right_col widgets are built.
-        _me_rc_sc_btn = ttk.Button(right_col, text="📋  Song Creator",
+        _me_rc_sc_btn = ttk.Button(right_col, text="Song Creator", image=fluent_icon("open") or "", compound="left",
                                     style="Convert.TButton",
                                     command=self._me_send_to_creator)
-        _me_rc_tp_btn = ttk.Button(right_col, text="📺  Preview/Practice Track",
+        _me_rc_tp_btn = ttk.Button(right_col, text="Preview/Practice Track", image=fluent_icon("tv") or "", compound="left",
                                     command=self._me_send_to_visualizer)
 
         # ── Header ────────────────────────────────────────────────────────────
@@ -21291,9 +21392,9 @@ demucs.separate.main()
             "pressing this, so unsaved edits are never swapped out from under you.")
 
         # Save MIDI
-        ttk.Button(ctrl_frame, text="💾  Save MIDI",
+        ttk.Button(ctrl_frame, text="Save MIDI", image=fluent_icon("save") or "", compound="left",
                    command=self._me_save).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(ctrl_frame, text="🔄  Reload",
+        ttk.Button(ctrl_frame, text="Reload", image=fluent_icon("arrow_clockwise") or "", compound="left",
                    command=lambda: self._me_load(self._me_last_midi)
                    ).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(ctrl_frame, text="✕  Clear",
@@ -21387,60 +21488,68 @@ demucs.separate.main()
                 foreground=[("active", "#EFECFF"), ("disabled", "#6f6a94")],
                 bordercolor=[("active", "#5a4f8a")])
 
-        def _tool_button(parent, text, command, tip, padx=(0, 2)):
-            btn = ttk.Button(parent, text=text, command=command,
-                             style="ME.Toolbar.TButton")
+        def _tool_button(parent, text, command, tip, padx=(0, 2), icon=None):
+            # icon: a Fluent glyph name (icons/<name>_16_fg.png). When the asset
+            # loads, the emoji-free text rides next to a crisp image; when it
+            # doesn't (icons/ missing), the plain text label still works.
+            img = fluent_icon(icon) if icon else None
+            if img is not None:
+                btn = ttk.Button(parent, text=text, image=img, compound="left",
+                                 command=command, style="ME.Toolbar.TButton")
+            else:
+                btn = ttk.Button(parent, text=text, command=command,
+                                 style="ME.Toolbar.TButton")
             btn.pack(side=tk.LEFT, padx=padx)
             self._add_tooltip(btn, tip)
             return btn
 
-        _tool_button(edit_frame, "↩ Undo", self._me_undo,
-                     "Undo the last MIDI Editor change. Shortcut: Ctrl+Z.")
-        _tool_button(edit_frame, "↪ Redo", self._me_redo,
-                     "Redo the last undone MIDI Editor change. Shortcut: Ctrl+Y.", padx=(0, 12))
+        _tool_button(edit_frame, "Undo", self._me_undo,
+                     "Undo the last MIDI Editor change. Shortcut: Ctrl+Z.", icon="arrow_undo")
+        _tool_button(edit_frame, "Redo", self._me_redo,
+                     "Redo the last undone MIDI Editor change. Shortcut: Ctrl+Y.", padx=(0, 12), icon="arrow_redo")
         ttk.Separator(edit_frame, orient="vertical").pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
-        _tool_button(edit_frame, "⊞ Quantize", self._me_quantize,
-                     "Snap selected notes to the beat grid. If nothing is selected, applies to all notes.")
-        _tool_button(edit_frame, "⧉ Copy", self._me_copy,
-                     "Copy the currently selected notes for paste/repeat edits.")
-        _tool_button(edit_frame, "⧈ Paste", self._me_paste,
-                     "Paste copied notes at the current playhead or last clicked time.")
-        _tool_button(edit_frame, "× Dedup", self._me_dedup,
-                     "Remove duplicate or near-duplicate notes. Use this after Audio to MIDI if doubles appear.")
-        _tool_button(edit_frame, "↻ Repeat", self._me_repeat_pattern,
-                     "Repeat the selected note pattern forward in time.")
-        _tool_button(edit_frame, "🥁 Flam", self._me_insert_flam,
-                     "Add a quiet grace note just before selected notes to create a flam effect.")
+        _tool_button(edit_frame, "Quantize", self._me_quantize,
+                     "Snap selected notes to the beat grid. If nothing is selected, applies to all notes.", icon="grid")
+        _tool_button(edit_frame, "Copy", self._me_copy,
+                     "Copy the currently selected notes for paste/repeat edits.", icon="copy")
+        _tool_button(edit_frame, "Paste", self._me_paste,
+                     "Paste copied notes at the current playhead or last clicked time.", icon="clipboard_paste")
+        _tool_button(edit_frame, "Dedup", self._me_dedup,
+                     "Remove duplicate or near-duplicate notes. Use this after Audio to MIDI if doubles appear.", icon="broom")
+        _tool_button(edit_frame, "Repeat", self._me_repeat_pattern,
+                     "Repeat the selected note pattern forward in time.", icon="arrow_repeat_all")
+        _tool_button(edit_frame, "Flam", self._me_insert_flam,
+                     "Add a quiet grace note just before selected notes to create a flam effect.", icon="music_note_2")
         # ⋙ Snare Roll lives in `bottom_tools` beside Tempo Map / Manual MIDI
         # Note Manager (owner 2026-08-14), NOT on this row — it opens a dialog
         # and arms a mode like those two, rather than acting on the current
         # selection like everything here.
-        _tool_button(edit_frame, "⊞~ Soft Quantize", self._me_soft_quantize,
-                     "Gently pull selected notes toward the grid without fully snapping their timing.")
-        _tool_button(edit_frame, "🔍 Review Issues", self._me_cleanup_wizard,
+        _tool_button(edit_frame, "Soft Quantize", self._me_soft_quantize,
+                     "Gently pull selected notes toward the grid without fully snapping their timing.", icon="grid_dots")
+        _tool_button(edit_frame, "Review Issues", self._me_cleanup_wizard,
                      "After conversion, scan for duplicates, low-confidence hits, and cymbal mix-ups. "
-                     "To fix the detection itself (too many/few hits), use Help tab → Detection Troubleshooter instead.")
-        _tool_button(edit_frame, "✂ Vel Filter", self._me_filter_velocity,
-                     "Remove notes below a velocity threshold. Uses selection when notes are selected.")
-        _tool_button(edit_frame, "⏭ Next Flag", self._me_jump_next_flag,
+                     "To fix the detection itself (too many/few hits), use Help tab → Detection Troubleshooter instead.", icon="search")
+        _tool_button(edit_frame, "Vel Filter", self._me_filter_velocity,
+                     "Remove notes below a velocity threshold. Uses selection when notes are selected.", icon="cut")
+        _tool_button(edit_frame, "Next Flag", self._me_jump_next_flag,
                      "Jump to the next flagged note (orange / yellow / lime / white / magenta outlines). "
-                     "Right-click any flagged note to clear its flag individually.")
-        _tool_button(edit_frame, "🏳 Clear Flags", self._me_clear_all_flags,
-                     "Remove all flag highlights from every note. Flags are visual only — no notes are changed.")
-        _tool_button(edit_frame, "◪ Difficulty", self._me_difficulty_reduction,
+                     "Right-click any flagged note to clear its flag individually.", icon="flag")
+        _tool_button(edit_frame, "Clear Flags", self._me_clear_all_flags,
+                     "Remove all flag highlights from every note. Flags are visual only — no notes are changed.", icon="dismiss")
+        _tool_button(edit_frame, "Difficulty", self._me_difficulty_reduction,
                      "Thin the chart down to Easy, Medium, or Hard.\n"
                      "Expert is the full chart — lower difficulties keep the\n"
                      "strongest hits in each lane and drop the rest.\n\n"
                      "Apply it to the open chart (Ctrl+Z undoes it), save it as\n"
-                     "a separate file, or save and compare against the original.")
-        _tool_button(edit_frame, "⏱ Chart Timing", self._me_chart_timing,
+                     "a separate file, or save and compare against the original.", icon="data_bar_vertical")
+        _tool_button(edit_frame, "Chart Timing", self._me_chart_timing,
                      "Slide the whole chart a few milliseconds later, where a\n"
                      "human charter would place it, or back onto the audio.\n\n"
                      "This is a feel preference, not an accuracy fix — the\n"
                      "detected times are already accurate to about a\n"
                      "millisecond. Nothing is added, removed or re-voiced.\n\n"
                      "Applies to the open chart, so you can hear it and undo\n"
-                     "it with Ctrl+Z.")
+                     "it with Ctrl+Z.", icon="clock")
 
         ttk.Label(edit_col,
                   text=("Ctrl+scroll=zoom  Ctrl+C/V=copy/paste  Ctrl+Q=quantize"
@@ -21470,7 +21579,7 @@ demucs.separate.main()
         options_side.pack(side=tk.LEFT, fill=tk.Y,
                           padx=(8 if compact else 12, 0))
         self.me_midi_input_btn = ttk.Button(
-            options_side, text="🎹  MIDI Input (BETA)",
+            options_side, text="MIDI Input (BETA)", image=fluent_icon("midi") or "", compound="left",
             command=self._midi_show_settings_dialog)
         self.me_midi_input_btn.pack(anchor="w", pady=(0, 2 if compact else 4))
         options_col    = ttk.LabelFrame(options_side, text=" Display Options ", padding=(4 if compact else 6))
@@ -21549,7 +21658,7 @@ demucs.separate.main()
         af_col = ttk.Frame(af_row)
         af_col.pack(side=tk.LEFT)
         self.me_spectral_btn = ttk.Button(
-            af_col, text="📊  Spectral",
+            af_col, text="Spectral", image=fluent_icon("chart_multiple") or "", compound="left",
             command=lambda: self._send_to_spectral(
                 drums=self.me_audio_var.get().strip(),
                 chart=(getattr(self, "_me_last_midi", None)
@@ -21565,7 +21674,7 @@ demucs.separate.main()
         af_border = tk.Frame(af_col, bg="#00d4d4")
         af_border.pack(side=tk.TOP)
         self.me_auto_fetch_btn = ttk.Button(
-            af_border, text="🎵  Auto Fetch Audio",
+            af_border, text="Auto Fetch Audio", image=fluent_icon("music_note_2") or "", compound="left",
             command=self._me_auto_fetch_audio, width=21)
         self.me_auto_fetch_btn.pack(padx=2, pady=2)
         self._add_tooltip(
@@ -21602,11 +21711,13 @@ demucs.separate.main()
         pb_frame = ttk.Frame(playback_col)
         pb_frame.pack(fill=tk.X, pady=(0, 2))
 
-        self.me_play_btn = ttk.Button(pb_frame, text="▶  Play",
+        self.me_play_btn = ttk.Button(pb_frame, text="Play",
+                                      image=fluent_icon("play") or "",
+                                      compound="left",
                                       command=self._me_play)
         self.me_play_btn.pack(side=tk.LEFT, padx=(0, 4))
 
-        ttk.Button(pb_frame, text="⏹  Stop",
+        ttk.Button(pb_frame, text="Stop", image=fluent_icon("stop") or "", compound="left",
                    command=self._me_stop).pack(side=tk.LEFT, padx=(0, 6))
 
         # (Send-to-Spectral moved above the Auto Fetch Audio button -- owner
@@ -21670,7 +21781,7 @@ demucs.separate.main()
             self.me_metronome_combo,
             "Pick the count-in click sound. Click Test to preview.")
 
-        test_btn = ttk.Button(pb_frame, text="▶ Test", width=7,
+        test_btn = ttk.Button(pb_frame, text="Test", width=7, image=fluent_icon("play") or "", compound="left",
                               command=self._metronome_test_play)
         test_btn.pack(side=tk.LEFT, padx=(0, 4))
         self._add_tooltip(
@@ -21687,7 +21798,7 @@ demucs.separate.main()
                                           font=("Consolas", 9), foreground="#ffd700")
         self.me_loop_out_lbl = ttk.Label(loop_frame, text="End: --:--",
                                           font=("Consolas", 9), foreground="#ffd700")
-        ttk.Checkbutton(loop_frame, text="🔁  Loop",
+        ttk.Checkbutton(loop_frame, text="Loop", image=fluent_icon("arrow_repeat_all") or "", compound="left",
                         variable=self._me_loop_on).pack(side=tk.LEFT, padx=(0, 8))
         self.me_loop_in_lbl.pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(loop_frame, text="Set Start", width=9,
@@ -21932,12 +22043,13 @@ demucs.separate.main()
             popup.withdraw()
             popup.after(10, _position_popup)
 
-        marker_btn = ttk.Button(right_col, text="📍  Markers",
+        marker_btn = ttk.Button(right_col, text="Markers", image=fluent_icon("pin") or "", compound="left",
                                 command=_me_open_marker_popup)
         marker_btn.pack(fill=tk.X, pady=(0, 4))
 
         # ── Display & Snap ────────────────────────────────────────────────────
-        snap_outer = ttk.LabelFrame(right_col, text=" 🔲  Display & Snap ", padding=5)
+        snap_outer = ttk.LabelFrame(right_col, text=" Display & Snap ", padding=5)
+        _fluent_labelframe_title(snap_outer, " Display & Snap ", "grid")
         snap_outer.pack(fill=tk.X)
 
         # Grid resolution selector
@@ -21970,7 +22082,7 @@ demucs.separate.main()
         # Low-confidence shade toggle (hot pink — for ML/Hybrid results)
         self.me_conf_shade_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(snap_outer,
-                        text="🎯  Stripe low-confidence ML notes  (hot pink)",
+                        text="Stripe low-confidence ML notes  (hot pink)", image=fluent_icon("highlight") or "", compound="left",
                         variable=self.me_conf_shade_var,
                         command=self._me_redraw).pack(anchor="w", pady=(0, 3))
 
@@ -21987,7 +22099,7 @@ demucs.separate.main()
             "write", lambda *_a: save_config(
                 {"me_reactive_notes": bool(self.me_reactive_notes_var.get())}))
         _react_cb = ttk.Checkbutton(snap_outer,
-                        text="⚡  Reactive notes  (light up on playhead)",
+                        text="Reactive notes  (light up on playhead)", image=fluent_icon("flash") or "", compound="left",
                         variable=self.me_reactive_notes_var,
                         command=self._me_on_reactive_toggle)
         _react_cb.pack(anchor="w", pady=(0, 3))
@@ -22174,7 +22286,7 @@ demucs.separate.main()
                 self._me_ghost_popup = None
                 return
             popup = tk.Toplevel(self.root)
-            popup.title("👻  Ghost Overlay")
+            popup.title("Ghost Overlay")
             popup.resizable(False, False)
             popup.configure(bg=APP_BG)
             popup.transient(self.root)
@@ -22246,7 +22358,7 @@ demucs.separate.main()
             popup.withdraw()
             popup.after(10, _pos)
 
-        ghost_btn = ttk.Button(right_col, text="👻  Ghost Overlay",
+        ghost_btn = ttk.Button(right_col, text="Ghost Overlay", image=fluent_icon("layer") or "", compound="left",
                                command=_me_open_ghost_popup)
         # Pack right_col widgets from the BOTTOM so the group sits flush with the
         # bottom of the Playback Audio box; any empty space rises to the top.
@@ -22260,7 +22372,8 @@ demucs.separate.main()
         _me_rc_sc_btn.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 2))
 
         # ── Playback Audio ────────────────────────────────────────────────────
-        audio_frame = ttk.LabelFrame(lc, text=" 🎧  Playback Audio ", padding=6)
+        audio_frame = ttk.LabelFrame(lc, text=" Playback Audio ", padding=6)
+        _fluent_labelframe_title(audio_frame, " Playback Audio ", "headphones")
         audio_frame.pack(fill=tk.X, pady=(0, 1 if compact else 2))
 
         audio_left = ttk.Frame(audio_frame)
@@ -22328,7 +22441,7 @@ demucs.separate.main()
                 self._me_mixer_popup = None
                 return
             popup = tk.Toplevel(self.root)
-            popup.title("🎚  Stem Mixer")
+            popup.title("Stem Mixer")
             popup.resizable(False, False)
             popup.configure(bg=APP_BG)
             popup.transient(self.root)
@@ -22431,7 +22544,7 @@ demucs.separate.main()
                 ttk.Button(row, text="⇄  Switch Stem",
                            command=_me_cycle_stem).pack(side=tk.LEFT, padx=(8, 0))
             elif i == 3:  # Stem 4: Mixer button
-                mixer_btn = ttk.Button(row, text="🎚  Mixer",
+                mixer_btn = ttk.Button(row, text="Mixer", image=fluent_icon("options") or "", compound="left",
                                        command=_me_open_mixer_popup)
                 mixer_btn.pack(side=tk.LEFT, padx=(8, 0))
 
@@ -22596,13 +22709,13 @@ demucs.separate.main()
         bottom_tools = ttk.Frame(main)
         bottom_tools.pack(anchor="w", pady=(2, 0))
 
-        ttk.Button(bottom_tools, text="🎵  Tempo Map",
+        ttk.Button(bottom_tools, text="Tempo Map", image=fluent_icon("music_note_2") or "", compound="left",
                    command=self._me_open_tempo_map).pack(side=tk.LEFT, padx=(0, 16))
 
         # Manual MIDI Note Manager (owner 2026-07-09) — per-lane output-note
         # variations; hi-hats are per-note via right-click in the editor.
         self._me_note_mgr_popup = None
-        ttk.Button(bottom_tools, text="🥁  Manual MIDI Note Manager",
+        ttk.Button(bottom_tools, text="Manual MIDI Note Manager", image=fluent_icon("edit") or "", compound="left",
                    command=self._me_open_manual_note_manager).pack(
                        side=tk.LEFT, padx=(0, 16))
 
@@ -22634,7 +22747,7 @@ demucs.separate.main()
                 vel_lane_frame.pack_forget()
 
         ttk.Checkbutton(bottom_tools,
-                        text="🎚  Velocity Lane  —  edit note dynamics",
+                        text="Velocity Lane  —  edit note dynamics", image=fluent_icon("data_bar_vertical") or "", compound="left",
                         variable=self._me_vel_expanded,
                         command=_me_toggle_vel_lane).pack(side=tk.LEFT)
 
@@ -22644,7 +22757,7 @@ demucs.separate.main()
 
         vel_hdr = ttk.Frame(vel_lane_frame)
         vel_hdr.pack(fill=tk.X, pady=(0, 4))
-        ttk.Label(vel_hdr, text="🎚  Velocity Lane",
+        ttk.Label(vel_hdr, text="Velocity Lane", image=fluent_icon("data_bar_vertical") or "", compound="left",
                   font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 12))
         ttk.Label(vel_hdr,
                   text="Click bars to set velocity (1–127). Shift+drag to draw across multiple notes. "
@@ -23334,7 +23447,11 @@ demucs.separate.main()
             return
         r = self._tester_last_results
         if not r.get("midi_path"):
-            messagebox.showerror("No MIDI", "No MIDI file from the last test.")
+            messagebox.showerror(
+                "No MIDI",
+                "The last test ran from the .rlrr with no MIDI.\n\n"
+                "This tool edits the MIDI file, so set the MIDI File field\n"
+                "and re-run the sync test first.")
             return
         # Staleness gate (audit fix 2026-08-02): the highlights describe the
         # chart AS IT WAS at test time; the file may have been rewritten since
@@ -23397,7 +23514,11 @@ demucs.separate.main()
             return
         r = self._tester_last_results
         if not r.get("midi_path"):
-            messagebox.showerror("No MIDI", "No MIDI file from the last test.")
+            messagebox.showerror(
+                "No MIDI",
+                "The last test ran from the .rlrr with no MIDI.\n\n"
+                "This tool edits the MIDI file, so set the MIDI File field\n"
+                "and re-run the sync test first.")
             return
 
         do_safe       = self.fix_safe_var.get()
@@ -23652,7 +23773,7 @@ demucs.separate.main()
                 self._me_tempo_popup = None
 
         pop = tk.Toplevel(self.root)
-        pop.title("🎵  Tempo Map")
+        pop.title("Tempo Map")
         pop.configure(bg=APP_BG)
         pop.resizable(True, False)
         pop.protocol("WM_DELETE_WINDOW", pop.withdraw)
@@ -23897,7 +24018,7 @@ demucs.separate.main()
                    style="Convert.TButton").pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(tm_btns, text="Clear All",
                    command=_me_clear_tempo_map).pack(side=tk.LEFT, padx=(0, 16))
-        ttk.Button(tm_btns, text="🎵  BPM from Selection",
+        ttk.Button(tm_btns, text="BPM from Selection", image=fluent_icon("music_note_2") or "", compound="left",
                    command=_me_bpm_from_selection).pack(side=tk.LEFT)
 
         ttk.Label(f,
@@ -25905,9 +26026,11 @@ demucs.separate.main()
             menu.add_command(label=flag_desc, state="disabled",
                              font=("Segoe UI", 8, "italic"))
             menu.add_separator()
-            menu.add_command(label="🏳  Clear flag  (keep note)",
+            menu.add_command(label="Clear flag  (keep note)",
+                             image=fluent_icon("flag") or "", compound="left",
                              command=lambda: self._me_clear_flag_at(ni))
-            menu.add_command(label="🗑  Delete note",
+            menu.add_command(label="Delete note",
+                             image=fluent_icon("delete") or "", compound="left",
                              command=lambda: self._me_delete_note_rclick(ni))
             self._me_add_hihat_menu_items(menu, ni)   # variations, if a hi-hat
             try:
@@ -25938,7 +26061,8 @@ demucs.separate.main()
             menu.add_separator()
             self._me_add_hihat_menu_items(menu, ni, with_separator=False)
             menu.add_separator()
-            menu.add_command(label="🗑  Delete note",
+            menu.add_command(label="Delete note",
+                             image=fluent_icon("delete") or "", compound="left",
                              command=lambda: self._me_delete_note_rclick(ni))
             try:
                 menu.tk_popup(event.x_root, event.y_root)
@@ -26009,7 +26133,7 @@ demucs.separate.main()
             self._me_redraw()
             self.me_status_var.set(
                 f"🏳  Flag cleared  —  {remaining} flag{'s' if remaining != 1 else ''} remaining"
-                + ("  |  ⏭ Next Flag to navigate" if remaining else ""))
+                + ("  |  Next Flag to navigate" if remaining else ""))
             self.root.after(4000, lambda: self.me_status_var.set(self.ME_DEFAULT_STATUS))
 
     def _me_jump_next_flag(self):
@@ -26081,7 +26205,7 @@ demucs.separate.main()
             n = len(flagged)
             self.me_flag_count_var.set(
                 f"🔍  {n} flagged note{'s' if n != 1 else ''}"
-                f"  —  right-click to clear one  |  ⏭ Next Flag to navigate  |  🏳 Clear Flags to remove all")
+                f"  —  right-click to clear one  |  Next Flag to navigate  |  Clear Flags to remove all")
 
     def _me_schedule_redraw(self):
         """Debounced redraw — cancels any pending redraw and schedules a fresh one.
@@ -27688,7 +27812,7 @@ demucs.separate.main()
             return
 
         top = tk.Toplevel(self.root)
-        top.title("◪  Difficulty Reduction")
+        top.title("Difficulty Reduction")
         top.resizable(False, False)
         top.transient(self.root)
         top.configure(bg=APP_BG)
@@ -28050,7 +28174,7 @@ demucs.separate.main()
             self._me_timing_sig = None
 
         top = tk.Toplevel(self.root)
-        top.title("⏱  Chart Timing")
+        top.title("Chart Timing")
         top.resizable(False, False)
         top.transient(self.root)
         top.configure(bg=APP_BG)
@@ -28327,7 +28451,7 @@ demucs.separate.main()
             return
         # Ask for window size via a simple dialog
         top = tk.Toplevel(self.root)
-        top.title("⊞~  Soft Quantize")
+        top.title("Soft Quantize")
         top.resizable(False, False)
         top.transient(self.root)
         top.configure(bg=APP_BG)
@@ -28514,7 +28638,7 @@ demucs.separate.main()
         self._me_redraw()
 
         top = tk.Toplevel(self.root)
-        top.title("🔍  Review Issues")
+        top.title("Review Issues")
         top.resizable(False, False)
         top.transient(self.root)
         top.configure(bg=APP_BG)
@@ -28755,7 +28879,7 @@ demucs.separate.main()
                 return False
             return _remove_indices(set(live), "low-confidence")
 
-        def _row(icon, count, desc, color, jump_idx_list, auto_fix=None, auto_label="🔧 Auto Fix"):
+        def _row(icon, count, desc, color, jump_idx_list, auto_fix=None, auto_label="Auto Fix"):
             r = tk.Frame(f, bg=APP_BG)
             r.pack(fill=tk.X, pady=(0, 4))
             tk.Label(r, text=f"{icon}  {count}  {desc}",
@@ -28812,7 +28936,8 @@ demucs.separate.main()
                     _show_cluster(step_state["pos"] + 1)
 
                 if auto_fix:
-                    ttk.Button(r, text=auto_label, command=auto_fix).pack(side=tk.RIGHT, padx=(6, 0))
+                    ttk.Button(r, text=auto_label, image=fluent_icon("wrench") or "",
+                               compound="left", command=auto_fix).pack(side=tk.RIGHT, padx=(6, 0))
                 ttk.Button(r, text="Next", command=_next).pack(side=tk.RIGHT, padx=(4, 0))
                 ttk.Button(r, text="Prev", command=_prev).pack(side=tk.RIGHT, padx=(4, 0))
                 ttk.Button(r, text="Select & Jump", command=_jump).pack(side=tk.RIGHT, padx=(12, 0))
@@ -29152,7 +29277,7 @@ demucs.separate.main()
         target_n  = len(self.me_notes) if scope_all else len(self._me_selected_notes)
 
         top = tk.Toplevel(self.root)
-        top.title("✂  Velocity Filter")
+        top.title("Velocity Filter")
         top.resizable(False, False)
         top.configure(bg=APP_BG)
         top.grab_set()
@@ -29697,6 +29822,52 @@ demucs.separate.main()
                 "Pick a MIDI (or .rlrr) file first — Auto Fetch uses its file name "
                 "to find the matching Song Audio and Drum Audio.")
             return
+        # .rlrr first (F-TESTER-RLRR-ONLY): the chart's own audioFileData
+        # names its stems relative to the chart folder — the pack's actual
+        # files beat any name-based search. Name-matching still runs when the
+        # chart lists nothing usable.
+        _rlrr_af = self.tester_rlrr_var.get().strip()
+        if _rlrr_af and os.path.isfile(_rlrr_af):
+            try:
+                _txt_af = None
+                for _enc_af in ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1"):
+                    try:
+                        with open(_rlrr_af, "r", encoding=_enc_af) as _f_af:
+                            _txt_af = _f_af.read()
+                        break
+                    except (UnicodeDecodeError, LookupError):
+                        continue
+                _afd = (json.loads(_txt_af).get("audioFileData") or {}) if _txt_af else {}
+                _dir_af = os.path.dirname(_rlrr_af)
+
+                def _first_existing_af(names):
+                    for _n_af in (names if isinstance(names, list) else []):
+                        if not isinstance(_n_af, str) or not _n_af.strip():
+                            continue
+                        _p_af = (_n_af if os.path.isabs(_n_af)
+                                 else os.path.join(_dir_af, _n_af))
+                        if os.path.isfile(_p_af):
+                            return _p_af
+                    return None
+                _song_af = _first_existing_af(_afd.get("songTracks"))
+                _drum_af = _first_existing_af(_afd.get("drumTracks"))
+                _found_af = []
+                if _song_af:
+                    self.tester_audio_var.set(_song_af)
+                    self._add_recent_file("recent_tester_audio", _song_af)
+                    _found_af.append("Song Audio: " + os.path.basename(_song_af))
+                if _drum_af:
+                    self.tester_drum_var.set(_drum_af)
+                    self._add_recent_file("recent_tester_drum", _drum_af)
+                    _found_af.append("Drum Audio: " + os.path.basename(_drum_af))
+                if _found_af:
+                    messagebox.showinfo(
+                        "Auto Fetch Audio",
+                        "Filled from the .rlrr's own audio list:\n  "
+                        + "\n  ".join(_found_af))
+                    return
+            except Exception:
+                pass
         drums, mix, used_recursive, song = self._find_song_audio_from_midi(midi_path)
         if not song:
             messagebox.showinfo(
@@ -30202,7 +30373,7 @@ demucs.separate.main()
                 gc.disable()
             except Exception:
                 pass
-            self.me_play_btn.configure(text="⏸  Pause")
+            self.me_play_btn.configure(text="Pause", image=fluent_icon("pause") or "")
             # Refresh stem indicators to show active/layered state
             if hasattr(self, 'me_stem_indicators'):
                 layered = getattr(self, 'me_layered_var', None) and self.me_layered_var.get()
@@ -30223,7 +30394,7 @@ demucs.separate.main()
             self._me_playing = False
             self._gc_playback_enable("me")
             try:
-                self.me_play_btn.configure(text="▶  Play")
+                self.me_play_btn.configure(text="Play", image=fluent_icon("play") or "")
             except Exception:
                 pass
             messagebox.showerror("Playback error", str(e))
@@ -30265,7 +30436,7 @@ demucs.separate.main()
         # v4.5.6.2 — re-enable the cyclic GC that _me_play paused during playback
         # (ownership-aware since 2026-07-20: never undoes another owner's pause).
         self._gc_playback_enable("me")
-        self.me_play_btn.configure(text="▶  Play")
+        self.me_play_btn.configure(text="Play", image=fluent_icon("play") or "")
         self._me_live_play_pos = self._me_play_offset
         if self._me_tick_id:
             self.root.after_cancel(self._me_tick_id)
@@ -30304,7 +30475,7 @@ demucs.separate.main()
         self._gc_playback_enable("me", collect=True)
         self._me_play_offset = 0.0
         self._me_live_play_pos = 0.0
-        self.me_play_btn.configure(text="▶  Play")
+        self.me_play_btn.configure(text="Play", image=fluent_icon("play") or "")
         if self._me_tick_id:
             self.root.after_cancel(self._me_tick_id)
             self._me_tick_id = None
@@ -30364,7 +30535,7 @@ demucs.separate.main()
         self._gc_playback_enable("me")
         self._me_play_offset = getattr(self, '_me_live_play_pos',
                                        self._me_play_offset)
-        self.me_play_btn.configure(text="▶  Play")
+        self.me_play_btn.configure(text="Play", image=fluent_icon("play") or "")
         if self._me_tick_id:
             self.root.after_cancel(self._me_tick_id)
             self._me_tick_id = None
@@ -30641,7 +30812,7 @@ demucs.separate.main()
         # Always keep timer in sync with playhead position
         m = int(pos_secs // 60)
         s = pos_secs % 60
-        self.me_playhead_var.set(f"{'▶' if self._me_playing else '⏸'}  {m:02d}:{s:06.3f}")
+        self.me_playhead_var.set(f"{'▶' if self._me_playing else 'Ⅱ'}  {m:02d}:{s:06.3f}")
         self.me_canvas.create_line(
             x, 0, x, total_h,
             fill="#00ff88", width=2,
@@ -31660,7 +31831,8 @@ demucs.separate.main()
         body.pack(fill=tk.BOTH, expand=True)
 
         # ── Find sheet music helper ───────────────────────────────────────────
-        find_frame = ttk.LabelFrame(body, text=" 🔍  Find Sheet Music Online ", padding=10)
+        find_frame = ttk.LabelFrame(body, text=" Find Sheet Music Online ", padding=10)
+        _fluent_labelframe_title(find_frame, " Find Sheet Music Online ", "search")
         find_frame.pack(fill=tk.X, pady=(0, 10))
         find_frame.columnconfigure(1, weight=1)
 
@@ -31676,7 +31848,7 @@ demucs.separate.main()
         sm_search_entry.grid(row=1, column=1, sticky="ew", padx=(0, 8))
         sm_search_entry.bind("<Return>", lambda e: self._sm_open_search())
 
-        ttk.Button(find_frame, text="🔍  Search on MuseScore.com",
+        ttk.Button(find_frame, text="Search on MuseScore.com", image=fluent_icon("search") or "", compound="left",
                    command=self._sm_open_search).grid(row=1, column=2, sticky="w")
 
         ttk.Label(find_frame, text="Instrument Filter:").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
@@ -31694,7 +31866,7 @@ demucs.separate.main()
         tips_cell = ttk.Frame(find_frame)
         tips_cell.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         _, sm_find_tips = self._make_collapsible_tips(
-            tips_cell, title="💡  Click for Tips & Notes", start_open=False)
+            tips_cell, title="Click for Tips & Notes", start_open=False)
         ttk.Label(sm_find_tips,
                   text="ℹ  Once you find a sheet on MuseScore.com you can download the .mxl file\n"
                        "directly and load it straight into ParaKit — no extra steps needed.\n"
@@ -31739,7 +31911,7 @@ demucs.separate.main()
         _sm_ft_cell = ttk.Frame(in_frame)
         _sm_ft_cell.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
         _, sm_filetypes_tips = self._make_collapsible_tips(
-            _sm_ft_cell, title="💡  Accepted file types & sources",
+            _sm_ft_cell, title="Accepted file types & sources",
             start_open=False)
         ttk.Label(sm_filetypes_tips,
                   text="Accepted file types:\n"
@@ -31835,7 +32007,7 @@ demucs.separate.main()
                         text="Auto-align: make offset land exactly where entered",
                         variable=self.sm_offset_normalize_var).pack(anchor="w")
         _, auto_align_tips = self._make_collapsible_tips(
-            norm_frame, title="💡  What does Auto-align do?", start_open=False)
+            norm_frame, title="What does Auto-align do?", start_open=False)
         ttk.Label(auto_align_tips,
                   text="Ensures your offset value is accurate by accounting for the sheet music's\n"
                        "own internal start time. Leave on unless you need raw tick-level control.",
@@ -31859,7 +32031,7 @@ demucs.separate.main()
                 messagebox.showinfo("No Data",
                     "Convert the file once first — the first note time will be read from the result.")
 
-        ttk.Button(read_frame, text="📋  Use first note time from last conversion",
+        ttk.Button(read_frame, text="Use first note time from last conversion", image=fluent_icon("clipboard_task") or "", compound="left",
                    command=_sm_read_from_log).pack(anchor="w")
         self.sm_first_note_lbl = ttk.Label(read_frame, text="(convert once to populate)",
                                             style="Sub.TLabel", foreground="#555")
@@ -31869,7 +32041,7 @@ demucs.separate.main()
         help_outer = ttk.Frame(offset_outer)
         help_outer.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         _, help_frame = self._make_collapsible_tips(
-            help_outer, title="💡  How to find your offset", start_open=False)
+            help_outer, title="How to find your offset", start_open=False)
         ttk.Label(help_frame,
                   text="How to find your offset:\n\n"
                        "  1.  Open the MIDI Editor (Tab 6) and load your drums-only\n"
@@ -31890,7 +32062,7 @@ demucs.separate.main()
         # ── Advanced options ──────────────────────────────────────────────────
         self.sm_adv_expanded = tk.BooleanVar(value=False)
         adv_toggle = ttk.Checkbutton(body,
-                                     text="⚙  Advanced — Tempo, Time Signature & Part overrides",
+                                     text="Advanced — Tempo, Time Signature & Part overrides", image=fluent_icon("settings") or "", compound="left",
                                      variable=self.sm_adv_expanded,
                                      command=self._sm_toggle_advanced)
         adv_toggle.pack(anchor="w", pady=(0, 4))
@@ -31946,7 +32118,7 @@ demucs.separate.main()
                                           width=40, state="readonly")
         self.sm_part_combo["values"] = ["Auto-detect (recommended)"]
         self.sm_part_combo.pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(part_sel_frame, text="🔍  Scan File",
+        ttk.Button(part_sel_frame, text="Scan File", image=fluent_icon("scan") or "", compound="left",
                    command=self._sm_scan_parts).pack(side=tk.LEFT)
         ttk.Label(adv_inner,
                   text="  Click 'Scan File' to read the parts from your MusicXML file and pick one\n"
@@ -31989,7 +32161,7 @@ demucs.separate.main()
         info_outer = ttk.Frame(info_row)
         info_outer.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         _, info_content = self._make_collapsible_tips(
-            info_outer, title="▶  How It Works", start_open=False)
+            info_outer, title="How It Works", icon="info", start_open=False)
         ttk.Label(info_content,
                   text="What ParaKit does with your file:\n"
                        "  1.  Reads your MusicXML file and finds the drum/percussion part\n"
@@ -32006,7 +32178,7 @@ demucs.separate.main()
                        "      Review these to make sure the substitution makes sense for your song.\n"
                        "  ⚠  Dropped notes — notes with no Paradiddle equivalent. If something\n"
                        "      important was dropped you can add it manually in the MIDI Editor.\n\n"
-                       "Advanced overrides (click '⚙ Advanced' above to expand):\n"
+                       "Advanced overrides (click 'Advanced' above to expand):\n"
                        "  Override BPM — use this if your file has no tempo marking, or if the\n"
                        "      tempo in the file is wrong (e.g. it says 60 but the song is 120).\n"
                        "  Override Time Signature — use if the file has the wrong time signature\n"
@@ -32017,7 +32189,7 @@ demucs.separate.main()
         sync_outer = ttk.Frame(info_row)
         sync_outer.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         _, sync_content = self._make_collapsible_tips(
-            sync_outer, title="⚠  Audio Sync", start_open=False)
+            sync_outer, title="Audio Sync", icon="warning", start_open=False)
         ttk.Label(sync_content,
                   text="⚠  Important — Audio Sync is Your Responsibility:\n"
                        "This tool converts your sheet music into a MIDI file accurately, but it has\n"
@@ -32032,7 +32204,7 @@ demucs.separate.main()
                   justify=tk.LEFT, wraplength=340).pack(anchor="w")
 
         # ── Convert button (sheet music tab) ──────────────────────────────────
-        self.sm_btn = ttk.Button(body, text="🎼  Convert Sheet Music to MIDI",
+        self.sm_btn = ttk.Button(body, text="Convert Sheet Music to MIDI", image=fluent_icon("book_open") or "", compound="left",
                                  style="Convert.TButton",
                                  command=self._sm_convert)
         self.sm_btn.pack(fill=tk.X, pady=(10, 6), ipady=8)
@@ -32048,7 +32220,7 @@ demucs.separate.main()
         log_frame.pack(fill=tk.BOTH, expand=True)
         log_btn_row = ttk.Frame(log_frame)
         log_btn_row.pack(fill=tk.X, pady=(0, 4))
-        ttk.Button(log_btn_row, text="📄  Export Log",
+        ttk.Button(log_btn_row, text="Export Log", image=fluent_icon("document") or "", compound="left",
                    command=lambda: self._export_log(
                        self.sm_log_text, "sheet_music_log.txt", "Sheet Music → MIDI")
                    ).pack(side=tk.LEFT)
@@ -32732,7 +32904,7 @@ demucs.separate.main()
                 self._sm_log("\n⚠  No drum notes found. Check that your file contains "
                              "percussion/drum notation and try again.")
                 self.root.after(0, lambda: self.sm_btn.configure(
-                    state="normal", text="🎼  Convert Sheet Music to MIDI"))
+                    state="normal", text="Convert Sheet Music to MIDI"))
                 return
 
             # ── Build MIDI file ────────────────────────────────────────────────
@@ -32903,7 +33075,7 @@ demucs.separate.main()
 
         finally:
             self.root.after(0, lambda: self.sm_btn.configure(
-                state="normal", text="🎼  Convert Sheet Music to MIDI"))
+                state="normal", text="Convert Sheet Music to MIDI"))
             self.root.after(0, self.sm_progress.stop)
             self.root.after(0, lambda: self._timer_stop(self.sm_timer_lbl))
             self._sm_start_time = None
@@ -33365,7 +33537,7 @@ demucs.separate.main()
                 self._sm_log("\n⚠  No drum notes found. Check your file has a percussion "
                              "staff and try again, or switch to Standard XML parser.")
                 self.root.after(0, lambda: self.sm_btn.configure(
-                    state="normal", text="🎼  Convert Sheet Music to MIDI"))
+                    state="normal", text="Convert Sheet Music to MIDI"))
                 return
 
             # ── Write MIDI ────────────────────────────────────────────────────
@@ -33527,7 +33699,7 @@ demucs.separate.main()
                 "Conversion Failed", f"An error occurred:\n{e}\n\nCheck the log for details.")
         finally:
             self.root.after(0, lambda: self.sm_btn.configure(
-                state="normal", text="🎼  Convert Sheet Music to MIDI"))
+                state="normal", text="Convert Sheet Music to MIDI"))
             self.root.after(0, self.sm_progress.stop)
             self.root.after(0, lambda: self._timer_stop(self.sm_timer_lbl))
             self._sm_start_time = None
@@ -33900,7 +34072,7 @@ demucs.separate.main()
 
         runtime_btn_row = ttk.Frame(runtime_frame)
         runtime_btn_row.pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(runtime_btn_row, text="🔍  Check",
+        ttk.Button(runtime_btn_row, text="Check", image=fluent_icon("search") or "", compound="left",
                    command=self._yt_check_runtime_status).pack(side=tk.LEFT, padx=(0, 4))
         # v4.4.16 — Bind to self so the v4.4.5 gray-out pattern
         # (toggled in _yt_check_runtime_status below) can disable the
@@ -33921,7 +34093,7 @@ demucs.separate.main()
                 save_config({"yt_node_path": path})
                 self._yt_check_runtime_status()
 
-        ttk.Button(runtime_btn_row, text="📁  Node.js Path",
+        ttk.Button(runtime_btn_row, text="Node.js Path", image=fluent_icon("folder_open") or "", compound="left",
                    command=_yt_browse_node).pack(side=tk.LEFT, padx=(0, 4))
         self._yt_node_path_lbl = ttk.Label(
             runtime_frame, textvariable=self.yt_node_path_var,
@@ -33984,7 +34156,7 @@ demucs.separate.main()
         # Download button
         dl_row = ttk.Frame(main)
         dl_row.pack(anchor="w", pady=(0, 8))
-        self.yt_dl_btn = ttk.Button(dl_row, text="⬇  Download & Convert",
+        self.yt_dl_btn = ttk.Button(dl_row, text="Download & Convert", image=fluent_icon("arrow_download") or "", compound="left",
                                      style="Convert.TButton",
                                      command=self._yt_start_download)
         self.yt_dl_btn.pack(side=tk.LEFT, padx=(0, 12))
@@ -33997,7 +34169,7 @@ demucs.separate.main()
         self.yt_embed_art_var = tk.BooleanVar(
             value=load_config().get("yt_embed_art", True))
         ttk.Checkbutton(dl_row,
-                        text="🖼  Embed YouTube thumbnail as album art (square crop)",
+                        text="Embed YouTube thumbnail as album art (square crop)", image=fluent_icon("image") or "", compound="left",
                         variable=self.yt_embed_art_var).pack(side=tk.LEFT)
         self.yt_embed_art_var.trace_add("write",
             lambda *_: save_config({"yt_embed_art": self.yt_embed_art_var.get()}))
@@ -34574,7 +34746,9 @@ demucs.separate.main()
             try:
                 playing = (getattr(r, "_yt_path", None) == cur and state == "playing")
                 _bg = YT_PAUSE_CHIP_BG if playing else YT_PLAY_CHIP_BG
-                chip.configure(text="⏸  Pause" if playing else "▶  Play",
+                chip.configure(text="Pause" if playing else "Play",
+                               image=fluent_icon("pause" if playing else "play") or "",
+                               compound="left",
                                bg=_bg, highlightbackground=_bg, highlightcolor=_bg)
             except Exception:
                 pass
@@ -35617,9 +35791,12 @@ demucs.separate.main()
                     and getattr(self, "_yt_preview_state", None) == "playing")
         _play_bg = YT_PAUSE_CHIP_BG if _playing else YT_PLAY_CHIP_BG
         row._yt_play_chip = _mk_chip(
-            "⏸  Pause" if _playing else "▶  Play",
+            "Pause" if _playing else "Play",
             "#ffffff", self._yt_preview_toggle, 10,
             border=_play_bg, bg=_play_bg, track=False)
+        row._yt_play_chip.configure(
+            image=fluent_icon("pause" if _playing else "play") or "",
+            compound="left")
 
         sep = tk.Frame(parent, bg="#222238", height=1)
         sep.pack(fill=tk.X)
@@ -37118,14 +37295,15 @@ demucs.separate.main()
         main = ttk.Frame(parent, padding=16)
         main.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(main, text="🎨  Asset Manager",
+        ttk.Label(main, text="Asset Manager", image=fluent_icon("image") or "", compound="left",
                   font=("Segoe UI", 13, "bold"), foreground="#b388ff").pack(anchor="w")
         ttk.Label(main,
                   text="Prepare album art, preview clips, and song metadata for Paradiddle charts.",
                   style="Sub.TLabel").pack(anchor="w", pady=(2, 12))
 
         # ── Metadata Fetcher ──────────────────────────────────────────────────
-        meta_frame = ttk.LabelFrame(main, text=" 🔍  Auto-Fetch Metadata ", padding=10)
+        meta_frame = ttk.LabelFrame(main, text=" Auto-Fetch Metadata ", padding=10)
+        _fluent_labelframe_title(meta_frame, " Auto-Fetch Metadata ", "search")
         meta_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(meta_frame,
@@ -37143,7 +37321,7 @@ demucs.separate.main()
         ttk.Label(search_row, text="Search:", width=8).pack(side=tk.LEFT)
         self.am_search_var = tk.StringVar()
         ttk.Entry(search_row, textvariable=self.am_search_var, width=50).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(search_row, text="🔍  Fetch Album Art",
+        ttk.Button(search_row, text="Fetch Album Art", image=fluent_icon("image_search") or "", compound="left",
                    command=self._am_fetch_metadata).pack(side=tk.LEFT)
         # Disclaimer tucked into the empty space beside the button (doesn't push
         # the layout down).
@@ -37198,13 +37376,13 @@ demucs.separate.main()
         ttk.Button(apply_row, text="✓  Apply Metadata to Song Creator",
                    style="Convert.TButton",
                    command=self._am_apply_metadata).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(apply_row, text="🖼  Apply art from thumbnail to Song Creator",
+        ttk.Button(apply_row, text="Apply art from thumbnail to Song Creator", image=fluent_icon("image") or "", compound="left",
                    style="Convert.TButton",
                    command=self._am_apply_art).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(apply_row, text="💾  Save Image...",
+        ttk.Button(apply_row, text="Save Image...", image=fluent_icon("save") or "", compound="left",
                    style="Convert.TButton",
                    command=self._am_save_image).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(apply_row, text="🔎  Show alternate art choices",
+        ttk.Button(apply_row, text="Show alternate art choices", image=fluent_icon("search") or "", compound="left",
                    command=self._am_show_alternate_art).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(meta_frame,
                   text="Metadata fills Title and Artist. Art sets the Cover Image path. "
@@ -37216,7 +37394,8 @@ demucs.separate.main()
                   wraplength=700, justify=tk.LEFT).pack(anchor="w", pady=(2, 0))
 
         # ── Album Art Cropper ─────────────────────────────────────────────────
-        art_frame = ttk.LabelFrame(main, text=" 🖼  Album Art Cropper ", padding=10)
+        art_frame = ttk.LabelFrame(main, text=" Album Art Cropper ", padding=10)
+        _fluent_labelframe_title(art_frame, " Album Art Cropper ", "crop")
         art_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(art_frame,
@@ -37265,13 +37444,14 @@ demucs.separate.main()
         ttk.Label(size_row, text="px", style="Sub.TLabel").pack(side=tk.LEFT)
 
         self.am_crop_status_var = tk.StringVar(value="")
-        ttk.Button(art_frame, text="✂  Crop to Square",
+        ttk.Button(art_frame, text="Crop to Square", image=fluent_icon("crop") or "", compound="left",
                    command=self._am_crop_art).pack(anchor="w", pady=(0, 4))
         ttk.Label(art_frame, textvariable=self.am_crop_status_var,
                   style="Sub.TLabel", foreground="#00d4d4").pack(anchor="w")
 
         # ── Preview Audio Trimmer ─────────────────────────────────────────────
-        trim_frame = ttk.LabelFrame(main, text=" ✂  Preview Audio Trimmer ", padding=10)
+        trim_frame = ttk.LabelFrame(main, text=" Preview Audio Trimmer ", padding=10)
+        _fluent_labelframe_title(trim_frame, " Preview Audio Trimmer ", "cut")
         trim_frame.pack(fill=tk.X)
 
         ttk.Label(trim_frame,
@@ -37322,7 +37502,7 @@ demucs.separate.main()
         self.am_trim_status_var = tk.StringVar(value="")
         trim_action_row = ttk.Frame(trim_frame)
         trim_action_row.pack(anchor="w", pady=(0, 4))
-        ttk.Button(trim_action_row, text="✂  Trim & Export as .ogg",
+        ttk.Button(trim_action_row, text="Trim & Export as .ogg", image=fluent_icon("cut") or "", compound="left",
                    command=self._am_trim_audio).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(trim_action_row, text="Send clip to Song Creator",
                    command=self._am_send_clip_to_creator).pack(side=tk.LEFT)
@@ -37674,7 +37854,7 @@ demucs.separate.main()
         if not meta:
             messagebox.showinfo(
                 "Alternate art",
-                "Fetch album art first (🔍 Fetch Album Art), then check for "
+                "Fetch album art first (Fetch Album Art), then check for "
                 "alternates.")
             return
         alts = [b for b in (meta.get("art_alternates") or []) if b]
@@ -39350,9 +39530,9 @@ demucs.separate.main()
                 if is_open.get():
                     toggle()
 
-        ttk.Button(btn_row, text="▼  Expand All",
+        ttk.Button(btn_row, text="Expand All", image=fluent_icon("chevron_down") or "", compound="left",
                    command=_expand_all).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(btn_row, text="▶  Collapse All",
+        ttk.Button(btn_row, text="Collapse All", image=fluent_icon("chevron_right") or "", compound="left",
                    command=_collapse_all).pack(side=tk.LEFT)
 
         # (v4.7.12 — the cyan ".alt_detector.mid" note was removed with Enhanced
@@ -39674,7 +39854,8 @@ demucs.separate.main()
             _status = tk.Label(_box, text="", bg="#2a1212", fg="#d7e7ff",
                                font=("Segoe UI", 8), anchor="w", justify=tk.LEFT,
                                wraplength=WR + 90)
-            _btn = ttk.Button(_box, text="⬇  Download CHANGELOG.txt")
+            _btn = ttk.Button(_box, text="Download CHANGELOG.txt",
+                              image=fluent_icon("arrow_download") or "", compound="left")
 
             def _do_download():
                 import threading
@@ -39853,7 +40034,7 @@ demucs.separate.main()
               "  more accurate. Both are excellent for charting purposes.\n\n"
               "GPU acceleration:\n"
               "  Splitting is much faster on a supported NVIDIA GPU. The\n"
-              "  'Hardware speed notes ▸ 🔍 Check' button verifies whether your GPU\n"
+              "  'Hardware speed notes ▸ Check' button verifies whether your GPU\n"
               "  can accelerate it — and if not, tells you why and how to enable it\n"
               "  (GTX 10-series–RTX 40-series work by default; RTX 50-series needs a\n"
               "  CUDA 12.8+ build; AMD/Intel run on CPU).\n\n"
@@ -40001,7 +40182,7 @@ demucs.separate.main()
         divider(s)
         entry(s,
               "Extra Stems\n"
-              "  Click '➕ Add more stem options' in the Files section to add up to\n"
+              "  Click 'Add more stem options' in the Files section to add up to\n"
               "  4 additional audio tracks beyond Song Audio and Drum Audio.\n\n"
               "  Each extra stem has two checkboxes (mutually exclusive):\n"
               "    ☑ Drum audio (default) — added to drumTracks in the .rlrr\n"
@@ -40393,10 +40574,10 @@ demucs.separate.main()
               "  1.  In the Detection Engine section, select ML or Hybrid\n"
               "  2.  Click '↓ Download Model' — parakit_drum_model.onnx (~1.7 MB) downloads\n"
               "      automatically to Requirements\\ if present, otherwise next to ParaKit.exe\n"
-              "  3.  Status should change to ✅ Model ready\n"
+              "  3.  Status should change to ✓ Model ready\n"
               "  4.  Convert as normal\n"
               "  Or: place parakit_drum_model.onnx manually next to ParaKit.exe\n"
-              "      or in Requirements\\, then click 🔍 Check\n\n"
+              "      or in Requirements\\, then click Check\n\n"
               "ML Confidence Threshold  (default: 0.50)\n"
               "  Controls how certain the model must be before counting a hit.\n"
               "  0.50 is a safe starting point for most songs.\n"
@@ -40405,7 +40586,7 @@ demucs.separate.main()
               "Troubleshooting:\n"
               "  'No model found' — model file is missing or in the wrong location.\n"
               "    Fix: click ↓ Download Model, or place parakit_drum_model.onnx next to\n"
-              "    ParaKit.exe or in Requirements\\, then click 🔍 Check.\n\n"
+              "    ParaKit.exe or in Requirements\\, then click Check.\n\n"
               "  'Model error' — the file is corrupt or incompatible.\n"
               "    Fix: delete parakit_drum_model.onnx and click ↓ Download Model to\n"
               "    re-download a fresh copy.\n\n"
@@ -40658,7 +40839,7 @@ demucs.separate.main()
                 "convenience, not the source of truth.")
         divider(s)
         entry(s,
-              "🥁 Manual MIDI Note Manager  (button next to Tempo Map):\n\n"
+              "Manual MIDI Note Manager  (button next to Tempo Map):\n\n"
               "  Choose which MIDI note each drum lane writes on export\n"
               "  (.mid / .rlrr / .chart). Every choice is restricted to notes\n"
               "  that are valid for that piece in both Paradiddle and Clone Hero,\n"
@@ -40696,7 +40877,7 @@ demucs.separate.main()
               "  a single hi-hat lane, so in those charts all hats play one sound.)")
         divider(s)
         entry(s,
-              "📋 Send to Song Creator  (handoff button):\n\n"
+              "Send to Song Creator  (handoff button):\n\n"
               "  The Song Creator button at the top of the MIDI Editor tab\n"
               "  hands the current chart off to Single Song Creator (Tab 1)\n"
               "  with most of the wiring done for you:\n\n"
@@ -40764,7 +40945,7 @@ demucs.separate.main()
               "  same lane — the grace note is much quieter than the main hit.\n\n"
               "  How to use:\n"
               "    1.  Select one or more notes you want to add a flam to\n"
-              "    2.  Click 🥁 Flam\n"
+              "    2.  Click Flam\n"
               "    3.  A ghost note (velocity 30) is placed 30ms before each selected note\n"
               "    4.  Ctrl+Z to undo\n\n"
               "  Tips:\n"
@@ -40887,7 +41068,7 @@ demucs.separate.main()
                  "Playback modes:\n"
                  "  Single track — only the stem selected by the radio button plays.\n"
                  "  Layered — all loaded stems play simultaneously.\n"
-                 "  Use the 🎚 Mixer popup button to control per-stem volume.\n"
+                 "  Use the Mixer popup button to control per-stem volume.\n"
                  "  ⚠  Layered mode at non-1.0x speed is CPU-intensive — use 1.0x.\n\n"
                  "  Requires pygame (install prompt shown if missing).\n\n"
                  "Playback speed controls:\n"
@@ -41032,7 +41213,7 @@ demucs.separate.main()
               "    model's confidence was below 70% are drawn with hot-pink diagonal\n"
               "    stripes while keeping their lane color. Full-width kick lines are\n"
               "    excluded so the view stays readable. These are the hits most likely to be false positives.\n"
-              "    Use the 🔍 Review Issues button to jump directly to low-confidence\n"
+              "    Use the Review Issues button to jump directly to low-confidence\n"
               "    notes for fast review. Toggle off to see the chart normally.\n\n"
               "  ⚡  Reactive notes  (light up on playhead):\n"
               "    Notes light up as the playhead passes over their center. Two styles,\n"
@@ -41083,7 +41264,7 @@ demucs.separate.main()
               "  secondary. They scroll and zoom with the piano roll.")
         divider(s)
         entry(s,
-              "Markers  (📍 Markers button, right column of the MIDI Editor):\n\n"
+              "Markers  (Markers button, right column of the MIDI Editor):\n\n"
               "  Markers are full-height vertical lines that span all lanes. They are\n"
               "  session-only — they clear when you load a new MIDI and are never saved.\n"
               "  Use them to flag positions you want to come back to, mark sections where\n"
@@ -41158,7 +41339,7 @@ demucs.separate.main()
                                "    Method A — BPM from Selection (most accurate):\n"
                                "    a.  Rubber-band select (Shift+drag) a group of\n"
                                "        notes in the drifted section (4+ notes)\n"
-                               "    b.  Click '🎵 BPM from Selection'\n"
+                               "    b.  Click 'BPM from Selection'\n"
                                "    c.  The app analyzes note timing and fills the\n"
                                "        BPM field of the last entry automatically\n\n"
                                "    Method B — Tap BPM (useful when notes are sparse):\n"
@@ -41225,7 +41406,7 @@ demucs.separate.main()
               "  • Play source (Drums | Full Mix)  →  which audio you HEAR\n"
               "  • Analyze (Drums | Full Mix)  →  which audio the graph ANALYZES\n"
               "    (default Drums; switch to Full Mix for masking context)\n\n"
-              "Shortcut: the 📊 Spectral button on the MIDI Editor, Audio → MIDI,\n"
+              "Shortcut: the Spectral button on the MIDI Editor, Audio → MIDI,\n"
               "Song Tester and Preview tabs sends that song's drums + chart here.\n\n"
               "Three views (toolbar toggle): Per-Lane (energy ribbon + notes\n"
               "per drum), Spectrogram (full heatmap with the chart's note rows)\n"
@@ -41246,7 +41427,7 @@ demucs.separate.main()
               "  Audio — the song\n"
               "  Drumless audio — a drums-free backing, if you have one\n\n"
               "Controls:\n"
-              "  ▶ / ⏸              — play, pause\n"
+              "  Play / Pause        — play, pause\n"
               "  Scrubber            — click or drag to seek\n"
               "  Audio offset        — nudge the audio against the chart, in ms\n"
               "  Loop / Set A / Set B — repeat a section while you work on it\n"
@@ -41356,7 +41537,7 @@ demucs.separate.main()
               "  1. Open MIDI Controls.\n"
               "  2. Watch which lane's indicator flashes when you hit the wrong-\n"
               "     mapped pad — that's the lane currently receiving your hit.\n"
-              "  3. Click the 🎯 Learn button on the lane you WANT to receive\n"
+              "  3. Click the Learn button on the lane you WANT to receive\n"
               "     that pad's hit.\n"
               "  4. Hit the pad on your kit — ParaKit captures that MIDI note as\n"
               "     the new mapping for that lane.\n"
@@ -41389,7 +41570,7 @@ demucs.separate.main()
               "  Count-in toggle: ON by default. Turn it off if you want recording "
               "to start as soon as you press Record.\n\n"
               "  Metronome sound: choose Wood block, Cowbell, Rim shot, High blip, "
-              "or Procedural sine. Click ▶ Test to hear the selected sound once.\n\n"
+              "or Procedural sine. Click Test to hear the selected sound once.\n\n"
               "  Recording timing off? Open MIDI Input (BETA) and adjust MIDI "
               "input offset. Negative values move recorded notes earlier; positive "
               "values move them later.\n\n"
@@ -41484,8 +41665,8 @@ demucs.separate.main()
         entry(s,
               "Drum Part selector — for files with multiple parts:\n\n"
               "  ParaKit automatically detects the drum part in full band scores.\n"
-              "  If it picks the wrong one, click '⚙ Advanced' to expand the options,\n"
-              "  then click '🔍 Scan File' to read all parts from the file and choose\n"
+              "  If it picks the wrong one, click 'Advanced' to expand the options,\n"
+              "  then click 'Scan File' to read all parts from the file and choose\n"
               "  the correct one from the dropdown. This is rarely needed — auto-detect\n"
               "  works correctly for the vast majority of files.\n\n"
               "Advanced overrides — BPM and time signature:\n\n"
@@ -41597,13 +41778,13 @@ demucs.separate.main()
               "  and iTunes for album artwork.\n\n"
               "  How to use:\n"
               "    1.  Type artist and song name (e.g. 'Duality Slipknot')\n"
-              "    2.  Click 🔍 Fetch Album Art\n"
+              "    2.  Click Fetch Album Art\n"
               "    3.  Review the result and art thumbnail\n"
               "    4.  Click ✓ Apply Metadata to Song Creator to fill Title and\n"
               "        Artist, and/or 🖼 Apply art from thumbnail to Song Creator\n"
               "        to set just the Cover Image path. Each button is\n"
               "        independent so you can apply one without the other.\n"
-              "    5.  (Optional) Click 💾 Save Image... to save the fetched\n"
+              "    5.  (Optional) Click Save Image... to save the fetched\n"
               "        cover art to disk as .jpg or .png. Pick the format from\n"
               "        the Save As dialog's file-type dropdown. The default\n"
               "        folder is 'ALBUM ART ASSETS' next to ParaKit (created\n"
@@ -41621,7 +41802,7 @@ demucs.separate.main()
               "    1.  Browse to your image (PNG, JPG, WEBP, BMP supported)\n"
               "    2.  Choose a save location\n"
               "    3.  Select output size (512×512 recommended for Paradiddle)\n"
-              "    4.  Click ✂ Crop to Square\n\n"
+              "    4.  Click Crop to Square\n\n"
               "  The crop is always centered — equal amounts removed from each side.\n"
               "  If your art already has a square subject off-center, crop manually\n"
               "  in an image editor first, then use this to resize.\n\n"
@@ -41632,15 +41813,15 @@ demucs.separate.main()
               "    1.  Browse to your audio file (any format)\n"
               "    2.  Choose a save location (.ogg)\n"
               "    3.  Set Start (seconds from beginning) and Duration\n"
-              "    4.  Click ✂ Trim & Export as .ogg\n\n"
+              "    4.  Click Trim & Export as .ogg\n\n"
               "  Tip: Pick a memorable hook — chorus or a distinctive fill.\n"
               "  Avoid starting at 0.0 if the song has a quiet intro.\n"
               "  15 seconds is the standard Paradiddle preview length.")
         divider(s)
 
-        s = section("📲  Push to Quest (ADB)", right)
+        s = section("Push to Quest (ADB)", right)
         entry(s,
-              "The 📲 Push to Quest button in the Song Creator sends your\n"
+              "The Push to Quest button in the Song Creator sends your\n"
               "converted .rlrr folder directly to a connected Meta Quest\n"
               "over USB — no SideQuest or file manager needed.\n\n"
               "Files included in the ParaKit zip:\n"
@@ -41659,7 +41840,7 @@ demucs.separate.main()
               "How to use:\n"
               "  1.  Convert your song in Song Creator\n"
               "  2.  Keep the Quest plugged in and awake\n"
-              "  3.  Click 📲 Push to Quest\n"
+              "  3.  Click Push to Quest\n"
               "  4.  The song appears in Paradiddle → Custom Songs immediately\n\n"
               "  If no Quest is detected, check the USB cable and that you\n"
               "  accepted the USB debugging prompt inside the headset.\n"
@@ -41770,7 +41951,7 @@ demucs.separate.main()
                "then use Hybrid detection mode on that stem. Hybrid gives the best results "
                "of any mode — it runs ML and Spectral in parallel and picks the best hits.")
         divider(s)
-        tip(s, "After Audio → MIDI finishes, click Review Issues (🔍) before editing. "
+        tip(s, "After Audio → MIDI finishes, click Review Issues before editing. "
                "It flags likely duplicates, low-confidence hits, and cymbal problems in one "
                "scan — faster than finding them manually.")
         divider(s)
@@ -42692,10 +42873,10 @@ demucs.separate.main()
             ry = self.root.winfo_y() + (self.root.winfo_height() - pop.winfo_height()) // 2
             pop.geometry(f"+{rx}+{ry}")
 
-        ttk.Button(dt_btn_row, text="🔬  Analyze Log",
+        ttk.Button(dt_btn_row, text="Analyze Log", image=fluent_icon("beaker") or "", compound="left",
                    style="Convert.TButton",
                    command=_dt_analyze).pack(side=tk.LEFT, padx=(0, 8))
-        _dt_apply_btn = ttk.Button(dt_btn_row, text="⚙  Apply / Flag",
+        _dt_apply_btn = ttk.Button(dt_btn_row, text="Apply / Flag", image=fluent_icon("settings") or "", compound="left",
                                    command=_dt_open_apply_popup, state="disabled")
         _dt_apply_btn.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(dt_btn_row, text="✕  Clear",
@@ -43906,7 +44087,7 @@ demucs.separate.main()
         the button greys out again when no device is connected.
         """
         dlg = tk.Toplevel(self.root)
-        dlg.title("🎹  MIDI Controls & Learn Mode  (BETA)")
+        dlg.title("MIDI Controls & Learn Mode  (BETA)")
         dlg.resizable(False, False)
         try:
             dlg.configure(bg=APP_BG)
@@ -43917,7 +44098,7 @@ demucs.separate.main()
         outer = ttk.Frame(dlg, padding=14)
         outer.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(outer, text="🎹  MIDI Controls & Learn Mode",
+        ttk.Label(outer, text="MIDI Controls & Learn Mode", image=fluent_icon("midi") or "", compound="left",
                   style="Header.TLabel").grid(
                       row=0, column=0, columnspan=4, sticky="w")
         ttk.Label(outer,
@@ -43991,7 +44172,7 @@ demucs.separate.main()
                 self._settings_set("midi_input.device_name", "")
                 _set_status_for(none_label)
 
-        ttk.Button(dev_frame, text="🔄  Refresh",
+        ttk.Button(dev_frame, text="Refresh", image=fluent_icon("arrow_clockwise") or "", compound="left",
                    command=_refresh).grid(
                        row=0, column=2, sticky="e", padx=(8, 0), pady=3)
         status_lbl.grid(row=1, column=0, columnspan=3, sticky="w",
@@ -44109,7 +44290,7 @@ demucs.separate.main()
                 if self._midi_learn_target_lane == target:
                     self._midi_learn_target_lane = None
 
-            ttk.Button(lanes_frame, text="🎯  Learn",
+            ttk.Button(lanes_frame, text="Learn", image=fluent_icon("target") or "", compound="left",
                        width=10,
                        command=_arm_learn).grid(
                            row=row_i, column=3, padx=(0, 4), pady=2)
@@ -44395,7 +44576,7 @@ demucs.separate.main()
 
         clear_row = ttk.Frame(top_frame)
         clear_row.grid(row=4, column=0, columnspan=3, sticky="w", pady=(2, 0))
-        ttk.Button(clear_row, text="🗑  Clear All Fields",
+        ttk.Button(clear_row, text="Clear All Fields", image=fluent_icon("eraser") or "", compound="left",
                    command=_viz_clear_all).pack(side=tk.LEFT)
         ttk.Button(clear_row, text="↺  Reload Notes",
                    command=lambda: [self._viz_load_notes(),
@@ -44403,7 +44584,7 @@ demucs.separate.main()
                    ).pack(side=tk.LEFT, padx=(8, 0))
         # Auto Fetch Audio (2026-06-25, owner) — between Reload Notes and Apply Offset;
         # plain button (matches its row neighbors) with the 🎵 now-playing icon.
-        _viz_af_btn = ttk.Button(clear_row, text="🎵  Auto Fetch Audio",
+        _viz_af_btn = ttk.Button(clear_row, text="Auto Fetch Audio", image=fluent_icon("music_note_2") or "", compound="left",
                                  command=self._viz_auto_fetch_audio)
         _viz_af_btn.pack(side=tk.LEFT, padx=(8, 0))
         self._add_tooltip(
@@ -44471,16 +44652,18 @@ demucs.separate.main()
         ctrl_row = ttk.Frame(top_frame)
         ctrl_row.grid(row=9, column=0, columnspan=3, sticky="w", pady=(4, 2))
 
-        self.viz_play_btn = ttk.Button(ctrl_row, text="▶  Play",
+        self.viz_play_btn = ttk.Button(ctrl_row, text="Play",
+                                       image=fluent_icon("play") or "",
+                                       compound="left",
                                        command=self._viz_play)
         self.viz_play_btn.pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(ctrl_row, text="⏹  Stop",
+        ttk.Button(ctrl_row, text="Stop", image=fluent_icon("stop") or "", compound="left",
                    command=self._viz_stop).pack(side=tk.LEFT, padx=(0, 12))
 
         # Send this song's drums / chart / full-mix to Spectral Comparison
         # (owner 2026-07-20).
         _viz_spectral_btn = ttk.Button(
-            ctrl_row, text="📊  Spectral",
+            ctrl_row, text="Spectral", image=fluent_icon("chart_multiple") or "", compound="left",
             command=lambda: self._send_to_spectral(
                 drums=self.viz_drum_var.get().strip(),
                 chart=(self.viz_rlrr_override_var.get().strip()
@@ -44535,7 +44718,7 @@ demucs.separate.main()
         self._viz_loop_on  = tk.BooleanVar(value=False)
         self._viz_loop_in  = 0.0
         self._viz_loop_out = 0.0
-        ttk.Checkbutton(loop_row, text="🔁  Loop",
+        ttk.Checkbutton(loop_row, text="Loop", image=fluent_icon("arrow_repeat_all") or "", compound="left",
                         variable=self._viz_loop_on).pack(side=tk.LEFT, padx=(0, 8))
         self.viz_loop_in_lbl = ttk.Label(loop_row, text="Start: --:--",
                                           font=("Consolas", 9), foreground="#ffd700")
@@ -44725,9 +44908,9 @@ demucs.separate.main()
                         side=tk.LEFT, padx=(0, 12))
         ttk.Button(practice_top, text="Reset Practice",
                    command=self._viz_reset_practice).pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Button(practice_top, text="⚙ Controls",
+        ttk.Button(practice_top, text="Controls", image=fluent_icon("settings") or "", compound="left",
                    command=self._viz_show_controls_dialog).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(practice_top, text="🎹  Launch New Practice (BETA)",
+        ttk.Button(practice_top, text="Launch New Practice (BETA)", image=fluent_icon("midi") or "", compound="left",
                    command=self._practice_minigame_launch).pack(
                        side=tk.LEFT, padx=(0, 8))
         # v4.4.53.6 — BETA label added to button. TEMPORARY: gate-bypass
@@ -44738,7 +44921,7 @@ demucs.separate.main()
         # restore the `if not _MIDI_INPUT_AVAILABLE` disable line and
         # remove this temporary-bypass comment.
         self.viz_midi_input_btn = ttk.Button(
-            practice_top, text="🎹  MIDI Input (BETA)",
+            practice_top, text="MIDI Input (BETA)", image=fluent_icon("midi") or "", compound="left",
             command=self._midi_show_controls_learn_dialog)
         self.viz_midi_input_btn.pack(side=tk.LEFT)
         # if not _MIDI_INPUT_AVAILABLE:
@@ -44953,7 +45136,7 @@ demucs.separate.main()
 
         # Launcher button
         ttk.Button(_mp_header,
-                   text="🎹  Open MIDI Controls",
+                   text="Open MIDI Controls", image=fluent_icon("midi") or "", compound="left",
                    style="Convert.TButton",
                    command=self._midi_show_controls_learn_dialog).pack(
                        fill=tk.X, pady=(2, 0))
@@ -45313,7 +45496,7 @@ demucs.separate.main()
     def _viz_show_controls_dialog(self):
         """Open a dialog to remap practice keyboard controls."""
         dlg = tk.Toplevel(self.root)
-        dlg.title("⚙ Practice Controls")
+        dlg.title("Practice Controls")
         dlg.resizable(False, False)
         dlg.grab_set()
 
@@ -46245,7 +46428,7 @@ demucs.separate.main()
                 gc.disable()
             except Exception:
                 pass
-            self.viz_play_btn.configure(text="⏸  Pause")
+            self.viz_play_btn.configure(text="Pause", image=fluent_icon("pause") or "")
             if self._viz_practice_active():
                 try:
                     self.viz_practice_canvas.focus_set()
@@ -46258,7 +46441,7 @@ demucs.separate.main()
             # can't get stuck disabled and the button can't get stuck on "Pause".
             self._viz_playing = False
             self._gc_playback_enable("viz")
-            self.viz_play_btn.configure(text="▶  Play")
+            self.viz_play_btn.configure(text="Play", image=fluent_icon("play") or "")
             messagebox.showerror("Playback error", str(e))
 
     # v4.4.18 — _viz_speed_changed handler removed alongside the speed slider
@@ -46284,7 +46467,7 @@ demucs.separate.main()
         # v4.5.6.2 — re-enable the cyclic GC that _viz_play paused
         # (ownership-aware since 2026-07-20: never undoes another owner's pause).
         self._gc_playback_enable("viz")
-        self.viz_play_btn.configure(text="▶  Play")
+        self.viz_play_btn.configure(text="Play", image=fluent_icon("play") or "")
         if self._viz_tick_id:
             self.root.after_cancel(self._viz_tick_id)
             self._viz_tick_id = None
@@ -46303,7 +46486,7 @@ demucs.separate.main()
         # (ownership-aware since 2026-07-20: never undoes another owner's pause).
         self._gc_playback_enable("viz", collect=True)
         self._viz_play_offset_secs = 0.0
-        self.viz_play_btn.configure(text="▶  Play")
+        self.viz_play_btn.configure(text="Play", image=fluent_icon("play") or "")
         if self._viz_tick_id:
             self.root.after_cancel(self._viz_tick_id)
             self._viz_tick_id = None
@@ -46322,7 +46505,7 @@ demucs.separate.main()
         audio. GC handling is ownership-aware: see _gc_playback_enable."""
         self._viz_playing = False
         self._gc_playback_enable("viz")
-        self.viz_play_btn.configure(text="▶  Play")
+        self.viz_play_btn.configure(text="Play", image=fluent_icon("play") or "")
         if self._viz_tick_id:
             self.root.after_cancel(self._viz_tick_id)
             self._viz_tick_id = None
@@ -46942,7 +47125,7 @@ demucs.separate.main()
             for w in (lbl, ent, btn):
                 self._enable_drop(w, var, config_key=config_key)
 
-        tfile_row("MIDI File *",   self.tester_midi_var,  0,
+        tfile_row("MIDI File",     self.tester_midi_var,  0,
                   [("MIDI","*.mid *.midi"),("All","*.*")],
                   config_key="recent_tester_midi")
         tfile_row("Song Audio *",  self.tester_audio_var, 1,
@@ -46963,7 +47146,7 @@ demucs.separate.main()
         _ts_af_outer.grid(row=4, column=1, columnspan=2, sticky="w", pady=(4, 2))
         _ts_af_border = tk.Frame(_ts_af_outer, bg="#00d4d4")
         _ts_af_border.pack(side=tk.LEFT)
-        _ts_af_btn = ttk.Button(_ts_af_border, text="🎵  Auto Fetch Audio",
+        _ts_af_btn = ttk.Button(_ts_af_border, text="Auto Fetch Audio", image=fluent_icon("music_note_2") or "", compound="left",
                                 command=self._tester_auto_fetch_audio, width=21)
         _ts_af_btn.pack(padx=2, pady=2)
         self._add_tooltip(
@@ -46979,7 +47162,9 @@ demucs.separate.main()
                   text="ℹ  RECOMMENDED: Use the .rlrr for the most accurate test — it tests your\n"
                        "   actual output file directly and already has any difficulty changes applied.\n"
                        "   Only use the MIDI instead if you haven't created the .rlrr yet and want\n"
-                       "   to check sync before committing to a full conversion.",
+                       "   to check sync before committing to a full conversion.\n"
+                       "   With a .rlrr set you can leave the MIDI File empty — the test runs\n"
+                       "   from the chart alone.",
                   style="Sub.TLabel", foreground="#b388ff"
                   ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
@@ -47005,11 +47190,11 @@ demucs.separate.main()
 
         ttk.Label(diff_frame,
                   text="  Simulates a reduced chart for density analysis only — it does not "
-                       "change any file. Reduce charts for real in the MIDI Editor (◪ Difficulty).",
+                       "change any file. Reduce charts for real in the MIDI Editor (Difficulty).",
                   style="Sub.TLabel").pack(side=tk.LEFT, padx=(10, 0))
 
         # ── Run button ────────────────────────────────────────────────────────
-        self.tester_btn = ttk.Button(main, text="🔬  Run Sync Test",
+        self.tester_btn = ttk.Button(main, text="Run Sync Test", image=fluent_icon("beaker") or "", compound="left",
                                      style="Convert.TButton",
                                      command=self._tester_start)
         self.tester_btn.pack(fill=tk.X, pady=(5, 6), ipady=8)
@@ -47017,7 +47202,7 @@ demucs.separate.main()
         # Send this song's drums / chart / full-mix to Spectral Comparison
         # (owner 2026-07-20) -- Song Tester is the conceptual twin of Spectral.
         _tester_spectral_btn = ttk.Button(
-            main, text="📊  Send to Spectral Comparison",
+            main, text="Send to Spectral Comparison", image=fluent_icon("chart_multiple") or "", compound="left",
             command=lambda: self._send_to_spectral(
                 drums=self.tester_drum_var.get().strip(),
                 chart=(self.tester_rlrr_var.get().strip()
@@ -47044,16 +47229,16 @@ demucs.separate.main()
         ttk.Entry(adj_frame, textvariable=self.tester_offset_var, width=10
                   ).grid(row=0, column=3, sticky="w", padx=(0,15))
 
-        ttk.Button(adj_frame, text="🔄  Re-test with these values",
+        ttk.Button(adj_frame, text="Re-test with these values", image=fluent_icon("arrow_clockwise") or "", compound="left",
                    command=self._tester_retest
                    ).grid(row=0, column=4, padx=(0,8))
 
-        ttk.Button(adj_frame, text="📋  Send to Song Creator",
+        ttk.Button(adj_frame, text="Send to Song Creator", image=fluent_icon("send") or "", compound="left",
                    style="Convert.TButton",
                    command=self._tester_send_to_creator
                    ).grid(row=0, column=5)
 
-        ttk.Button(adj_frame, text="📺  Send to Preview/Practice Track",
+        ttk.Button(adj_frame, text="Send to Preview/Practice Track", image=fluent_icon("tv") or "", compound="left",
                    command=self._tester_send_to_visualizer
                    ).grid(row=0, column=6, padx=(8, 0))
 
@@ -47070,7 +47255,9 @@ demucs.separate.main()
                   wraplength=900, justify=tk.LEFT).pack(anchor="w", pady=(0, 4))
 
         self.tester_fix_frame = ttk.LabelFrame(
-            main, text=" 🔧  Issues Found — Auto-Fix Options ", padding=10)
+            main, text=" Issues Found — Auto-Fix Options ", padding=10)
+        _fluent_labelframe_title(self.tester_fix_frame,
+                                 " Issues Found — Auto-Fix Options ", "wrench")
         # Not packed yet — shown only when tester finds problems
 
         fix_info = ttk.Label(self.tester_fix_frame,
@@ -47112,11 +47299,11 @@ demucs.separate.main()
 
         fix_btn_row = ttk.Frame(self.tester_fix_frame)
         fix_btn_row.pack(anchor="w")
-        ttk.Button(fix_btn_row, text="🔧  Apply Auto-Fix & Open in Editor",
+        ttk.Button(fix_btn_row, text="Apply Auto-Fix & Open in Editor", image=fluent_icon("wrench") or "", compound="left",
                    style="Convert.TButton",
                    command=self._tester_apply_autofix
                    ).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(fix_btn_row, text="🎼  Open in MIDI Editor (flagged, no changes)",
+        ttk.Button(fix_btn_row, text="Open in MIDI Editor (flagged, no changes)", image=fluent_icon("music_note_2") or "", compound="left",
                    command=self._tester_open_flagged
                    ).pack(side=tk.LEFT)
 
@@ -47125,7 +47312,7 @@ demucs.separate.main()
         fix_log_header.pack(fill=tk.X, pady=(8, 2))
         ttk.Label(fix_log_header, text="Fix Log:",
                   style="Sub.TLabel").pack(side=tk.LEFT)
-        ttk.Button(fix_log_header, text="📄  Export Log",
+        ttk.Button(fix_log_header, text="Export Log", image=fluent_icon("document") or "", compound="left",
                    command=self._tester_export_fix_log
                    ).pack(side=tk.RIGHT)
 
@@ -47183,7 +47370,7 @@ demucs.separate.main()
         drum_path  = self.tester_drum_var.get().strip() or None
         rlrr_path  = self.tester_rlrr_var.get().strip() or None
 
-        if not midi_path or not audio_path:
+        if not audio_path or (not midi_path and not rlrr_path):
             messagebox.showerror("Missing Files",
                                  "Please run a test first before re-testing.")
             return
@@ -47290,12 +47477,19 @@ demucs.separate.main()
         drum_path  = self.tester_drum_var.get().strip() or None
         rlrr_path  = self.tester_rlrr_var.get().strip() or None
 
-        if not midi_path or not audio_path:
-            messagebox.showerror("Missing Files",
-                                 "Please select a MIDI file and Song Audio file.")
+        if not audio_path or (not midi_path and not rlrr_path):
+            messagebox.showerror(
+                "Missing Files",
+                "Please select a Song Audio file plus a chart source \u2014\n"
+                "a MIDI file, a .rlrr file, or both.\n\n"
+                "With a finished .rlrr you can leave the MIDI File empty \u2014\n"
+                "the test runs from the chart itself.")
             return
-        if not os.path.exists(midi_path):
+        if midi_path and not os.path.exists(midi_path):
             messagebox.showerror("File Not Found", f"MIDI not found:\n{midi_path}")
+            return
+        if not midi_path and not os.path.exists(rlrr_path):
+            messagebox.showerror("File Not Found", f".rlrr not found:\n{rlrr_path}")
             return
         if not os.path.exists(audio_path):
             messagebox.showerror("File Not Found", f"Audio not found:\n{audio_path}")
@@ -47327,22 +47521,27 @@ demucs.separate.main()
             analysis_audio = drum_path if drum_path else audio_path
 
             self._tester_log("=== Song Tester ===\n", "#b388ff")
-            self._tester_log(f"MIDI:  {os.path.basename(midi_path)}")
+            if midi_path:
+                self._tester_log(f"MIDI:  {os.path.basename(midi_path)}")
             self._tester_log(f"Audio: {os.path.basename(analysis_audio)}")
             if rlrr_path:
                 self._tester_log(f"RLRR:  {os.path.basename(rlrr_path)}")
             self._tester_log("")
 
-            # ── Parse MIDI for BPM (always needed) ───────────────────────────
-            self._tester_log("Parsing MIDI...", "#888888")
-            mid = mido.MidiFile(midi_path)
-            tpb = mid.ticks_per_beat
-            # Use the shared initial-tempo selector (earliest tick; last event
-            # at that tick wins) — the old loop here had no break and let the
-            # LAST set_tempo anywhere in the file win, so multi-tempo/type-1
-            # files were analyzed against the wrong tempo.
-            tempo_us = select_initial_tempo_us(mid)
-            midi_bpm = 60_000_000 / tempo_us
+            # ── Parse MIDI for BPM (when given; an .rlrr-only run takes BPM from bpmEvents) ───────────────────────────
+            mid = None
+            tpb = tempo_us = None
+            midi_bpm = None
+            if midi_path:
+                self._tester_log("Parsing MIDI...", "#888888")
+                mid = mido.MidiFile(midi_path)
+                tpb = mid.ticks_per_beat
+                # Use the shared initial-tempo selector (earliest tick; last event
+                # at that tick wins) — the old loop here had no break and let the
+                # LAST set_tempo anywhere in the file win, so multi-tempo/type-1
+                # files were analyzed against the wrong tempo.
+                tempo_us = select_initial_tempo_us(mid)
+                midi_bpm = 60_000_000 / tempo_us
 
             # ── Load note times — prefer .rlrr if provided ────────────────────
             if rlrr_path and os.path.exists(rlrr_path):
@@ -47362,15 +47561,32 @@ demucs.separate.main()
                 # "events" may legitimately be absent (an empty chart), and an entry may
                 # lack "time". Indexing blind raised a bare KeyError that surfaced as a
                 # raw traceback in the report rather than a readable diagnosis.
-                note_events = sorted([float(e["time"])
-                                      for e in (rlrr_data.get("events") or [])
-                                      if isinstance(e, dict)
-                                      and isinstance(e.get("time"), (int, float))])
-                # Use rlrr BPM if available
+                # build_rlrr writes each time as a STRING ("1.5101"), so the type check
+                # must convert, not gate — requiring int/float here dropped every event
+                # of every ParaKit-written chart and the rlrr path always reported 0.
+                def _rlrr_time(e):
+                    try:
+                        return float(e.get("time"))
+                    except (TypeError, ValueError):
+                        return None
+                note_events = sorted(
+                    t for t in (_rlrr_time(e)
+                                for e in (rlrr_data.get("events") or [])
+                                if isinstance(e, dict))
+                    if t is not None)
+                # Use rlrr BPM if available (same converter rule: never type-gate)
                 if rlrr_data.get("bpmEvents"):
-                    midi_bpm = rlrr_data["bpmEvents"][0]["bpm"]
+                    try:
+                        midi_bpm = float(rlrr_data["bpmEvents"][0]["bpm"])
+                    except (KeyError, IndexError, TypeError, ValueError):
+                        pass
                 source_label = ".rlrr"
             else:
+                if mid is None:
+                    self._tester_log(
+                        "\n\u2717  No MIDI was given and the .rlrr could not be "
+                        "read \u2014 nothing to test.", "#e94560")
+                    return
                 self._tester_log("  Using MIDI events for alignment test", "#888888")
                 note_events = []
                 for track in mid.tracks:
@@ -47383,7 +47599,8 @@ demucs.separate.main()
                 note_events.sort()
                 source_label = "MIDI"
 
-            self._tester_log(f"  BPM: {midi_bpm:.2f}")
+            if midi_bpm is not None:
+                self._tester_log(f"  BPM: {midi_bpm:.2f}")
             self._tester_log(f"  Total notes ({source_label}): {len(note_events)}")
             # v4.7.26 fold, round 2 (breaker 4726-fold, Fable): a note-less MIDI or an
             # empty-events .rlrr reached the [-1] below and dumped a raw IndexError
@@ -47409,14 +47626,14 @@ demucs.separate.main()
             if duration_diff > 10.0:
                 self._tester_log(
                     f"\n  ⚠ DURATION MISMATCH DETECTED\n"
-                    f"    MIDI last note:  {midi_duration:.1f}s\n"
+                    f"    Last {source_label} note:  {midi_duration:.1f}s\n"
                     f"    Audio length:    {audio_duration:.1f}s\n"
                     f"    Difference:      {duration_diff:.1f}s\n\n"
                     f"    This usually means one of the following:\n"
-                    f"    • You loaded the wrong audio file for this MIDI\n"
-                    f"    • The MIDI was generated from a different version of the song\n"
-                    f"    • The audio has a long silence or intro not reflected in the MIDI\n"
-                    f"    Check that your MIDI and audio files are for the same song "
+                    f"    • You loaded the wrong audio file for this chart\n"
+                    f"    • The chart was generated from a different version of the song\n"
+                    f"    • The audio has a long silence or intro not reflected in the chart\n"
+                    f"    Check that your chart and audio files are for the same song "
                     f"before proceeding.",
                     "#e94560"
                 )
@@ -47449,6 +47666,13 @@ demucs.separate.main()
             else:
                 tempo_est, _ = librosa.beat.beat_track(y=y, sr=sr)
                 detected_bpm = float(tempo_est) if np.isscalar(tempo_est) else float(tempo_est[0])
+            if midi_bpm is None:
+                # .rlrr-only run on a chart with no bpmEvents — nothing to
+                # compare, so the detected BPM drives the density math below.
+                midi_bpm = detected_bpm
+                self._tester_log(
+                    "  Chart carries no BPM events — using the detected BPM "
+                    "for the density checks.", "#888888")
             bpm_diff = abs(midi_bpm - detected_bpm)
             bpm_match = bpm_diff < 2.0
 
@@ -47650,7 +47874,24 @@ demucs.separate.main()
                                    else _cand if isinstance(_cand, str) else None)
                     if not isinstance(_nm, str):
                         continue
-                    name = _nm.replace("_1", "").replace("_2", "")
+                    # Chart names are Paradiddle classes ("BP_Ride17_C_1"), but the
+                    # expected-range table below keys on the friendly names — an
+                    # unmapped tally made every instrument read "0 hits — missing
+                    # entirely" whenever the .rlrr was the source. (The old
+                    # _1-strip also mangled Tom1/Tom2 into "Tom".)
+                    base = _nm[3:] if _nm.startswith("BP_") else _nm
+                    base = base.split("_C")[0]
+                    for _pref, _friendly in (("Kick", "Kick"), ("Snare", "Snare"),
+                                             ("HiHat", "Hi-Hat"), ("Crash", "Crash"),
+                                             ("China", "Crash"), ("Splash", "Crash"),
+                                             ("Ride", "Ride"),
+                                             ("FloorTom", "Floor Tom"),
+                                             ("Tom1", "Tom 1"), ("Tom2", "Tom 2")):
+                        if base.startswith(_pref):
+                            name = _friendly
+                            break
+                    else:
+                        name = _nm
                     inst_counts[name] = inst_counts.get(name, 0) + 1
             else:
                 note_to_inst = {
@@ -47724,12 +47965,12 @@ demucs.separate.main()
             issues = []
             if duration_diff > 10.0:
                 issues.append(
-                    f"Duration mismatch — MIDI ends at {midi_duration:.1f}s but "
+                    f"Duration mismatch — the {source_label} ends at {midi_duration:.1f}s but "
                     f"audio is {audio_duration:.1f}s ({duration_diff:.1f}s difference). "
                     f"Verify you have the correct audio file for this MIDI.")
             if not bpm_match:
                 issues.append(
-                    f"BPM mismatch — detected {detected_bpm:.1f} BPM but MIDI is "
+                    f"BPM mismatch — detected {detected_bpm:.1f} BPM but the {source_label} is "
                     f"{midi_bpm:.1f} BPM ({bpm_diff:.1f} off). Try 'Use BPM from MIDI "
                     f"file' in the Song Creator, or set BPM manually to {detected_bpm:.1f}.")
             if best_score >= 0.3:
@@ -47742,11 +47983,11 @@ demucs.separate.main()
                 issues.append(
                     f"Significant drift — notes fall out of sync in at least one "
                     f"section (worst drift: {worst_drift:.2f}s). This may mean the "
-                    f"MIDI tempo doesn't match the song's tempo throughout. Consider "
+                    f"chart tempo doesn't match the song's tempo throughout. Consider "
                     f"using a MIDI with a tempo map or manually checking drift sections.")
             if not density_ok:
                 issues.append(
-                    f"Note density out of expected range. This can happen if the MIDI "
+                    f"Note density out of expected range. This can happen if the chart "
                     f"has too many notes for the audio (over-detected) or too few "
                     f"(under-detected). Check the MIDI Editor for obvious gaps or clusters.")
 
@@ -47799,8 +48040,9 @@ demucs.separate.main()
             # LATER. The apply/open paths compare signatures and refuse/warn on
             # mismatch instead of silently fixing the wrong chart.
             self._tester_last_results = {
-                "midi_path":     midi_path,
-                "chart_sig":     self._a2m_chart_sig(midi_path),
+                "midi_path":     midi_path or None,
+                "chart_sig":     (self._a2m_chart_sig(midi_path)
+                                  if midi_path else None),
                 "audio_path":    audio_path,
                 "note_events":   note_events,
                 "audio_onsets":  audio_onsets,
@@ -47825,7 +48067,7 @@ demucs.separate.main()
             # ── Draw timeline ─────────────────────────────────────────────────
             self.root.after(0, lambda: self._tester_draw_timeline(
                 note_events, audio_onsets, best_offset,
-                section_results, audio_duration))
+                section_results, audio_duration, source_label))
 
         except Exception as e:
             import traceback
@@ -47833,10 +48075,11 @@ demucs.separate.main()
             self._tester_log(traceback.format_exc())
         finally:
             self.root.after(0, lambda: self.tester_btn.configure(
-                state="normal", text="🔬  Run Sync Test"))
+                state="normal", text="Run Sync Test"))
 
     def _tester_draw_timeline(self, note_events, audio_onsets,
-                               offset, section_results, audio_duration):
+                               offset, section_results, audio_duration,
+                               source_label="MIDI"):
         """Draw a visual timeline of MIDI notes vs audio onsets."""
         canvas = self.tester_canvas
         canvas.delete("all")
@@ -47868,7 +48111,7 @@ demucs.separate.main()
                                font=("Consolas", 7), anchor="e")
 
         # Legend
-        canvas.create_text(left + 10, 12, text="● MIDI notes",
+        canvas.create_text(left + 10, 12, text=f"● {source_label} notes",
                            fill="#b388ff", font=("Consolas", 8), anchor="w")
         canvas.create_text(left + 100, 12, text="● Audio onsets",
                            fill="#e94560", font=("Consolas", 8), anchor="w")
@@ -47972,7 +48215,7 @@ demucs.separate.main()
 
         # --- Convert button ---
         self.ogg_convert_btn = ttk.Button(
-            main, text="🔄  Convert to .ogg", style="Convert.TButton",
+            main, text="Convert to .ogg", image=fluent_icon("arrow_sync") or "", compound="left", style="Convert.TButton",
             command=self._ogg_start_convert
         )
         self.ogg_convert_btn.pack(fill=tk.X, pady=(5, 10), ipady=8)
@@ -47987,7 +48230,7 @@ demucs.separate.main()
 
         ogg_log_btn_row = ttk.Frame(ogg_log_frame)
         ogg_log_btn_row.pack(fill=tk.X, pady=(0, 4))
-        ttk.Button(ogg_log_btn_row, text="📄  Export Log",
+        ttk.Button(ogg_log_btn_row, text="Export Log", image=fluent_icon("document") or "", compound="left",
                    command=lambda: self._export_log(
                        self.ogg_log_text, "ogg_converter_log.txt", "Audio to .ogg")
                    ).pack(side=tk.LEFT)
@@ -48075,7 +48318,7 @@ demucs.separate.main()
         Respects the 'do not show again' preference.
         """
         popup = tk.Toplevel(self.root)
-        popup.title("⚠  MP3 File Warning")
+        popup.title("MP3 File Warning")
         popup.configure(bg=APP_BG)
         popup.resizable(False, False)
         popup.grab_set()  # Modal
@@ -48142,7 +48385,7 @@ demucs.separate.main()
                 "https://www.gyan.dev/ffmpeg/builds/"
             ))
             self.root.after(0, lambda: self.ogg_convert_btn.configure(
-                state="normal", text="🔄  Convert to .ogg"))
+                state="normal", text="Convert to .ogg"))
             self.root.after(0, self.ogg_progress.stop)
             return
 
@@ -48174,7 +48417,7 @@ demucs.separate.main()
                 "your PATH.)"
             ))
             self.root.after(0, lambda: self.ogg_convert_btn.configure(
-                state="normal", text="🔄  Convert to .ogg"))
+                state="normal", text="Convert to .ogg"))
             self.root.after(0, self.ogg_progress.stop)
             return
 
@@ -48301,7 +48544,7 @@ demucs.separate.main()
         finally:
             self.root.after(0, self.ogg_progress.stop)
             self.root.after(0, lambda: self.ogg_convert_btn.configure(
-                state="normal", text="🔄  Convert to .ogg"))
+                state="normal", text="Convert to .ogg"))
 
     # =========================================================================
     # Tab 3 — Create Multiple Songs (Batch)
@@ -48366,12 +48609,12 @@ demucs.separate.main()
             self._build_batch_slot(main, slot_num)
 
         # Pre-flight button (Phase 1 of v4.3.0). Auto-runs on Convert too.
-        ttk.Button(main, text="🔍  Check for Issues (All Enabled Songs)",
+        ttk.Button(main, text="Check for Issues (All Enabled Songs)", image=fluent_icon("search") or "", compound="left",
                    command=self._pfv_run_batch_button
                    ).pack(fill=tk.X, pady=(10, 4), ipady=4)
 
         self.batch_convert_btn = ttk.Button(
-            main, text="\U0001f3b6  Convert All Songs", style="Convert.TButton",
+            main, text="Convert All Songs", image=fluent_icon("music_note_2") or "", compound="left", style="Convert.TButton",
             command=self._batch_start_convert)
         self.batch_convert_btn.pack(fill=tk.X, pady=(0, 8), ipady=8)
 
@@ -48383,11 +48626,11 @@ demucs.separate.main()
         blog_frame.pack(fill=tk.BOTH, expand=True)
         blog_btn_row = ttk.Frame(blog_frame)
         blog_btn_row.pack(fill=tk.X, pady=(0,4))
-        ttk.Button(blog_btn_row, text="📄  Export Log",
+        ttk.Button(blog_btn_row, text="Export Log", image=fluent_icon("document") or "", compound="left",
                    command=lambda: self._export_log(
                        self.batch_log_text, "batch_creator_log.txt", "Create Multiple Songs")
                    ).pack(side=tk.LEFT)
-        ttk.Button(blog_btn_row, text="\U0001f4c2  Open Output Folder",
+        ttk.Button(blog_btn_row, text="Open Output Folder", image=fluent_icon("folder_open") or "", compound="left",
                    command=self._batch_open_output).pack(side=tk.RIGHT)
         self.batch_log_text = scrolledtext.ScrolledText(
             blog_frame, height=8, bg="#0d1117", fg="#58a6ff",
@@ -48495,7 +48738,7 @@ demucs.separate.main()
             self._enable_drop(ent, var)
             _bupd(s, _b_add_btn)
 
-        _b_add_btn = ttk.Button(_bso, text="➕  Add more stem options", command=_badd)
+        _b_add_btn = ttk.Button(_bso, text="Add more stem options", image=fluent_icon("add") or "", compound="left", command=_badd)
         _b_add_btn.pack(anchor="w", pady=(0, 2))
 
         frow("Cover Image",  slot["cover_var"], 5, [("Images","*.jpg *.jpeg *.png"),("All","*.*")],  ck="recent_cover")
@@ -48553,7 +48796,7 @@ demucs.separate.main()
         extras.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(6, 2))
         af_border = tk.Frame(extras, bg="#00e5ff", bd=0)   # cyan outline, app style
         af_border.pack(side=tk.LEFT, padx=(0, 12), anchor="n")
-        ttk.Button(af_border, text="🎵  Auto Fetch Audio", width=21,
+        ttk.Button(af_border, text="Auto Fetch Audio", image=fluent_icon("music_note_2") or "", compound="left", width=21,
                    command=lambda s=slot: self._batch_auto_fetch_audio(s)
                    ).pack(padx=1, pady=1)
 
@@ -48589,7 +48832,7 @@ demucs.separate.main()
         ma_row = ttk.Frame(frame)
         ma_row.grid(row=12, column=0, columnspan=3, sticky="w", pady=(4, 0))
         ttk.Checkbutton(
-            ma_row, text="🎨  Use album art from metadata",
+            ma_row, text="Use album art from metadata", image=fluent_icon("image") or "", compound="left",
             variable=slot["use_metadata_art_var"],
             command=lambda s=slot: self._batch_metadata_art_toggle(s)).pack(side=tk.LEFT)
         ttk.Label(ma_row, textvariable=slot["meta_art_status_var"],
@@ -48883,15 +49126,15 @@ demucs.separate.main()
         # ── Action buttons ────────────────────────────────────────────────────
         btn_row = ttk.Frame(sec)
         btn_row.pack(fill=tk.X, pady=(10, 4))
-        ttk.Button(btn_row, text="\U0001f50d  Check for Issues",
+        ttk.Button(btn_row, text="Check for Issues", image=fluent_icon("search") or "", compound="left",
                    command=self._batch_folder_preflight).pack(side=tk.LEFT)
         self._batch_folder_convert_btn = ttk.Button(
-            btn_row, text="\U0001f3b5  Convert Folder",
+            btn_row, text="Convert Folder", image=fluent_icon("music_note_2") or "", compound="left",
             style="Convert.TButton",
             command=self._batch_folder_start)
         self._batch_folder_convert_btn.pack(side=tk.LEFT, padx=(8, 0))
         self._batch_folder_stop_btn = ttk.Button(
-            btn_row, text="\u23f9  Stop",
+            btn_row, text="Stop", image=fluent_icon("stop") or "", compound="left",
             command=self._batch_folder_stop, state="disabled")
         self._batch_folder_stop_btn.pack(side=tk.LEFT, padx=(8, 0))
 
@@ -48934,7 +49177,7 @@ demucs.separate.main()
         flog_frame.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
         flog_btn_row = ttk.Frame(flog_frame)
         flog_btn_row.pack(fill=tk.X, pady=(0, 4))
-        ttk.Button(flog_btn_row, text="\U0001f4c4  Export Log",
+        ttk.Button(flog_btn_row, text="Export Log", image=fluent_icon("document") or "", compound="left",
                    command=lambda: self._export_log(
                        self._batch_folder_log_text,
                        "batch_folder_log.txt", "Folder Batch")
@@ -49382,7 +49625,7 @@ demucs.separate.main()
             self._batch_log = original_batch_log
             self.root.after(0, self._batch_folder_progress.stop)
             self.root.after(0, lambda: self._batch_folder_convert_btn.configure(
-                state="normal", text="\U0001f3b5  Convert Folder"))
+                state="normal", text="Convert Folder"))
             self.root.after(0, lambda: self._batch_folder_stop_btn.configure(
                 state="disabled"))
 
@@ -49566,7 +49809,7 @@ demucs.separate.main()
         finally:
             self.root.after(0, self.batch_progress.stop)
             self.root.after(0, lambda: self.batch_convert_btn.configure(
-                state="normal", text="🎵  Convert All Songs"))
+                state="normal", text="Convert All Songs"))
 
     # ── Phase 2 (v4.3.0 roadmap) ─────────────────────────────────────────────
     # Per-slot conversion helper — the SOLE batch-side caller of `build_rlrr`.
@@ -49949,7 +50192,7 @@ demucs.separate.main()
         self.two_kick_var.trace_add("write", lambda *_: save_config(
             {"ch_two_kick": self.two_kick_var.get()}))
 
-        # Human chart timing moved to the MIDI Editor (⏱ Chart Timing button),
+        # Human chart timing moved to the MIDI Editor (Chart Timing button),
         # for the reason difficulty reduction moved there first: a 6.5 ms shift
         # is a FEEL preference, and judging feel from a checkbox ticked before
         # the convert means a full convert → re-import round-trip just to hear
@@ -50021,7 +50264,7 @@ demucs.separate.main()
             meta["length"] = meta["length"] + c
         return rlrr
 
-    def _make_collapsible_tips(self, parent, title="💡  Click for Tips", start_open=False, pack_kw=None):
+    def _make_collapsible_tips(self, parent, title="Click for Tips", icon="lightbulb", start_open=False, pack_kw=None):
         """Returns (toggle_btn, content_frame). Pack content inside content_frame."""
         if pack_kw is None:
             pack_kw = {}
@@ -50035,7 +50278,9 @@ demucs.separate.main()
             else:
                 cf.pack(fill=tk.X, pady=(4, 0))
                 _toggle.btn.configure(text=f"▼  {t}")
-        btn = ttk.Button(outer, text=f"{"▼" if start_open else "▶"}  {title}", command=_toggle)
+        btn = ttk.Button(outer, text=f"{"▼" if start_open else "▶"}  {title}",
+                         image=(fluent_icon(icon) if icon else None) or "",
+                         compound="left", command=_toggle)
         _toggle.btn = btn
         btn.pack(anchor="w")
         if start_open:
@@ -50806,7 +51051,7 @@ demucs.separate.main()
                               justify=tk.LEFT).pack(anchor="w")
                 if iss.time_s is not None:
                     btn = ttk.Button(row,
-                        text=f"⏯  Jump to {iss.time_s:.3f}s",
+                        text=f"Jump to {iss.time_s:.3f}s", image=fluent_icon("next") or "", compound="left",
                         command=lambda t=iss.time_s: self._pfv_jump_to_time(t))
                     btn.pack(anchor="w", padx=(8, 0), pady=(2, 0))
 
