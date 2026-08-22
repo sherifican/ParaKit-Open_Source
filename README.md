@@ -227,7 +227,7 @@ Stem Splitter
 + Custom Isolation & DrumSep collapsed into "Advanced tools"
 + Library / Log split across the bottom
 
-<img src="screenshots/app-04-stem-splitter.png?v=20260704" width="900" alt="Stem Splitter (redesigned layout + Your Songs library)">
+<img src="screenshots/app-04-stem-splitter.png?v=20260821" width="900" alt="Stem Splitter (redesigned layout + Your Songs library)">
 
 ---
 
@@ -239,7 +239,7 @@ YouTube ---> FLAC
 + Swapped with log's original slot
 + Reorganized settings into panels
 
-<img src="screenshots/app-08-youtube-to-flac.png?v=20260616c" width="900" alt="YouTube → FLAC (redesigned layout)">
+<img src="screenshots/app-08-youtube-to-flac.png?v=20260821" width="900" alt="YouTube → FLAC (redesigned layout)">
 
 ---
 
@@ -402,13 +402,14 @@ How closely do ParaKit's converted charts agree with charts people made by hand?
 <img src="screenshots/app-01-single-song-creator.png?v=20260821" width="900" alt="Single Song Creator">
 
 ### 2 · Create Multiple Songs
-<img src="screenshots/app-02-create-multiple-songs.png" width="900" alt="Create Multiple Songs">
+<img src="screenshots/app-02-create-multiple-songs.png?v=20260821" width="900" alt="Create Multiple Songs">
+<img src="screenshots/app-02b-create-multiple-songs-batch.png?v=20260821" width="900" alt="Create Multiple Songs — Convert All Songs and Folder Batch">
 
 ### 3 · Audio → .ogg Converter
-<img src="screenshots/app-03-audio-to-ogg.png" width="900" alt="Audio to .ogg Converter">
+<img src="screenshots/app-03-audio-to-ogg.png?v=20260821" width="900" alt="Audio to .ogg Converter">
 
 ### 4 · Stem Splitter
-<img src="screenshots/app-04-stem-splitter.png?v=20260704" width="900" alt="Stem Splitter">
+<img src="screenshots/app-04-stem-splitter.png?v=20260821" width="900" alt="Stem Splitter">
 
 ### 5 · Audio → MIDI
 <img src="screenshots/app-05-audio-to-midi.png?v=20260821" width="900" alt="Audio to MIDI">
@@ -432,16 +433,16 @@ or exported. Detection itself is untouched — the tab only reads audio and char
 <img src="screenshots/app-06d-spectral-waveform.png?v=20260817" width="900" alt="Spectral Comparison, Waveform view">
 
 ### 8 · Sheet Music → MIDI
-<img src="screenshots/app-07-sheet-music-to-midi.png" width="900" alt="Sheet Music to MIDI">
+<img src="screenshots/app-07-sheet-music-to-midi.png?v=20260821" width="900" alt="Sheet Music to MIDI">
 
 ### 9 · YouTube → FLAC
-<img src="screenshots/app-08-youtube-to-flac.png?v=20260616c" width="900" alt="YouTube to FLAC">
+<img src="screenshots/app-08-youtube-to-flac.png?v=20260821" width="900" alt="YouTube to FLAC">
 
 ### 10 · Asset Manager
-<img src="screenshots/app-09-asset-manager.png?v=20260616" width="900" alt="Asset Manager">
+<img src="screenshots/app-09-asset-manager.png?v=20260821" width="900" alt="Asset Manager">
 
 ### 11 · Song Tester
-<img src="screenshots/app-10-song-tester.png" width="900" alt="Song Tester">
+<img src="screenshots/app-10-song-tester.png?v=20260821" width="900" alt="Song Tester">
 
 ### 12 · Preview
 <img src="screenshots/app-11a-preview.png?v=20260725" width="900" alt="Preview tab">
