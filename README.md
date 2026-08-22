@@ -171,7 +171,7 @@ Spectral Comparison — a third view, and a spectrogram that keeps its detail
 
 MIDI Editor — sharper chart, note selection, reactive notes and new toolbar buttons
 
-<img src="screenshots/app-06-midi-editor.png?v=20260731b" width="900" alt="MIDI Editor — reactive notes, seconds on the ruler, Difficulty and MIDI Input buttons">
+<img src="screenshots/app-06-midi-editor.png?v=20260821" width="900" alt="MIDI Editor — reactive notes, seconds on the ruler, Difficulty and MIDI Input buttons">
 
 + **Reactive Notes, rebuilt.** Notes used to blank solid white as the playhead crossed them, so you lost track of which drum it was at the moment it mattered. A note now flares to a brighter version of its **own lane color** and throws a soft halo that fades out behind it. The original flash is still there as **Flash Notes (Classic Style)** in the new Style dropdown — and as of this release both the toggle and the style are remembered between launches.
 + **Sharper chart sprites.** Notes are drawn as a single clean high-resolution ring instead of the old softer shape, flagged notes get thinner and tidier outlines, and the toolbar buttons wear the v5 outline style. The dot at the top of the green playhead is now an enlarged grab-handle, so it is obvious where to click to drag it.
@@ -414,7 +414,7 @@ How closely do ParaKit's converted charts agree with charts people made by hand?
 <img src="screenshots/app-05-audio-to-midi.png?v=20260821" width="900" alt="Audio to MIDI">
 
 ### 6 · MIDI Editor
-<img src="screenshots/app-06-midi-editor.png?v=20260731b" width="900" alt="MIDI Editor">
+<img src="screenshots/app-06-midi-editor.png?v=20260821" width="900" alt="MIDI Editor">
 
 ### 7 · Spectral Comparison
 Did the detector chart it right? The chart is overlaid on the audio's energy and the disagreements are
