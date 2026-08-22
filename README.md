@@ -133,6 +133,8 @@ py -3.12 "ParaKit v4.0.py"
 
 That's it. To **update** to the latest version later, just run `git pull` inside the folder (or use the in-app **Download update now** button).
 
+> **Updating to 4.11.0 from an older version? The update window is not frozen.** 4.11.0 adds about 1,100 small icon files, and on versions before 4.11.1 the update window only refreshes its counter for files that are already up to date — so it can sit at something like `23/1200` for several minutes while it quietly downloads everything. It is working; leave it alone and it will finish (nothing on your install is touched until every file has downloaded and verified). From 4.11.1 onward the window shows each download as it lands.
+
 > **A few features need one more download:** the **Stem Splitter**, **YouTube → FLAC**, and some tools use a separate ~174 MB **Requirements bundle** (FFmpeg / yt-dlp / ADB) plus an optional AI stem-isolation model — see the full **[Requirements](#requirements)** section further down. The core charting workflow (Audio → MIDI, MIDI Editor, Song Creator, Song Tester) runs without them.
 
 ---
