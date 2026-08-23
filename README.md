@@ -13,7 +13,7 @@
 >of holding work back for it, features ship in v4 as they're ready. **v4 support continues regardless of
 >when v5 arrives** — this is not an end-of-life countdown.
 
-> **Version in this release:** `4.11.2`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.11.3`  •  **Runtime:** Python **3.12** (required)
 
 `Check the bottom of the page for the Change/fix log`
 
@@ -263,7 +263,7 @@ ParaKit **always has been and always will be free of charge, and will _never_ ho
 This repository now makes the full **v4.x source code** open under the **GPLv3** license,
 so anyone can run it from source, learn from it, fix it, or build their own version.
 
-> **Version in this release:** `4.11.2`  •  **Runtime:** Python **3.12** (required)
+> **Version in this release:** `4.11.3`  •  **Runtime:** Python **3.12** (required)
 
 ---
 
