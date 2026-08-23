@@ -155,37 +155,6 @@ pile up or there are significant fixes. I will also compile the v5 rebuild when 
 
 ---
 
->**Putting this up at the top so its found easier.**
-
->**FOR THOSE WHO ARE HAVING ISSUES WITH CONNECTING SOME E-KITS TO THEIR COMPUTER**
->
->On some E-Kits like Alesis Kits for example, on the module in the Utilities menu there's a setting called "LOC" and it's ON by default, you want to turn LOC OFF for the MIDI signal to be sent to your computer. I know this fix works with Windows 11, I can't say for certain about iOS or Linux, or if those OS' even have that same issue. Once you do that any issues with pairing/connected but no inputs getting through should be resolved.
-
----
->**KNOWN QUIRK WITH THE AUDIO TO MIDI CHART GENERATION:**
->
->**As of v4.4.66-1, ParaKit de-duplicates kicks at 55 ms by default**, so kicks that used to group
->together now come out clean on the first Convert for the vast majority of songs — nothing to do.
->You'll mainly see grouped kicks now if you've **lowered the kick dedup gap** for a fast-kick song
->(needed to keep its correct kicks — but set it too small and the grouping creeps back in). If that
->happens, it's still quick to fix:
-
->Step 1. Zoom out all the way on your chart in the midi editor tab
->
->Step 2. Hold Shift + Left Click + drag to multi select all the kicks
->
->Step 3. Press the "Dedup x" button in the tool hot bar above your chart and set the ms slider to ~50 - 65ms
->
-
->Done! this gets rid of the layered extra kicks while leaving your correct kick note placements nearly untouched.
-
->However, be aware that on particularly fast double bass songs this fix largley does not apply, since it will treat a
->large portion of your correct kicks as duplicates and remove them.  Working on a work-around to this issue.
-
->**Want to tune it at convert time instead?** [Click here](docs/TROUBLESHOOTING.md#kicks-grouped-together-after-audio-to-midi) for the per-instrument dedup gap settings in the Audio → MIDI tab.
-
----
-
 
 *NOTE: *The screenshots show "MIDI Unsupported" that is just because they were not loaded in a supported browser yet, I took the screenshots
 in Firefox before I had fixed the MIDI config, see below for details, although Chrome and Edge work best for MIDI inputs**

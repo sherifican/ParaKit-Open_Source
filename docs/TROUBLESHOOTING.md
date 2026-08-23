@@ -66,6 +66,12 @@ The kicks come out de-bunched — single notes where there used to be clusters:
 Either way removes the layered extra kicks while leaving your correct kick placements nearly
 untouched.
 
+> **Fast double-bass songs are the exception.** On tracks with very fast double-kick
+> passages, cleaning up afterwards largely does not work: at any gap wide enough to merge
+> the duplicates, a large share of your *correct* kicks look like duplicates too and get
+> removed along with them. For those songs, tune the gap **before** converting (above)
+> rather than deduping after. A better answer for this case is still being worked on.
+
 ---
 
 ## "Python was not found" / wrong Python version
@@ -184,11 +190,28 @@ On Windows: `certutil -hashfile "MDX23C-DrumSep-aufr33-jarredou.ckpt" SHA256`
 
 ---
 
+## E-kit connects but no notes come through
+
+If your electronic kit pairs and shows as connected, but no hits reach ParaKit, check the
+drum module for a setting called **Local Control** - usually shown on the module as
+**`LOC`**.
+
+On some kits, Alesis modules for example, `LOC` is found in the module's **Utilities** menu
+and is **ON by default**. Turn **`LOC` OFF** so the MIDI signal is sent to your computer.
+That normally resolves the case where the kit is paired and connected but no inputs come
+through.
+
+Confirmed on **Windows 11**. This has not been verified on other operating systems, and
+whether they run into the same issue at all is unknown.
+
+---
+
 ## Practice / MIDI issues
 - **"mido is required"** → `py -3.12 -m pip install mido`
 - **"pygame-ce is required"** (Practice v2) → `py -3.12 -m pip install pygame-ce`
 - **No MIDI input devices found** → your drum kit may need its driver installed; you can
-  always play with the keyboard instead.
+  always play with the keyboard instead. If the kit *is* detected but no hits register, see
+  **E-kit connects but no notes come through** above.
 - **No MIDI in the *web* Practice / Preview editions** → the browser editions use the **Web MIDI
   API**, which only some browsers support: **Chrome, Edge, and other Chromium browsers** (Opera /
   Brave) work; **Safari (macOS + iOS) does not**, and **Firefox** is limited (supported since
