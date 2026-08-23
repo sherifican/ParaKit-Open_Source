@@ -655,7 +655,20 @@ MIDI_MAP = {
     48: "BP_Tom1_C",      50: "BP_Tom1_C",
     # Crash cymbal
     49: "BP_Crash15_C",   57: "BP_Crash17_C",
-    55: "BP_Crash15_C",   # Splash cymbal
+    # ⚠ 55 IS THE 13" CRASH, NOT A SPLASH. This line read "# Splash cymbal" for a
+    # long time on the General MIDI reading, where 55 IS the splash — but
+    # Paradiddle publishes its OWN default table and does not follow GM here:
+    # <https://paradiddleapp.com/midi-guide/> lists 13" Crash 55, 15" Crash 49,
+    # 17" Crash 57, 15" China 52, and carries no splash row at all (read directly
+    # 2026-08-23). 94 of 3,519 real chart bindings agree, and ZERO of 1,341 charts
+    # bind a 15" crash to 55.
+    # The MAPPING is still deliberately wrong, and cannot be fixed here: pointing
+    # 55 at BP_Crash13_C requires that class to exist in DEFAULT_INSTRUMENTS, or
+    # build_rlrr drops the note silently (the trap INV134 guards). That is step
+    # S1+S2 of the extra-lanes work — see F-EXTRA-CYMBAL-LANES and
+    # F-MIDI-NOTE-55-MISLABEL. Until then 55 and 49 both produce a 15" crash, so
+    # nothing today distinguishes them; only the NAME is corrected here.
+    55: "BP_Crash15_C",   # 13" crash (vendor), currently emitted as a 15" crash
     # Ride cymbal
     51: "BP_Ride17_C",    59: "BP_Ride20_C",
     53: "BP_Ride17_C",    # Ride bell
@@ -6459,7 +6472,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.11.2"
+    VERSION = "4.11.3"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -42919,14 +42932,22 @@ demucs.separate.main()
     # Tab 8 — Preview/Practice Track (falling notes visualizer)
     # =========================================================================
 
-    # Lane definitions match MIDI Editor — same order as in-game
+    # Lane definitions match MIDI Editor — same order as in-game.
+    # ⚠ That sentence was FALSE for two releases and is now true again. v4.9.1
+    # brightened Tom 1 (#1a3a8f -> #3a5fc8) and Tom 3 (#7b2d8b -> #9b4fc0) in
+    # MIDI_EDITOR_LANES because the deep navy/plum read nearly black on the dark
+    # lane background, and never applied it here — so this tab kept drawing the
+    # unreadable pair while the comment claimed the tables matched. Measured on
+    # this canvas's own background (#0d0d1a): the old Tom 1 sat at 1.88:1
+    # contrast, the new one at 3.32:1. Names and ORDER are frozen by INV137;
+    # colours deliberately are not, so keep them in step by hand.
     VIZ_LANES = [
         {"name": "Hi-Hat", "midi": [42,44,46,26,21,22,23], "color": "#00e5ff", "shape": "circle"},
         {"name": "Crash",  "midi": [49,55,57], "color": "#ff8c00", "shape": "circle"},
         {"name": "Snare",  "midi": [37,38,40], "color": "#e63946", "shape": "bar"},
-        {"name": "Tom 1",  "midi": [48,50],    "color": "#1a3a8f", "shape": "bar"},
+        {"name": "Tom 1",  "midi": [48,50],    "color": "#3a5fc8", "shape": "bar"},
         {"name": "Tom 2",  "midi": [45,47],    "color": "#2e8b57", "shape": "bar"},
-        {"name": "Tom 3",  "midi": [41,43],    "color": "#7b2d8b", "shape": "bar"},
+        {"name": "Tom 3",  "midi": [41,43],    "color": "#9b4fc0", "shape": "bar"},
         {"name": "Ride",   "midi": [51,53,59], "color": "#ffd700", "shape": "circle"},
         {"name": "Kick",   "midi": [35,36],    "color": "#ff69b4", "shape": "kick"},
     ]

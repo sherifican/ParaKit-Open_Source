@@ -17,11 +17,13 @@ It is built **for v5 (PySide6)** and depends on v5 code to run, so:
 - It will ship **alongside v5**. At that point you'll be able to use it to design for v5
   or build your own custom ParaKit layout.
 
-## RTX 50-series GPU build
-A separate, **creator-verified RTX 50-series (Blackwell) build** with stem-splitter GPU
-acceleration configured and tested out of the box is planned as a follow-up. The standard
-build keeps its CPU fallback regardless, so stem splitting works on every machine. See
-[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
+## RTX 50-series GPU support — delivered, no separate build
+This was once planned as a separate **creator-verified RTX 50-series (Blackwell) build**. That
+is no longer needed and is not coming: the standard build now checks your GPU's architecture at
+runtime and switches to CUDA whenever your installed PyTorch supports it, so a 50-series card is
+handled by the normal release. All it needs is a CUDA 12.8 (`cu128`) PyTorch build — see
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). The CPU fallback stays in the code regardless, so
+stem splitting works on every machine.
 
 ## Practice Window v2
 The new Pygame-CE falling-note **Practice v2** (in `practice_v2/`) is an **alpha** still under

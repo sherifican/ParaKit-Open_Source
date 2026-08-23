@@ -122,14 +122,13 @@ a build made for compute capability **sm_120**, so an older CUDA build that work
 card still will not drive a 50-series one. You need a **CUDA 12.8 (`cu128`)** build
 specifically. Everything works either way — CPU is just slower.
 
-**Recommended fix — wait for the dedicated build.** We're packaging a separate,
-**creator-verified RTX 50-series build** that has GPU acceleration configured and tested
-out of the box (no manual setup). If you have a 50-series card, that's the easiest path —
-watch the [releases page](https://github.com/sherifican/ParaKit---Releases).
+**The fix — install a `cu128` PyTorch build.** This is the whole procedure; there is no
+separate 50-series download to wait for. ParaKit checks your card's architecture at runtime
+and switches to CUDA on its own as soon as your PyTorch supports it, so nothing inside the app
+needs changing.
 
-**For advanced users who want to enable it now (not turnkey).** The GPU **compute** half is
-straightforward and confirmed working on a 5070: install a CUDA 12.8 (`cu128`) PyTorch build
-in your Python 3.12 environment:
+The GPU **compute** half is straightforward and confirmed working on a 5070: install a
+CUDA 12.8 (`cu128`) PyTorch build in your Python 3.12 environment:
 ```
 py -3.12 -m pip install --index-url https://download.pytorch.org/whl/cu128 torch
 ```

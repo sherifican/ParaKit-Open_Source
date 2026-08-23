@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.11.2  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.11.3  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,40 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.11.3   --   2026-08-23
+------------------------------------------------------------------------------
+  A correctness pass over things that had quietly gone out of date: two toms
+  that were drawn nearly invisible on the Preview highway, and documentation
+  that told RTX 50-series owners to wait for something that is not coming.
+
+  TOM 1 AND TOM 3 ARE VISIBLE AGAIN ON THE PREVIEW HIGHWAY
+  v4.9.1 brightened Tom 1 and Tom 3 in the MIDI Editor because the original
+  deep navy and plum read as nearly black against the dark lane background.
+  That change was never applied to the Preview and Practice Track highway,
+  which kept drawing the old pair -- so the same two toms that had been fixed
+  in one place were still hard to pick out in the other. Measured against that
+  view's own background, the old Tom 1 sat at 1.88:1 contrast and the new one
+  sits at 3.32:1. The two lane tables now agree, which is what the code
+  comment had been claiming all along.
+
+  RTX 50-SERIES DOCUMENTATION NO LONGER TELLS YOU TO WAIT
+  The troubleshooting guide recommended waiting for a separate, dedicated
+  RTX 50-series build, and the roadmap listed that build as planned. Neither
+  is accurate: ParaKit checks the card's architecture at runtime and switches
+  to CUDA as soon as the installed PyTorch supports it, so a 50-series card is
+  handled by the normal release and all it needs is a CUDA 12.8 build. The
+  README had already been corrected and the other two documents had not, so
+  the repository was contradicting itself and pointing 50-series owners away
+  from the fix that actually works. Both now match.
+
+  A NOTE FOR ANYONE READING THE SOURCE
+  MIDI note 55 was labelled "Splash cymbal" in the note map. Paradiddle's own
+  published mapping lists 55 as the 13-inch crash and has no splash entry at
+  all, so the comment was wrong. Only the comment is corrected here; the note
+  still produces a 15-inch crash, and changing that needs the 13-inch crash
+  added to the kit first.
 
 ------------------------------------------------------------------------------
   v4.11.2   --   2026-08-23
