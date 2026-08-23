@@ -61,6 +61,7 @@
     Tester tabs still showed the old chart icon after the tab itself moved
     to the spectrum-bars icon; all of them match again.
 
+------------------------------------------------------------------------------
   v4.11.0   --   2026-08-22
 ------------------------------------------------------------------------------
   BEFORE YOU START: THIS UPDATE TAKES A FEW MINUTES AND LOOKS STUCK
