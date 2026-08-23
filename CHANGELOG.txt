@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.11.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.11.2  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,35 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.11.2   --   2026-08-23
+------------------------------------------------------------------------------
+  A documentation move: the troubleshooting notes that were pinned to the top
+  of the README now live in the troubleshooting guide with the rest of them.
+  Nothing in the application itself changed.
+
+  TROUBLESHOOTING NOTES MOVED OUT OF THE README
+  The README opened with a pinned block covering two unrelated problems -- an
+  electronic kit that connects without sending MIDI, and kicks bunching up
+  after Audio to MIDI. Both are troubleshooting content, and the README
+  already links the troubleshooting guide from its "Start here" table, so the
+  block was doing that guide's job in the wrong place. Both notes now live in
+  docs/TROUBLESHOOTING.md.
+
+  The e-kit fix moved across as written: if a kit pairs and shows as
+  connected but no hits arrive, look for a "Local Control" setting -- often
+  shown on the module as LOC -- in the drum module's Utilities menu, and turn
+  it off so the MIDI signal is sent to the computer. Confirmed on Windows 11;
+  not verified on other operating systems.
+
+  A CAVEAT THAT WAS MISSING FROM THE KICK CLEANUP STEPS
+  The troubleshooting guide's kick section said that cleaning up afterwards
+  leaves correct kick placements nearly untouched. That is not true of very
+  fast double-bass songs: at any gap wide enough to merge the duplicates, a
+  large share of the correct kicks are treated as duplicates too and removed
+  along with them. The guide now says so, and points those songs at setting
+  the kick dedup gap BEFORE converting instead.
 
 ------------------------------------------------------------------------------
   v4.11.1   --   2026-08-22
