@@ -1,10 +1,11 @@
 {
-  "version": "4.11.3",
-  "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
+  "version": "4.11.4",
+  "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Entries marked \"doc\": true are prose -- a hash mismatch on one is skipped by the updater instead of aborting the whole update; everything else stays fatal. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "dd3e4cf790418f0bbf4fbc4d44f7d067b0b19f2a7e44ce31a83ad790488ef221"
+      "sha256": "aa4b168ce04422bb57cae914f0d1d8b136802f7d9ab1ec853f763250e2415258",
+      "doc": true
     },
     {
       "path": "Detection Research Notes - Web Edition/parakit-detection-research.html",
@@ -12,23 +13,28 @@
     },
     {
       "path": "Detection Research Notes - Web Edition/reports/1-detection-cleanup-and-results.md",
-      "sha256": "7fe2a659dff66e7963283dad7387a19ca478deed0c8e129de34875dcb1a7bce1"
+      "sha256": "7fe2a659dff66e7963283dad7387a19ca478deed0c8e129de34875dcb1a7bce1",
+      "doc": true
     },
     {
       "path": "Detection Research Notes - Web Edition/reports/2-what-the-field-knows.md",
-      "sha256": "be894ff3754739d7c03a27a74645810e4916bb1b32bcdfc2272d11c1d3debf0e"
+      "sha256": "be894ff3754739d7c03a27a74645810e4916bb1b32bcdfc2272d11c1d3debf0e",
+      "doc": true
     },
     {
       "path": "Detection Research Notes - Web Edition/reports/3-literature-review-and-findings.md",
-      "sha256": "1e9a87a9f3f223c3f9790515b3b3e5deb8dc5ae54ae7ea44ff5d221a6f52ca74"
+      "sha256": "1e9a87a9f3f223c3f9790515b3b3e5deb8dc5ae54ae7ea44ff5d221a6f52ca74",
+      "doc": true
     },
     {
       "path": "Detection Research Notes - Web Edition/reports/README.md",
-      "sha256": "b9cc88be11acad2c70c9950bdb1f97ad7591ed5a7ac23c8bdcf7bcb81be5f0c7"
+      "sha256": "b9cc88be11acad2c70c9950bdb1f97ad7591ed5a7ac23c8bdcf7bcb81be5f0c7",
+      "doc": true
     },
     {
       "path": "LICENSE",
-      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "doc": true
     },
     {
       "path": "Practice Window v2 - Web Edition/parakit-practice.html",
@@ -36,7 +42,8 @@
     },
     {
       "path": "Practice Window v3 - Web Edition/README.md",
-      "sha256": "acccf02a90d8559041aa3bd39cf7e79e8672c3f65e15c316d8ebf9de2760a297"
+      "sha256": "acccf02a90d8559041aa3bd39cf7e79e8672c3f65e15c316d8ebf9de2760a297",
+      "doc": true
     },
     {
       "path": "Practice Window v3 - Web Edition/parakit-practice-v3.html",
@@ -44,7 +51,8 @@
     },
     {
       "path": "Preview Track v2 - Web Edition/README.md",
-      "sha256": "d750f77ac3672743aee70b8d1b603e13fb851e1f7fb36a7bba137b42a965655d"
+      "sha256": "d750f77ac3672743aee70b8d1b603e13fb851e1f7fb36a7bba137b42a965655d",
+      "doc": true
     },
     {
       "path": "Preview Track v2 - Web Edition/parakit-preview.html",
@@ -52,11 +60,13 @@
     },
     {
       "path": "README.md",
-      "sha256": "4e1d31c4423e666affa64b024b531887431ad1ba704551c4ed2c89cab2a5935d"
+      "sha256": "4c46719808927d55a4e3298c7b3c19ab5be10bcb4fbd7b50d80715b962ce3400",
+      "doc": true
     },
     {
       "path": "README.txt",
-      "sha256": "645c4cd3a7c6a8fc901a8925b1fd803aa89f497c13a83e1f3c46573a366b3b13"
+      "sha256": "0dfda6be5044b909fa8716f8423491d7986be555e0067fb52c1eee53880419df",
+      "doc": true
     },
     {
       "path": "Run ParaKit v4.0.bat",
@@ -64,19 +74,23 @@
     },
     {
       "path": "docs/BUILDING.md",
-      "sha256": "c89a26b0cfb025cc5b2dd3a84f2eab5ffabf4d26b0b19e45ce9ca6ad4e4f0218"
+      "sha256": "c89a26b0cfb025cc5b2dd3a84f2eab5ffabf4d26b0b19e45ce9ca6ad4e4f0218",
+      "doc": true
     },
     {
       "path": "docs/ROADMAP.md",
-      "sha256": "e0495f42917cdbebfd658482abf32335aeaf33e0785014c8828ee9ec3b07a61d"
+      "sha256": "e0495f42917cdbebfd658482abf32335aeaf33e0785014c8828ee9ec3b07a61d",
+      "doc": true
     },
     {
       "path": "docs/SYSTEM_CHART.html",
-      "sha256": "6e73eab72768395e59df65070a4817032bf3365fc71b2f52e92b684b7e512fde"
+      "sha256": "6e73eab72768395e59df65070a4817032bf3365fc71b2f52e92b684b7e512fde",
+      "doc": true
     },
     {
       "path": "docs/TROUBLESHOOTING.md",
-      "sha256": "b269180e3e0f604f604caa9b36995023c47df4d2a9f820a189f1495c01ef13dd"
+      "sha256": "b269180e3e0f604f604caa9b36995023c47df4d2a9f820a189f1495c01ef13dd",
+      "doc": true
     },
     {
       "path": "dot_lit_v2.png",
@@ -92,7 +106,8 @@
     },
     {
       "path": "extractor/README.md",
-      "sha256": "ac5adb500baab39b4a38f5d660547b9b0e3c87d943873f82aff03f2c3937e793"
+      "sha256": "ac5adb500baab39b4a38f5d660547b9b0e3c87d943873f82aff03f2c3937e793",
+      "doc": true
     },
     {
       "path": "extractor/Run RLRR Extractor.bat",
@@ -104,7 +119,7 @@
     },
     {
       "path": "extractor/rlrr_parse.py",
-      "sha256": "a4ddc212575686d0d95937bf8a1f3c2a7eee43d1bee699a8904bc1e1e6162c51"
+      "sha256": "06538ae81fe7cffe4f3e5a2e7a939cb617202595c499b98a17fb0b7a12ab3b38"
     },
     {
       "path": "icons/_MANIFEST.txt",
@@ -4564,7 +4579,8 @@
     },
     {
       "path": "practice_v2/README.md",
-      "sha256": "155235da36fb4280ae015c9b6ff5050922ccd40418c4cfc402fa01df41f8ad14"
+      "sha256": "155235da36fb4280ae015c9b6ff5050922ccd40418c4cfc402fa01df41f8ad14",
+      "doc": true
     },
     {
       "path": "practice_v2/Run Practice Window v2.bat",
@@ -4800,7 +4816,7 @@
     },
     {
       "path": "rlrr_parse.py",
-      "sha256": "c7a36e5e187d3d27fda1040d3f735594f59231304f8fafc5aa0339a859710e18"
+      "sha256": "630d7d2c513b3d582062a8daa5d198fc6c6ceff89e1824d930e2c8b72ebe07d6"
     }
   ]
 }

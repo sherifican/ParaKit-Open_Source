@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.11.3  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.11.4  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,28 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.11.4   --   2026-08-24
+------------------------------------------------------------------------------
+  EDITING A DOCUMENT NO LONGER BLOCKS YOUR UPDATE
+  The updater checks every supporting file against a published checksum, and a
+  file that did not match used to stop the whole update -- nothing was installed
+  at all, not even the app itself. That was right for program files and wrong for
+  documentation: a small wording change to a README on the website was enough to
+  block the entire update for everyone, twice. Documentation is now marked as
+  such when a release is published, and a marked file that does not match is left
+  alone, reported in the update log as "left as-is", while the rest of the
+  release installs normally. That covers the READMEs, the changelog, the guides
+  in docs/, and the research notes. Program files are unchanged: one of those
+  failing still stops everything, which is the point of the check, and the
+  dependency list is deliberately treated as a program file rather than as text.
+
+  WHAT YOU WILL SEE
+  If a documentation file is out of step, the update log shows a line reading
+  "left as-is" for that file instead of failing. The update finishes. Your local
+  copy of that document stays as it was until the next release refreshes it, and
+  the startup file check no longer reports it as damaged in the meantime.
 
 ------------------------------------------------------------------------------
   v4.11.3   --   2026-08-23

@@ -5895,20 +5895,40 @@ _RLRR_SUPPLEMENTAL_CLASS_NOTE = {
 def _extract_notes_from_rlrr_supplemented(rlrr_path):
     """`extract_notes_from_rlrr` + the supplemental cymbal families.
 
-    ⛔ THE MIDI EXTRACTOR WAS SILENTLY DROPPING NOTES. `_RLRR_SUPPLEMENTAL_CLASS_NOTE`
-    exists because real ParaDB charts use china, 13" crash and splash, which
-    `CLASS_TO_MIDI` does not know. Two loaders consult it as a fallback
-    (`_load_rlrr_as_me_notes`, `_load_rlrr_as_viz_notes`). The MIDI Extractor does
-    not: it calls the imported `extract_notes_from_rlrr`, which drops any event
-    `CLASS_TO_MIDI` cannot map, and the user gets a .mid missing those hits with no
-    error. Measured on a five-event probe (kick, china, splash, 13" crash, 17"
-    crash): 2 notes extracted, 3 dropped.
+    THIS WRAPPER IS THE FIX for a bug that is CLOSED — everything below the
+    HISTORY line describes the state BEFORE 2026-08-09, not today. It has been
+    misread twice, in opposite directions (once as "stale docstring, bug long
+    fixed elsewhere", once as "accurate docstring, bug still live"), so the
+    current state goes first:
 
-    Found by audit 2026-08-09. The fix stays OUT of `rlrr_parse.CLASS_TO_MIDI` on
-    purpose - the comment above records that the map is deliberately kept to the
-    8-lane ground-truth design, and the research corpus has its own synced copy.
-    This wrapper adds the families for the USER-FACING extraction only, using the
-    app's own note assignments, so all three .rlrr readers now agree.
+    CURRENT (re-verified empirically 2026-08-23): every MIDI Extractor path in
+    this app — `_load_preview`, `_run_single`, `_extract_one_batch` — calls THIS
+    wrapper; the raw import has no other caller. The five-event probe (kick,
+    china, splash, 13" crash, 17" crash) returns 5/5 through here. The SHIPPED
+    standalone extractor (`extractor/` in the public repo) is separately fine:
+    its own `rlrr_parse.py` carries a widened CLASS_TO_MIDI. The one remaining
+    2/5 path is the DEV-LOCAL `Extractor Mini App\\Run RLRR Extractor.bat`
+    launcher, whose GUI calls the raw function against the narrow local copy —
+    never shipped.
+
+    HISTORY (pre-2026-08-09): the MIDI Extractor silently dropped notes.
+    `_RLRR_SUPPLEMENTAL_CLASS_NOTE` exists because real ParaDB charts use china,
+    13" crash and splash, which the imported `CLASS_TO_MIDI` does not know. Two
+    loaders consulted it as a fallback (`_load_rlrr_as_me_notes`,
+    `_load_rlrr_as_viz_notes`); the MIDI Extractor did not — it called the raw
+    `extract_notes_from_rlrr`, which drops any event `CLASS_TO_MIDI` cannot map,
+    and the user got a .mid missing those hits with no error. Measured then on
+    the same five-event probe: 2 notes extracted, 3 dropped.
+
+    Found by audit 2026-08-09. The fix stays OUT of the imported copy's
+    `CLASS_TO_MIDI` on purpose - that map is deliberately kept to the 8-lane
+    ground-truth design, and the research corpus has its own synced copy. This
+    wrapper adds the families for the USER-FACING extraction only, using the
+    app's own note assignments, so all three .rlrr readers in this app agree.
+    (Known, accepted divergence: this wrapper emits splash as 55 while the
+    shipped standalone's widened table emits 49 — splash has zero uses in 1,341
+    real charts, and both values predate the vendor table; settles with the
+    extra-lanes work.)
 
     Returns the same (notes, meta, err) contract, notes sorted by time.
     """
@@ -5942,6 +5962,17 @@ def _extract_notes_from_rlrr_supplemented(rlrr_path):
             _i = e.get("instrumentIndex", -1)
             if isinstance(_i, int) and 0 <= _i < len(instruments):
                 cls = instruments[_i].get("class", "") or ""
+                # Index classes resolve exact-then-prefix, matching the name
+                # branch and the fixed event_to_class (F-RLRR-INDEX-FORMAT-
+                # EXACT-MATCH, 2026-08-23) - a suffixed class stays raw only
+                # when NO known key prefixes it, so the supplement probe below
+                # still sees the raw string for the china/crash13/splash
+                # families the narrow table does not know.
+                if cls and cls not in CLASS_TO_MIDI:
+                    for _c in CLASS_TO_MIDI:
+                        if cls.startswith(_c):
+                            cls = _c
+                            break
         if CLASS_TO_MIDI.get(cls):
             continue        # already returned by extract_notes_from_rlrr
         _probe = name_val if "name" in e else cls
@@ -6472,7 +6503,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.11.3"
+    VERSION = "4.11.4"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -8517,8 +8548,13 @@ class MidiToRlrrApp:
 
         *progress*, if given, is called as progress(status, rel, done, total):
         once with status="start" (rel=None, done=0), then per file with
-        status in {"skipped","updated","failed"}. Used to drive a live progress
-        log; any exception it raises is swallowed so the sync never breaks on UI."""
+        status in {"skipped","updated","failed","stale-doc"}. "stale-doc" is a
+        DOC whose published bytes no longer match the manifest and which the user
+        already has, so it is left alone; it is deliberately not "skipped",
+        because the restore log renders that as "already ok" and the whole point
+        is that this file is NOT ok, it is being kept on purpose. Used to drive a
+        live progress log; any exception it raises is swallowed so the sync never
+        breaks on UI."""
         import urllib.request, urllib.parse, hashlib, json as _json
 
         def _fetch(url, timeout=120):
@@ -8597,9 +8633,32 @@ class MidiToRlrrApp:
                 blob = _fetch(self.PARAKIT_RAW_BASE
                               + urllib.parse.quote(str(rel), safe="/"))
                 if want and hashlib.sha256(blob).hexdigest() != want:
-                    failed.append(f"{rel} (hash mismatch)")
-                    _emit("failed")
-                    continue
+                    # This path never aborted — it records the file and moves on —
+                    # so a stale doc here is not fatal. It is still reported as a
+                    # FAILURE though, and this is the repair path behind "Download
+                    # & fix now": a repair that always ends "1 file failed" reads
+                    # as broken. Docs count as skipped, matching staging and the
+                    # integrity scan; all three ask _manifest_entry_is_doc, so no
+                    # two of them can disagree about the same file.
+                    if self._manifest_entry_is_doc(ent):
+                        # Only skip if the user ALREADY HAS the file. Skipping
+                        # unconditionally left a MISSING doc missing: the integrity
+                        # scan exempts docs from "damaged" but not from "missing",
+                        # so it kept offering the restore, and the restore kept
+                        # reporting "already ok" without ever writing the file --
+                        # a loop the user cannot escape. When there is nothing on
+                        # disk, the published bytes are strictly better than
+                        # nothing, and prose is the class where unverified bytes
+                        # are an acceptable trade (that is the whole premise here).
+                        if os.path.isfile(local):
+                            skipped += 1
+                            _emit("stale-doc")
+                            continue
+                        # fall through and write it
+                    else:
+                        failed.append(f"{rel} (hash mismatch)")
+                        _emit("failed")
+                        continue
                 d = os.path.dirname(local)
                 if d:
                     os.makedirs(d, exist_ok=True)
@@ -8699,6 +8758,25 @@ class MidiToRlrrApp:
                 except Exception:
                     pass
 
+        # v4.11.4 — PROSE IS NOT RUNTIME. The sha256 pin exists so a TAMPERED or
+        # CORRUPT runtime file cannot install. A README or CHANGELOG whose SERVED
+        # bytes drifted from the pin — the owner edited it on GitHub without
+        # regenerating the manifest — is cosmetic. Through 4.11.3 it aborted the
+        # WHOLE transaction: the main app downloaded, validated, and was then
+        # DISCARDED because a prose file disagreed. That happened twice (the
+        # 4.9.15 push, then again 2026-08-23). Docs now skip with a warning and
+        # the update proceeds; everything else stays fatal, so the transactional
+        # guarantee this function exists for is untouched for code.
+        #
+        # WHICH entries are prose comes from the manifest itself (see
+        # _manifest_entry_is_doc). The first draft of this answered it with a
+        # basename list right here, and that list knew about README/CHANGELOG but
+        # not docs/TROUBLESHOOTING.md, docs/BUILDING.md, docs/ROADMAP.md or the
+        # three research reports — 8 of the 16 prose files that ship — so an edit
+        # to any of those would still have aborted every user's update. The
+        # generator already knows what it is shipping; it says so in the manifest.
+        stale_docs = []
+
         try:
             for ent in dep:
                 rel = ent.get("path") if isinstance(ent, dict) else ent
@@ -8717,7 +8795,28 @@ class MidiToRlrrApp:
                 blob = _fetch(self.PARAKIT_RAW_BASE
                               + urllib.parse.quote(str(rel), safe="/"))
                 if hashlib.sha256(blob).hexdigest() != want:
-                    raise RuntimeError(f"{rel} (hash mismatch after download)")
+                    if self._manifest_entry_is_doc(ent):
+                        # Left at whatever the user already has -- but ONLY if
+                        # they have it. With nothing on disk, skipping installs a
+                        # release whose manifest lists a file the user does not
+                        # have and cannot get: the integrity scan exempts docs
+                        # from "damaged" but not from "missing", so it offers a
+                        # restore that also skips, for ever. Unverified prose
+                        # beats an unbreakable restore loop.
+                        #
+                        # Announced either way, never silent: a skipped file
+                        # nobody is told about is the same defect one layer down.
+                        # It self-heals at the next release, whose manifest is
+                        # regenerated from the edited file, so the download
+                        # matches its pin again.
+                        if os.path.isfile(local):
+                            stale_docs.append(rel)
+                            done += 1
+                            _emit("stale-doc", rel)
+                            continue
+                        # fall through: stage it like any other file
+                    else:
+                        raise RuntimeError(f"{rel} (hash mismatch after download)")
                 d = os.path.dirname(local)
                 if d:
                     os.makedirs(d, exist_ok=True)
@@ -8811,6 +8910,13 @@ class MidiToRlrrApp:
         except Exception:
             pass
 
+        # Hand the stale docs to the caller's summary. Deliberately an attribute
+        # rather than a fourth tuple slot: the return shape is unpacked by the
+        # acceptance probes and INV143, and widening it there buys nothing.
+        # Without this the docs were counted in NEITHER `updated` nor `skipped`,
+        # so an update that left one behind announced "4 file(s) downloaded" for
+        # five files and the only trace was one line in the scrolling log.
+        self._last_stale_docs = list(stale_docs)
         return updated, skipped, None
 
     def _self_update_files(self, new_ver, dlg=None):
@@ -8949,6 +9055,9 @@ class MidiToRlrrApp:
                 log(f"  ✓  up to date    {rel}", "ok")
             elif status == "failed":
                 log(f"  ✗  failed        {rel}", "err")
+            elif status == "stale-doc":
+                log(f"  ⚠  left as-is    {rel} (published copy differs from the "
+                    f"manifest; docs never block an update)", "err")
             set_status(f"Supporting files: {done}/{total}…")
 
         def _work():
@@ -9019,12 +9128,52 @@ class MidiToRlrrApp:
                 parts.append(f"{len(updated)} file(s) downloaded.")
             if skipped:
                 parts.append(f"{skipped} already up to date.")
+            _stale = list(getattr(self, "_last_stale_docs", ()) or ())
+            if _stale:
+                parts.append(f"{len(_stale)} document(s) left as-is.")
             summary = "  ".join(parts)
             log(summary, "ok")
             log("Done. Close and reopen ParaKit to run the new version.", "hdr")
             finish(True, summary + "  Close and reopen ParaKit to finish.")
 
         threading.Thread(target=_work, daemon=True).start()
+
+    @staticmethod
+    def _manifest_entry_is_doc(ent):
+        """True if this manifest entry is DOCUMENTATION — prose whose bytes the
+        app never reads as data, so a hash mismatch on it is cosmetic rather than
+        dangerous. Callers use it to skip the file instead of failing hard.
+
+        WHICH files those are is decided by the MANIFEST (the generator emits
+        "doc": true), not by a list in here. Three places need this same answer —
+        update staging, the non-transactional sync, and the startup integrity
+        scan — and a list repeated in three places drifts apart: the first draft
+        of this feature carried one, in one of the three, and it recognised 8 of
+        the 16 prose entries that actually ship.
+
+        The test below is a CEILING, not the rule. It can only REFUSE what the
+        manifest flagged, never add to it, so a manifest that marks a .py as
+        documentation still gets the strict treatment. `requirements.txt` is
+        excluded by name because it is the install input, not prose.
+
+        It is an ALLOWLIST for the same reason the generator's is: a ceiling that
+        is too narrow leaves a document strictly checked, which is loud and safe,
+        while one that is too wide lets a served manifest disarm the integrity
+        check on something that runs. The two lists here and in the generator must
+        agree, and INV145 asserts they do entry for entry rather than trusting
+        that two hand-maintained sets stay in step."""
+        if not isinstance(ent, dict) or ent.get("doc") is not True:
+            return False
+        rel = ent.get("path")
+        if not isinstance(rel, str):
+            return False
+        q = rel.replace("\\", "/").lower()
+        base = q.rsplit("/", 1)[-1]
+        if base == "requirements.txt":
+            return False
+        if q in ("license", "docs/system_chart.html"):
+            return True
+        return base.endswith(".md") or base.endswith(".txt")
 
     @staticmethod
     def _manifest_file_hash(path):
@@ -9154,7 +9303,17 @@ class MidiToRlrrApp:
                         # present but the bytes don't match the manifest -> damaged
                         # (truncated / edited / wrong version). None = unreadable
                         # hash -> don't cry corrupt on a transient read error.
-                        corrupt.append(rel)
+                        #
+                        # DOCS are exempt, and they have to be. When staging skips
+                        # a stale doc the update still installs the new manifest,
+                        # so the local prose and its pin disagree by design — and
+                        # without this the restore prompt would name that file
+                        # DAMAGED on every single launch, for ever. Trading a
+                        # one-time abort for a permanent modal nag is not a fix.
+                        # Same policy as staging, same source of truth, so the two
+                        # cannot drift into disagreeing about the same file.
+                        if not self._manifest_entry_is_doc(ent):
+                            corrupt.append(rel)
                 except (OSError, ValueError, TypeError):
                     continue
             if missing or corrupt:
@@ -9351,6 +9510,11 @@ class MidiToRlrrApp:
                 log(f"  ⬇  restored      {rel}", "dl")
             elif status == "skipped":
                 log(f"  ✓  already ok    {rel}", "ok")
+            elif status == "stale-doc":
+                # NOT "already ok" — the published copy differs and we chose to
+                # keep the local one. Saying "already ok" here would be the same
+                # lie the updater used to tell by staying silent, one surface over.
+                log(f"  •  left as-is    {rel}", "dim")
             elif status == "failed":
                 log(f"  ✗  failed        {rel}", "err")
             set_status(f"Files: {done}/{total}…")
@@ -24133,6 +24297,15 @@ demucs.separate.main()
                     inst_idx = e.get("instrumentIndex", -1)
                     if isinstance(inst_idx, int) and 0 <= inst_idx < len(instruments):
                         cls = instruments[inst_idx].get("class", "") or ""
+                        # Exact-then-prefix, matching the name branch and the
+                        # fixed event_to_class (F-RLRR-INDEX-FORMAT-EXACT-MATCH,
+                        # 2026-08-23); unknown classes stay raw for the
+                        # supplemental probe below.
+                        if cls and cls not in CLASS_TO_MIDI:
+                            for c in CLASS_TO_MIDI:
+                                if cls.startswith(c):
+                                    cls = c
+                                    break
                 mapping = CLASS_TO_MIDI.get(cls)
                 if mapping:
                     # Prefer distinct Crash17/Ride20 notes over CLASS_TO_MIDI collapse.
@@ -46048,6 +46221,15 @@ demucs.separate.main()
                     inst_idx = e.get("instrumentIndex", -1)
                     if isinstance(inst_idx, int) and 0 <= inst_idx < len(instruments):
                         cls = instruments[inst_idx].get("class", "") or ""
+                        # Exact-then-prefix, matching the name branch and the
+                        # fixed event_to_class (F-RLRR-INDEX-FORMAT-EXACT-MATCH,
+                        # 2026-08-23); unknown classes stay raw for the
+                        # supplemental probe below.
+                        if cls and cls not in CLASS_TO_MIDI:
+                            for c in CLASS_TO_MIDI:
+                                if cls.startswith(c):
+                                    cls = c
+                                    break
                 mapping = CLASS_TO_MIDI.get(cls)
                 if mapping:
                     _, midi_note, _ = mapping
