@@ -4,8 +4,8 @@
 
 **An all-in-one drum-charting tool for [Paradiddle](https://www.paradiddleapp.com/) (`.rlrr`), with Clone Hero (`.chart`) support.**
 
->ParaKit is actively developed and supported. **v4.x is the current, actively-developed line** — it is not
->in maintenance mode and is not waiting on anything. New features land here (recent releases added three
+>ParaKit is actively developed and supported. **v4.x is the current, actively-developed line**
+> New features land here (recent releases added three
 >new tabs), and it will keep getting regular updates.
 
 >The **v5 rebuild** (PySide6/Qt) is still in development and **no longer has a target date** — the earlier
