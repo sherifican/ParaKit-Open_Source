@@ -5,6 +5,7 @@
 **An all-in-one drum-charting tool for [Paradiddle](https://www.paradiddleapp.com/) (`.rlrr`), with Clone Hero (`.chart`) support.**
 
 >ParaKit is actively developed and supported. **v4.x is the current, actively-developed line**
+>
 > New features land here (recent releases added three
 >new tabs), and it will keep getting regular updates.
 
