@@ -82,7 +82,19 @@ def parse_rlrr(rlrr_path: Path):
 
 
 def event_to_class(e, instruments):
-    """Return the instrument class for an event, handling both formats."""
+    """Return the instrument class for an event, handling both formats.
+
+    Both formats resolve the same way: exact CLASS_TO_MIDI key, else the first
+    key the string is prefixed by, else the raw string (callers treat an
+    unknown string as unmapped, and some probe supplemental families against
+    it). The index branch previously returned instruments[idx]["class"]
+    VERBATIM into exact lookups, so any class string that was not an exact
+    key - a suffixed "BP_HiHat_C_1", or "BP_China15_C" against a table keyed
+    "BP_China" - silently dropped every one of its notes, while the same chart
+    written name-based kept them. Zero of 1,341 real charts are index-based,
+    so nothing shipped ever hit it; the format is legal per the spec, so a
+    legal chart could (F-RLRR-INDEX-FORMAT-EXACT-MATCH, fixed 2026-08-23).
+    """
     if "name" in e:
         name = e["name"]
         for cls in CLASS_TO_MIDI:
@@ -91,7 +103,13 @@ def event_to_class(e, instruments):
         return ""
     idx = e.get("instrumentIndex", -1)
     if 0 <= idx < len(instruments):
-        return instruments[idx].get("class", "")
+        raw = instruments[idx].get("class", "")
+        if raw in CLASS_TO_MIDI:
+            return raw
+        for cls in CLASS_TO_MIDI:
+            if raw.startswith(cls):
+                return cls
+        return raw
     return ""
 
 
