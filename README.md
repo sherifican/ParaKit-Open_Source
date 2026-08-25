@@ -52,6 +52,12 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan
 | **Know what's in the repo** | [What's in this repository](#whats-in-this-repository) |
 | **Fix something that won't run** | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) |
 
+> **Why is the app at the repository root rather than in `src/`?** This repository is not a source
+> tree you clone and build — it is the install target the shipped app updates itself from, so every
+> path here is a path inside a user's installation. Relocating those files would strand every
+> existing install on a copy the updater can no longer reach; the
+> [full reasoning is below](#why-the-modules-sit-at-the-repository-root-instead-of-in-src).
+
 ---
 
 ## 🖥️ System requirements
@@ -285,6 +291,37 @@ so anyone can run it from source, learn from it, fix it, or build their own vers
 
 > The `parakit_*.py` files above are **required** — the app imports them at startup. Keep them
 > beside `ParaKit v4.0.py`.
+
+#### Why the modules sit at the repository root instead of in `src/`
+
+This layout is a deliberate constraint, not an oversight. **This repository is not a source
+tree that users clone and build — it is the install target that the shipped app updates itself
+from.** ParaKit's in-app updater reads `update_manifest.json`, fetches each listed file from
+this repository by its exact path, verifies it against a SHA-256 recorded in the manifest, and
+writes it to the same relative path inside the user's installation. A path in this repository
+is therefore a path on roughly every machine running ParaKit.
+
+Two properties of that design rule out relocating the root modules:
+
+- **The updater is forward-only.** It installs what the manifest lists; it has no pass that
+  removes a file which has *left* the manifest. Moving the modules would add copies under a new
+  path on every existing install while leaving the originals in place — including
+  `ParaKit v4.0.py` itself, which is the file users actually launch. That stale entrypoint would
+  go on importing its stale siblings and would never receive another update. The repository
+  would look correct while every pre-existing installation had silently forked onto a dead copy.
+- **The modules are imported as flat siblings** of the entrypoint, in more than twenty places.
+  They resolve because they sit next to it on the interpreter's path.
+
+A move is possible, but it is a migration rather than a reorganisation: rewrite the imports, add
+a launcher shim at the old path, teach the updater to delete files dropped from the manifest —
+and ship that deletion support in a release *before* the release that moves anything, so the
+capability is already present on the machines that will need it. Until that sequencing is worth
+doing, the flat layout is the correct trade: it keeps the update path safe for the people already
+running the app, which matters more here than matching the conventions of a repository meant to
+be cloned.
+
+The parts of the project that are *not* delivered to users — the breaker suite, release tooling,
+extractor, and research notes — are organised into folders normally.
 
 ### Detection
 | Folder / file | What it is |
