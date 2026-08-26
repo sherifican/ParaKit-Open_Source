@@ -168,9 +168,9 @@ are also unavailable.
 
 **Manual fix** — download the model yourself and drop it where ParaKit looks for it:
 
-1. Get **`MDX23C-DrumSep-aufr33-jarredou.ckpt`** (~437 MB). It's on the same
-   [LimeWire page](https://limewire.com/d/HrcqC#lS73gPUpJa) as the requirements bundle
-   (it's also mirrored on Hugging Face if you'd rather grab it there).
+1. Get **`MDX23C-DrumSep-aufr33-jarredou.ckpt`** (~437 MB). Grab it from
+   [Hugging Face](https://huggingface.co/Politrees/UVR_resources) (the same place the
+   in-app download button pulls it from).
 2. Make sure it's named **exactly** `MDX23C-DrumSep-aufr33-jarredou.ckpt`.
 3. Place it in **either** location — ParaKit checks both:
    - **Windows (user cache):** `%APPDATA%\ParaKit\separators\jarredou_mdx23c\MDX23C-DrumSep-aufr33-jarredou.ckpt`

@@ -60,12 +60,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "da0f5d83208c7c17856b6695042dbc58d9db478ab06c3254d1c00442111d4b60",
+      "sha256": "1a32fde9cb8a3b7990ac422ffaa11e54feda292228a76b5c1c1c0c61cf53c967",
       "doc": true
     },
     {
       "path": "README.txt",
-      "sha256": "0dfda6be5044b909fa8716f8423491d7986be555e0067fb52c1eee53880419df",
+      "sha256": "34f985e460a81461da3444a1bc6630a582b305a0a5e7d43550011afdc2d77c80",
       "doc": true
     },
     {
@@ -89,7 +89,7 @@
     },
     {
       "path": "docs/TROUBLESHOOTING.md",
-      "sha256": "b269180e3e0f604f604caa9b36995023c47df4d2a9f820a189f1495c01ef13dd",
+      "sha256": "babaf4ab6416cecccebcac527040f33b6f43f5a035dbc403436b583464778318",
       "doc": true
     },
     {

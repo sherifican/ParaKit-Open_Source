@@ -72,8 +72,8 @@
     .exe download (LimeWire bundle):
       https://limewire.com/d/UV9Zm#DHqxKgEtmn
 
-    Jarredou model / Requirements bundle (LimeWire):
-      https://limewire.com/d/HrcqC#lS73gPUpJa
+    Requirements bundle (GitHub release -- permanent, does not expire):
+      https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip
 
     README for the .exe version:
       https://github.com/sherifican/ParaKit---Releases
@@ -326,12 +326,12 @@
        - ADB (+ AdbWinApi.dll, AdbWinUsbApi.dll) -- "push to Quest" / transfer
 
      These are distributed separately as the Requirements.zip bundle
-     (about 174 MB -- too large for the Git repo). Download it here:
-       https://limewire.com/d/HrcqC#lS73gPUpJa
+     (about 183 MB -- too large to commit to the Git repo). It is a GitHub
+     release asset on this repository, so the link is permanent:
+       https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip
 
-     The Jarredou model is on that same LimeWire page (its original repo is
-     down; there are HuggingFace mirrors, but this saves digging through a
-     giant repo and a 600+ page report).
+     The Jarredou model is NOT in this bundle. The app downloads it straight
+     from Hugging Face on demand and puts it where it needs to go.
 
      Extract it, then place the files next to "ParaKit v4.0.py", or keep them
      in the included Requirements\ subfolder beside it. They are kept out of

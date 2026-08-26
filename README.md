@@ -148,13 +148,13 @@ That's it. To **update** to the latest version later, just run `git pull` inside
 with the .py version so that's what I'm more actively supporting, I will periodically update the .exe version when enough changes
 pile up or there are significant fixes. I will also compile the v5 rebuild when it's finished for those who want it.
 
-> The old LimeWire links will *EXPIRE* if they are not downloaded at *least* once per 7 days so I made a website to host the .exe versions, but it's having some issues server side. So I'll try to have a fix and the site up before the LW expires.
+> **Heads up on the .exe link:** LimeWire's free tier now expires a file after about 3 days, and downloading it no longer resets that timer, so the .exe link below may go stale. The **requirements bundle has moved off LimeWire** to a GitHub release on this repository, which does not expire. A proper site for the .exe builds is in progress.
 
 >**.exe DOWNLOAD:** [LimeWire Bundle Link](https://limewire.com/d/UV9Zm#DHqxKgEtmn)
 
->**Jarredou Model / Requirements Link:** [LimeWire Jarredou/Req Bundle](https://limewire.com/d/HrcqC#lS73gPUpJa)
+>**Requirements bundle:** [Requirements.zip (GitHub release - permanent link)](https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip)
 
->**Note (v4.5.3.1-1):** The in-app download button for the Jarredou neural stem-isolation model has been **rewired to the official [Hugging Face repo](https://huggingface.co/Politrees/UVR_resources)** for it, with a **second Hugging Face mirror as an automatic fallback**. If *both* of those ever go down for any reason, the LimeWire bundle above is still an option.
+>**Note (v4.5.3.1-1):** The in-app download button for the Jarredou neural stem-isolation model has been **rewired to the official [Hugging Face repo](https://huggingface.co/Politrees/UVR_resources)** for it, with a **second Hugging Face mirror as an automatic fallback**. If *both* of those ever go down for any reason, see `docs/TROUBLESHOOTING.md` for the manual placement steps.
 
 >ParaKit Official Homepage ***(Site temporarily down)***
 
@@ -525,9 +525,11 @@ ParaKit shells out to several tools that are **not** Python packages:
 - **ADB** (+ `AdbWinApi.dll`, `AdbWinUsbApi.dll`) — "push to Quest" / device transfer
 
 These are distributed separately as the **`Requirements.zip` bundle** (≈174 MB — too large to
-include in the Git repo). **Download it here → [Requirements.zip (LimeWire)](https://limewire.com/d/HrcqC#lS73gPUpJa)**
+include in the Git repo). **Download it here → [Requirements.zip (GitHub release)](https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip)**
 
-I have also uploaded the Jarredou model alongside the Reqs on the LimeWire page. However the app now has a download button that downloads the model straight from HuggingFace and automatically places it where it needs to go.
+This is a GitHub release asset on this repository, so the link is permanent - it does not expire.
+
+The Jarredou model is **not** in this bundle. The app has a download button that fetches it straight from Hugging Face and places it where it needs to go.
 
 If you downloaded it from LimeWire,
  extract it, then place the files next to `ParaKit v4.0.py`, or keep them in the included
