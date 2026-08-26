@@ -159,10 +159,6 @@ That's it. To **update** to the latest version later, just run `git pull` inside
 
 ---
 
-
-*NOTE: *The screenshots show "MIDI Unsupported" that is just because they were not loaded in a supported browser yet, I took the screenshots
-in Firefox before I had fixed the MIDI config, see below for details, although Chrome and Edge work best for MIDI inputs**
-
 ## Recent Changes
 
 <details>
