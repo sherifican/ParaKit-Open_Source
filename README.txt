@@ -59,18 +59,15 @@
 ------------------------------------------------------------------------------
 
   Note: the compiled .exe version is a little behind the .py version right now
-  (.exe = 4.4.52). The .py version gets far more engagement, so that is what is
-  actively supported; the .exe is refreshed periodically when enough changes
-  pile up or there is a significant fix. The v5 rebuild will be compiled too
-  once it is finished, for those who want it.
+  THE .exe VERSION IS NO LONGER SUPPORTED.
 
-  The old LimeWire links EXPIRE if they are not downloaded at least once every
-  7 days. A website to host the .exe versions is in progress but is having
-  server-side issues; the aim is to get a fix / the site up before the LimeWire
-  links expire.
+  Its download link has expired and is not being replaced. Use the .py version
+  -- that is what ParaKit is built and supported around.
 
-    .exe download (LimeWire bundle):
-      https://limewire.com/d/UV9Zm#DHqxKgEtmn
+  The reason is simple: ParaKit updates itself by downloading changed files. A
+  compiled .exe bundles those files inside itself, so the updater cannot replace
+  them -- compiling breaks the update system. Running the .py keeps updates
+  working.
 
     Requirements bundle (GitHub release -- permanent, does not expire):
       https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip
@@ -83,8 +80,8 @@
   (https://huggingface.co/Politrees/UVR_resources), with a second Hugging Face
   mirror tried automatically if the first is down (the old GitHub source was
   removed upstream). The file is size- and SHA256-verified after download. If
-  both mirrors are ever unavailable, the model is still on the LimeWire
-  Requirements bundle above as a manual fallback.
+  both mirrors are ever unavailable, see docs/TROUBLESHOOTING.md for the manual
+  download and placement steps.
 
   ParaKit official homepage: (site temporarily down)
 

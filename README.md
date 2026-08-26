@@ -144,13 +144,11 @@ That's it. To **update** to the latest version later, just run `git pull` inside
 
 ---
 
->Note: the compiled .exe version is a little bit behind the .py version at the moment (4.4.52), I've seen a LOT more engagement
-with the .py version so that's what I'm more actively supporting, I will periodically update the .exe version when enough changes
-pile up or there are significant fixes. I will also compile the v5 rebuild when it's finished for those who want it.
-
-> **Heads up on the .exe link:** LimeWire's free tier now expires a file after about 3 days, and downloading it no longer resets that timer, so the .exe link below may go stale. The **requirements bundle has moved off LimeWire** to a GitHub release on this repository, which does not expire. A proper site for the .exe builds is in progress.
-
->**.exe DOWNLOAD:** [LimeWire Bundle Link](https://limewire.com/d/UV9Zm#DHqxKgEtmn)
+> ### The .exe version is no longer supported
+>
+> Its download link has expired and is not being replaced. **Use the `.py` version** — that is what ParaKit is built and supported around.
+>
+> The reason is simple: ParaKit updates itself by downloading changed files. A compiled `.exe` bundles those files inside itself, so the updater cannot replace them — compiling breaks the update system. Running the `.py` keeps updates working.
 
 >**Requirements bundle:** [Requirements.zip (GitHub release - permanent link)](https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip)
 
@@ -531,11 +529,10 @@ This is a GitHub release asset on this repository, so the link is permanent - it
 
 The Jarredou model is **not** in this bundle. The app has a download button that fetches it straight from Hugging Face and places it where it needs to go.
 
-If you downloaded it from LimeWire,
- extract it, then place the files next to `ParaKit v4.0.py`, or keep them in the included
-`Requirements\` subfolder beside it. They're kept out of the Git tree on purpose — large
-binaries with their own licenses, well over GitHub's per-file size limit. Leave yt-dlp's
-auto-update on so it stays current with YouTube changes.
+Download it, extract it, then place the files next to `ParaKit v4.0.py`, or keep them in the
+included `Requirements\` subfolder beside it. They're shipped as a release asset rather than
+committed to the Git tree on purpose — large third-party binaries with their own licenses.
+Leave yt-dlp's auto-update on so it stays current with YouTube changes.
 
 ---
 
