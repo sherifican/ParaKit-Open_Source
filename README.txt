@@ -58,7 +58,6 @@
   DOWNLOADS & LINKS
 ------------------------------------------------------------------------------
 
-  Note: the compiled .exe version is a little behind the .py version right now
   THE .exe VERSION IS NO LONGER SUPPORTED.
 
   Its download link has expired and is not being replaced. Use the .py version
@@ -72,8 +71,6 @@
     Requirements bundle (GitHub release -- permanent, does not expire):
       https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip
 
-    README for the .exe version:
-      https://github.com/sherifican/ParaKit---Releases
 
   Note (v4.5.3.1-1): the in-app download button for the Jarredou neural
   stem-isolation model is now rewired to the official Hugging Face repo
