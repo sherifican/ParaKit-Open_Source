@@ -22,22 +22,6 @@
 
 ---
 
-## ⚠️ Read this first — which ParaKit is this?
-
-ParaKit is mid–transition between two generations, and it matters for what you can do here:
-
-| | **ParaKit v4.x (this release)** | **ParaKit v5 (future)** |
-|---|---|---|
-| UI framework | **Tkinter / TTK** | **PySide6 / Qt** |
-| Status | The **complete, stable, shipping** app | **Not in this release** — see the note at the top of this page |
-| Themeable with UI Studio? | **No** | Yes (UI Studio is built for v5) |
-
-**UI Studio** — the visual UI/layout designer — is built for the **v5 (PySide6)** rebuild
-and is **not compatible** with this v4.x (Tkinter) app. It is **not included in this
-release** because it can't run without the v5 code. You **cannot** use UI Studio to re-theme or edit
-this v4.x app — but once it ships, you'll be able to use it to design for v5 or build your
-own custom ParaKit from source.
-
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan.
 
 ---
