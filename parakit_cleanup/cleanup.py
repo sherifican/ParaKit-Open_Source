@@ -146,7 +146,13 @@ def clean_a2m_midi(midi_path, audio_path, do_cymbal=True, do_kick=True,
     mid = midi_io.mido.MidiFile(midi_path)
     tpb = mid.ticks_per_beat or midi_io.DEFAULT_TPB
     tempo = _first_tempo(mid)
-    midi_io.write_midi(midi_path, new_notes, ticks_per_beat=tpb, tempo=tempo)
+    # Carry the source file's tick-0 text metas through the rebuild. The app's
+    # producer stamp is one of them, and write_midi builds a fresh file from
+    # NoteRecs, so anything not handed over here is destroyed by a pass that
+    # defaults ON. Read from the same MidiFile already open for tpb/tempo.
+    text_metas = midi_io.tick0_text_metas(mid)
+    midi_io.write_midi(midi_path, new_notes, ticks_per_beat=tpb, tempo=tempo,
+                       text_metas=text_metas)
 
     n_kicks_removed = max(0, len(est_in.get("kick", [])) - len(cleaned.get("kick", [])))
     cym_relabeled = {lane: len(cleaned.get(lane, [])) - len(est_in.get(lane, []))

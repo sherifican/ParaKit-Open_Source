@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.12.0  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.12.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,35 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.12.1   --   2026-09-01
+------------------------------------------------------------------------------
+  A correction to 4.12.0. That release described a fix to the detection
+  cleanup pass, and the fix was real, but the two changed files were not among
+  the ones the release actually published. The behavior 4.12.0's notes promised
+  arrives here.
+
+  THE CLEANUP FIX FROM 4.12.0 IS NOW ACTUALLY IN THE RELEASE
+  4.12.0 said: "The cleanup pass now carries the file's existing text events
+  through the rebuild." In 4.12.0 it did not, because `parakit_cleanup/` was not
+  copied when the release was assembled. The version stamp on a default
+  Audio->MIDI convert was still discarded, exactly as before the fix. Both files
+  ship here, and a MIDI produced by a default convert now keeps the version that
+  wrote it.
+
+  If you installed 4.12.0, nothing is wrong with your charts -- the notes, the
+  timing and the audio were never affected. MIDIs produced under 4.12.0 simply
+  carry no version stamp, and re-converting is the only way to give them one.
+
+  HOW THE RELEASE MISSED IT
+  Recorded here rather than left as a silent correction. The tool that assembles
+  a release copies two files from the development tree, the app and the
+  changelog; everything else is expected to be already in place. The other files
+  a release needs were checked by hand, and that check covered the sidecar
+  modules sitting beside the app but not the cleanup package one directory down.
+  A release now verifies every published file against the development tree
+  instead, which is a check a person cannot forget to perform.
 
 ------------------------------------------------------------------------------
   v4.12.0   --   2026-09-01

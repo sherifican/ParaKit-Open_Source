@@ -420,7 +420,36 @@ def _drop_cymbal_doubles(notes, moved, gap_s=CYM_DOUBLE_GAP_S):
     return [n for i, n in enumerate(notes) if i not in drop]
 
 
-def write_midi(path, notes, ticks_per_beat=DEFAULT_TPB, tempo=DEFAULT_TEMPO):
+def tick0_text_metas(mid):
+    """The `text` metas sitting at tick 0 of an already-open MidiFile, in order.
+
+    Provenance lives in one of these: the app stamps "ParaKit <version>" as a
+    tick-0 text meta so a chart's origin can be read off the file instead of
+    guessed from its date. write_midi rebuilds the file from NoteRecs alone, so
+    without this the cleanup pass silently DROPPED that stamp -- and because the
+    pass defaults ON, the default Audio->MIDI output was the one file that never
+    carried it. Measured 2026-09-01: stamp in, None out, notes intact.
+
+    Deliberately tick 0 only. write_midi emits a single track built from note
+    times, so a meta anywhere else has no position to be restored to; reading
+    the whole file and pretending otherwise would invent placement. Text metas
+    only, for the same reason the sidecar takes the stamp as an opaque string:
+    it has no business knowing what ParaKit's version means.
+    """
+    out = []
+    for track in mid.tracks:
+        t = 0
+        for msg in track:
+            t += msg.time
+            if t > 0:
+                break
+            if msg.is_meta and msg.type == "text":
+                out.append(msg.text)
+    return out
+
+
+def write_midi(path, notes, ticks_per_beat=DEFAULT_TPB, tempo=DEFAULT_TEMPO,
+               text_metas=()):
     """Write ``notes`` as a single-track GM drum MIDI on channel 9.
 
     Each NoteRec becomes a note_on (its velocity) + a short note_off. Times are
@@ -437,6 +466,10 @@ def write_midi(path, notes, ticks_per_beat=DEFAULT_TPB, tempo=DEFAULT_TEMPO):
     mid = mido.MidiFile(ticks_per_beat=ticks_per_beat)
     track = mido.MidiTrack()
     mid.tracks.append(track)
+    # Before set_tempo, matching the order the app writes them in
+    # (ParaKit v4.0.py: producer meta, then set_tempo, then time_signature).
+    for _txt in text_metas:
+        track.append(mido.MetaMessage("text", text=_txt, time=0))
     track.append(mido.MetaMessage("set_tempo", tempo=tempo, time=0))
 
     # Build (abs_tick, on/off, pitch, vel) event stream, then delta-encode.

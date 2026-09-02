@@ -1,10 +1,10 @@
 {
-  "version": "4.12.0",
+  "version": "4.12.1",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Entries marked \"doc\": true are prose -- a hash mismatch on one is skipped by the updater instead of aborting the whole update; everything else stays fatal. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "b6910d1c8850bb5d1125ac0d436c88b34eba286ade5ec6b79689214f0291d8e5",
+      "sha256": "9b03a1be9d10b010ce70f8713f5e395aa1ceda058f54aa4c2d0b36dd93ebdd0b",
       "doc": true
     },
     {
@@ -60,12 +60,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "f41f1245ccfcbb3f248a9ec4e75ed1ba8f5601a0927efde8e7aba923ee9f928c",
+      "sha256": "f17bf3f2962bb3bc6de800a0c5367ca6dc2671722a9a2c88384245735e800d7a",
       "doc": true
     },
     {
       "path": "README.txt",
-      "sha256": "11dd4a8525eb7e868ed0c8bc01a10dd8b139dec987ddba7f58217a636bb84c6e",
+      "sha256": "a3f82e10a5966e46f83055d9f5ed9013f55148c7727601b95df3b73694f21a34",
       "doc": true
     },
     {
@@ -4459,7 +4459,7 @@
     },
     {
       "path": "parakit_cleanup/cleanup.py",
-      "sha256": "660ec1260a4cbd994a3478c67e3f6cd67a92e830d892b8fef239d3faf36c7242"
+      "sha256": "645aedfe54c4a73ccf7c53a37021c0357e4c8b1aed774cd7e0862aa652f72cba"
     },
     {
       "path": "parakit_cleanup/features.py",
@@ -4467,7 +4467,7 @@
     },
     {
       "path": "parakit_cleanup/midi_io.py",
-      "sha256": "9f873dae76108c07008074a64a629c80a973b790b48e6767bdb8188c639b6e7c"
+      "sha256": "e16f26fed06e3a6e20635203102a8dd695330b9a1ddc1cef1a891ef43ec99fd5"
     },
     {
       "path": "parakit_cleanup/numpy_rf.py",
