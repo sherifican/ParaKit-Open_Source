@@ -832,10 +832,12 @@ class FallingCanvas(tk.Frame):
         self._beat_grid = True
         self._lane_visible = [True] * LANE_COUNT
         self._edit_mode = False
+        self._reclassify = False     # lane-only editing (see set_reclassify)
         self._countin_text = ""
         self._capture_hook = None
         # interaction state
         self._mode = None            # None|maybe_place|maybe_move|move|erase|band
+        #                              |maybe_reclass|reclass
         self._press_xy = None
         self._band_rect = None       # (x0,y0,x1,y1) live rubber-band, or None
         self._band_additive = False  # Ctrl/Shift held when the band started
@@ -843,6 +845,7 @@ class FallingCanvas(tk.Frame):
         self._move_anchor_t = 0.0
         self._move_anchor_lane = 0
         self._move_id = None
+        self._reclass_applied_delta = 0
         self._erased_any = False
         self._hover_id = None
         self._snap_guide_t = None
@@ -857,6 +860,7 @@ class FallingCanvas(tk.Frame):
         self.on_edited = None          # () -- after any chart mutation
         self.on_fall_changed = None    # (f) -- fall-speed −/+ buttons
         self.on_zoom_changed = None    # (z) -- Ctrl+wheel / Zoom −/+ buttons
+        self.on_reclassified = None    # (n, lane_name) -- lane picker applied
 
         self.canvas.bind("<Configure>", lambda _e: self._redraw())
         self.canvas.bind("<Button-1>", self._on_press)
@@ -1094,16 +1098,41 @@ class FallingCanvas(tk.Frame):
         self._band_rect = None
         if self._move_orig:
             self.end_move()
+        if not self._edit_mode:
+            self._reclassify = False
         self._apply_cursor()
         self._redraw()
+
+    def set_reclassify(self, on):
+        """Reclassify mode: a note's INSTRUMENT changes, its time never does.
+
+        Mirrors the MIDI Editor's "Reclassify mode" — click a note for a lane
+        picker, drag it across lanes for a live change — but locks the time
+        axis, which the ordinary drag-move does not. Placing new notes is
+        suppressed while it is on, so a click on empty space cannot drop a
+        note when the user is only relabelling."""
+        self._reclassify = bool(on)
+        self._mode = None
+        self._press_xy = None
+        if self._move_orig:
+            self.end_move()
+        self._apply_cursor()
+        self._redraw()
+
+    @property
+    def reclassify_on(self) -> bool:
+        return self._reclassify
 
     def _apply_cursor(self):
         if not self._edit_mode:
             self.canvas.configure(cursor="arrow")
-        elif self._mode in ("move", "maybe_move"):
+        elif self._mode in ("move", "maybe_move", "reclass", "maybe_reclass"):
             self.canvas.configure(cursor="fleur")
         elif self._hover_id is not None:
             self.canvas.configure(cursor="hand2")
+        elif self._reclassify:
+            # No placement in reclassify mode — don't promise one with a crosshair.
+            self.canvas.configure(cursor="arrow")
         else:
             self.canvas.configure(cursor="crosshair")
 
@@ -1250,6 +1279,58 @@ class FallingCanvas(tk.Frame):
         self._move_id = None
         self._snap_guide_t = None
 
+    # ----- reclassify (lane-only edits; time is never touched) -------------
+    def begin_reclass(self, x, y) -> bool:
+        """Start a lane-only drag. Reuses the move bookkeeping so every
+        existing teardown path (set_edit_mode, set_reclassify) already cleans
+        it up."""
+        n = self._note_at(x, y)
+        if n is None:
+            return False
+        if n.id not in self._selection.ids:
+            self._selection.ids = {n.id}
+        self._model.push_undo()
+        self._move_orig = {m.id: (m.time, m.lane) for m in self._model.notes
+                           if m.id in self._selection.ids}
+        self._move_anchor_lane = n.lane
+        self._move_id = n.id
+        self._reclass_applied_delta = 0
+        return True
+
+    def update_reclass(self, x):
+        """Shift every grabbed note by the lane delta under the cursor. Each
+        note keeps its ORIGINAL time — that is the whole point of the mode."""
+        if not self._move_orig:
+            return
+        d_lane = self._lane_at_clamped(x) - self._move_anchor_lane
+        if d_lane == self._reclass_applied_delta:
+            return          # nothing new to apply; set_positions is absolute
+        self._reclass_applied_delta = d_lane
+        self._model.set_positions({nid: (ot, ol + d_lane)
+                                   for nid, (ot, ol) in self._move_orig.items()})
+        self._redraw()
+        self._emit("on_edited")
+
+    def end_reclass(self):
+        self._move_orig = {}
+        self._move_id = None
+        self._reclass_applied_delta = 0
+
+    def reclassify_selection(self, target_lane) -> int:
+        """Set an absolute lane on the whole selection (the picker-menu path).
+        Times are untouched. Returns how many notes changed lane."""
+        if not (0 <= target_lane < LANE_COUNT) or not self._selection.ids:
+            return 0
+        changed = [n for n in self._model.notes
+                   if n.id in self._selection.ids and n.lane != target_lane]
+        if not changed:
+            return 0
+        self._model.push_undo()
+        self._model.set_positions({n.id: (n.time, target_lane) for n in changed})
+        self._redraw()
+        self._emit("on_edited")
+        return len(changed)
+
     def undo(self) -> bool:
         if not self._model.undo():
             return False
@@ -1285,7 +1366,7 @@ class FallingCanvas(tk.Frame):
             # on release instead (see _on_release).
             if additive or n.id not in self._selection.ids:
                 self.select_at(x, y, additive=additive)
-            self._mode = "maybe_move"
+            self._mode = "maybe_reclass" if self._reclassify else "maybe_move"
         else:
             self._mode = "maybe_place"
         self._apply_cursor()
@@ -1296,6 +1377,14 @@ class FallingCanvas(tk.Frame):
             return
         if self._mode == "erase":
             self.erase_at(x, y)
+            return
+        if self._mode == "maybe_reclass" and self._press_xy is not None:
+            moved = math.hypot(x - self._press_xy[0], y - self._press_xy[1])
+            if moved > CLICK_SLOP_PX and self.begin_reclass(*self._press_xy):
+                self._mode = "reclass"
+                self._apply_cursor()
+        if self._mode == "reclass":
+            self.update_reclass(x)
             return
         if self._mode == "maybe_move" and self._press_xy is not None:
             moved = math.hypot(x - self._press_xy[0], y - self._press_xy[1])
@@ -1332,7 +1421,15 @@ class FallingCanvas(tk.Frame):
             self._band_rect = None
             self._redraw()
         elif self._mode == "maybe_place" and self._press_xy is not None:
-            self.place_at(*self._press_xy)
+            # Reclassify mode never PLACES a note — a click there is a relabel
+            # gesture, and dropping a new note would be a destructive surprise.
+            if not self._reclassify:
+                self.place_at(*self._press_xy)
+        elif self._mode == "reclass":
+            self.end_reclass()
+        elif self._mode == "maybe_reclass" and self._press_xy is not None:
+            # Click with no drag — offer the lane picker.
+            self._show_lane_menu(event)
         elif self._mode == "move":
             self.end_move()
         elif self._mode == "maybe_move" and self._press_xy is not None:
@@ -1345,6 +1442,40 @@ class FallingCanvas(tk.Frame):
         self._mode = None
         self._erased_any = False
         self._apply_cursor()
+
+    def _show_lane_menu(self, event):
+        """Lane picker for the current selection (reclassify-mode click)."""
+        ids = self._selection.ids
+        if not ids:
+            return
+        lanes_now = {n.lane for n in self._model.notes if n.id in ids}
+        count = len(ids)
+
+        menu = tk.Menu(self, tearoff=0, bg=PANEL, fg=TEXT,
+                       activebackground=CYAN, activeforeground="#08121b",
+                       font=F_SMALL)
+        menu.add_command(
+            label=("Reclassify %d notes →" % count) if count > 1
+            else ("Reclassify: %s →" % LANE_NAMES[next(iter(lanes_now))]),
+            state="disabled")
+        menu.add_separator()
+        for idx, name in enumerate(LANE_NAMES):
+            if lanes_now == {idx}:
+                menu.add_command(label="  ✓  %s  (current)" % name,
+                                 state="disabled")
+            else:
+                menu.add_command(
+                    label="      %s" % name,
+                    command=lambda i=idx: self._menu_reclassify(i))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+            self.after(300, menu.destroy)
+
+    def _menu_reclassify(self, lane_idx):
+        k = self.reclassify_selection(lane_idx)
+        self._emit("on_reclassified", k, LANE_NAMES[lane_idx])
 
     def _on_right_press(self, event):
         if not self._edit_mode:
@@ -1896,10 +2027,14 @@ _HINT_EDIT = ("EDIT — click = place at snapped grid · drag = move "
               "(vertical) / reclassify (horizontal) · right-click = "
               "delete (sweep = eraser) · wheel = scrub · "
               "Ctrl+wheel = zoom")
+_HINT_RECLASS = ("RECLASSIFY — click a note = lane picker · drag sideways = "
+                 "change lane · times are locked · drag empty space = select · "
+                 "right-click = delete · Ctrl+wheel = zoom")
 _HELP_TEXT = (
     "Space          Play / Pause\n"
     "Home           Stop & rewind\n"
     "E / Esc        enter / exit Edit\n"
+    "R              Reclassify mode (change a note's lane, not its time)\n"
     "G              snap on/off\n"
     "1–8            place at the hit line (works during playback)\n"
     "Del            delete selection\n"
@@ -1908,7 +2043,10 @@ _HELP_TEXT = (
     "Ctrl+wheel     zoom in / out\n\n"
     "Edit-mode mouse — click empty = place (snapped) · drag = move "
     "in time (vertical, yellow guide = onset snap when snap-to-notes is on) / "
-    "reclassify lane (horizontal) · right-click = delete · hold + sweep = eraser."
+    "reclassify lane (horizontal) · right-click = delete · hold + sweep = eraser.\n\n"
+    "Reclassify mode (R) — click a note for a lane picker, or drag it sideways. "
+    "Times are locked and no new notes are placed, so a whole selection can be "
+    "relabelled without disturbing the timing."
 )
 
 
@@ -1967,6 +2105,7 @@ class PreviewTab(ttk.Frame):
         self.canvas.on_edited = self._on_view_edited
         self.canvas.on_fall_changed = self._on_view_fall_changed
         self.canvas.on_zoom_changed = self._on_view_zoom_changed
+        self.canvas.on_reclassified = self._on_reclassified
         self._build_seek()
         self._build_status()
         self._build_popovers()
@@ -2086,6 +2225,19 @@ class PreviewTab(ttk.Frame):
                                        "pause into it, fix notes in place, "
                                        "Play resumes out of it.")
         self.edit_chip.pack(**pad)
+        self.reclass_chip = Chip(bar, "⇄ Reclassify", accent=CYAN, on=False,
+                                  command=self._on_reclass_toggled,
+                                  tooltip="Change a note's INSTRUMENT without "
+                                          "moving it in time (R).\n\n"
+                                          "Click a note  →  pick its lane from "
+                                          "a menu.\n"
+                                          "Drag a note sideways  →  moves it to "
+                                          "the lane under the cursor.\n"
+                                          "Select several first to relabel them "
+                                          "together.\n\n"
+                                          "Turns edit mode on; no new notes are "
+                                          "placed while it is on.")
+        self.reclass_chip.pack(**pad)
 
         self.time_label = tk.Label(bar, text="0:00.0", background=PANEL,
                                     foreground=TEXT, font=F_MONO_B)
@@ -3369,7 +3521,32 @@ class PreviewTab(ttk.Frame):
             self.play_btn.configure(text="▶ Play")
         self.canvas.set_edit_mode(checked)
         self.edit_chip.configure(text="✎ Editing" if checked else "✎ Edit")
-        self.hint_label.configure(text=_HINT_EDIT if checked else _HINT_PLAY)
+        _rc = getattr(self, "reclass_chip", None)   # built just after edit_chip
+        if not checked and _rc is not None and _rc.get():
+            # set_edit_mode already dropped the canvas flag; keep the chip honest.
+            _rc.set(False, fire=False)
+        self._sync_edit_hint()
+
+    def _on_reclass_toggled(self, checked):
+        if checked and not self.edit_chip.get():
+            self.edit_chip.set(True)      # fires _on_edit_toggled
+        self.canvas.set_reclassify(checked)
+        self._sync_edit_hint()
+        if checked:
+            self._status("Reclassify — click a note to pick its lane, or drag "
+                         "it sideways. Times stay put.", CYAN)
+
+    def _sync_edit_hint(self):
+        if self.canvas.reclassify_on:
+            self.hint_label.configure(text=_HINT_RECLASS)
+        else:
+            self.hint_label.configure(
+                text=_HINT_EDIT if self.canvas.edit_mode else _HINT_PLAY)
+
+    def _on_reclassified(self, count, lane_name):
+        self._status("Reclassified %d note%s → %s."
+                     % (count, "" if count == 1 else "s", lane_name)
+                     if count else "Already %s — nothing changed." % lane_name)
 
     # ----- import (.mid / .rlrr / parakit-chart .json) ----------------------
     def import_chart(self, path):
@@ -3560,6 +3737,7 @@ class PreviewTab(ttk.Frame):
                 ("<Control-z>", self._key_undo), ("<Control-y>", self._key_redo),
                 ("<Control-Z>", self._key_redo),
                 ("<e>", self._key_edit), ("<E>", self._key_edit),
+                ("<r>", self._key_reclass), ("<R>", self._key_reclass),
                 ("<Escape>", self._key_escape),
                 ("<g>", self._key_snap), ("<G>", self._key_snap),
                 ("<Delete>", self._key_delete), ("<BackSpace>", self._key_delete)]
@@ -3656,10 +3834,18 @@ class PreviewTab(ttk.Frame):
         self.edit_chip.set(not self.edit_chip.get())
         return "break"
 
+    def _key_reclass(self, _event):
+        if not self._keys_active():
+            return None
+        self.reclass_chip.set(not self.reclass_chip.get())
+        return "break"
+
     def _key_escape(self, _event):
         if not self._keys_active():
             return None
-        if self.canvas.edit_mode:
+        if self.canvas.reclassify_on:
+            self.reclass_chip.set(False)   # first Esc leaves reclassify only
+        elif self.canvas.edit_mode:
             self.edit_chip.set(False)
         return "break"
 

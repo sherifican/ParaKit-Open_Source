@@ -6503,7 +6503,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.11.4"
+    VERSION = "4.12.0"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -10315,9 +10315,38 @@ class MidiToRlrrApp:
         main = ttk.Frame(canvas, padding=20)
         win  = canvas.create_window((0, 0), window=main, anchor="nw")
 
-        main.bind("<Configure>",  lambda e: canvas.configure(
-            scrollregion=(0, 0, *(canvas.bbox("all")[2:] or [800, 600]))))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
+        # v4.11.x — stretch the inner frame to at least the visible canvas
+        # HEIGHT as well as its width, so the bottom library/log can claim the
+        # empty space below it on a tall window. The previous form synced width
+        # only, which left `main` at its natural height — an expand=True child
+        # then had nothing to expand into, and the bottom pane sat above a band
+        # of dead space. Same defect, and the same fix, as the YouTube → FLAC
+        # tab; _make_scrollable_tab spells this one fill_height=True. Guarded so
+        # re-firing with an unchanged target cannot loop through <Configure>.
+        def _sc_fit_fill():
+            try:
+                target = max(main.winfo_reqheight(), canvas.winfo_height())
+                if str(canvas.itemcget(win, "height")) != str(target):
+                    canvas.itemconfigure(win, height=target)
+            except Exception:
+                pass
+
+        def _sc_main_configure(_e):
+            try:
+                canvas.configure(
+                    scrollregion=(0, 0, *(canvas.bbox("all")[2:] or [800, 600])))
+            except Exception:
+                pass
+            _sc_fit_fill()
+        main.bind("<Configure>", _sc_main_configure)
+
+        def _sc_canvas_configure(e):
+            try:
+                canvas.itemconfig(win, width=e.width)
+            except Exception:
+                pass
+            _sc_fit_fill()
+        canvas.bind("<Configure>", _sc_canvas_configure)
 
         # ── Recent files dropdown ────────────────────────────────────────────
         recent_frame = ttk.LabelFrame(main, text=" Recent Songs ", padding=8)
@@ -10926,10 +10955,12 @@ class MidiToRlrrApp:
         # so a child packed with expand=True collapses to zero height — give the
         # container an explicit height + grid_propagate(False) (same fix as the
         # YT tab's compact mode). The log keeps everything it had, just taller.
+        # v4.11.x — window-aware bottom pane. Was a fixed height=380 pinned by
+        # grid_propagate(False), which capped the library and log at that height
+        # no matter how tall the window was. Now it expands with the tab (paired
+        # with the canvas height-fill above).
         bottom = ttk.Frame(main)
-        bottom.configure(height=380)
-        bottom.pack(fill=tk.X, pady=(4, 0))
-        bottom.grid_propagate(False)
+        bottom.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
         bottom.rowconfigure(0, weight=1)
         bottom.columnconfigure(0, weight=1)   # LEFT — Finished-Songs library
         bottom.columnconfigure(1, weight=1)   # RIGHT — conversion log
@@ -12660,15 +12691,30 @@ class MidiToRlrrApp:
                   style="Sub.TLabel", foreground="#888").grid(
                   row=0, column=1, sticky="e", padx=(12, 0))
 
+        # COPY NOTE: "slightly better quality" was true of what you HEAR and
+        # misleading about what this choice is usually for. The separation
+        # artifacts that a listener stops noticing -- smeared transients, cymbal
+        # bleed from the other stems -- are the exact features the drum detector
+        # reads, so the gap that sounds minor is not minor downstream. Anyone
+        # picking a model for Audio -> MIDI was being steered by a description
+        # written for headphones.
         fast_rb = ttk.Radiobutton(
-            model_frame, text="⚡  Fastest, great quality  (htdemucs)",
+            model_frame, text="⚡  Fastest  -  great for listening and game audio  (htdemucs)",
             variable=self.stem_model_var, value="htdemucs")
         fast_rb.grid(row=0, column=0, sticky="w", pady=(0, 4))
 
         fine_rb = ttk.Radiobutton(
-            model_frame, text="🎯  Slower, but more fine-tuned for slightly better quality  (htdemucs_ft)",
+            model_frame, text="🎯  Slower  -  cleaner drums, noticeably better Audio → MIDI accuracy  (htdemucs_ft)",
             variable=self.stem_model_var, value="htdemucs_ft")
-        fine_rb.grid(row=1, column=0, sticky="w", pady=(0, 8))
+        fine_rb.grid(row=1, column=0, sticky="w", pady=(0, 2))
+
+        ttk.Label(model_frame,
+                  text="Both sound close by ear. The difference matters far more to the "
+                       "detector than to you —\nfine-tuned leaves cleaner transients and "
+                       "less bleed, so pick it when the split is headed for Audio → MIDI.",
+                  style="Sub.TLabel", foreground="#888",
+                  justify=tk.LEFT).grid(row=2, column=0, columnspan=2,
+                                        sticky="w", pady=(0, 8))
         model_frame.columnconfigure(0, weight=1)
 
         # ── CARD: Output ──────────────────────────────────────────────────────
@@ -20176,6 +20222,7 @@ demucs.separate.main()
                         _alt_mid.ticks_per_beat = 480
 
                         _alt_tempo_us = int(60_000_000 / bpm)
+                        _alt_track.append(self._midi_producer_meta(mido))
                         _alt_track.append(mido.MetaMessage(
                             'set_tempo', tempo=_alt_tempo_us, time=0))
                         _alt_track.append(mido.MetaMessage(
@@ -20324,6 +20371,7 @@ demucs.separate.main()
             ticks_per_beat = 480
             mid.ticks_per_beat = ticks_per_beat
 
+            track.append(self._midi_producer_meta(mido))
             track.append(mido.MetaMessage('set_tempo', tempo=tempo_us, time=0))
             track.append(mido.MetaMessage('time_signature',
                                           numerator=4, denominator=4, time=0))
@@ -24392,38 +24440,603 @@ demucs.separate.main()
             pass
         return None
 
-    def _me_warn_suspicious_midi(self, midi_path, midi_end_secs, audio_secs):
-        """One-time-per-MIDI-per-session warning about likely pre-v4.2.13
-        extractor drift. Same copy as the Practice/Preview Track equivalent.
+    # Chart-vs-audio coverage classifier. ONE definition, used by both the MIDI
+    # Editor and the Preview/visualiser path, so the two cannot drift apart.
+    #
+    # v4.11.x — the old rule (|last_note - audio_len| > 3% AND > 5s) compared two
+    # quantities that are not the same thing: when the last DRUM HIT lands versus
+    # how long the AUDIO FILE is. Outros, fade-outs and ring-out put the last hit
+    # seconds before the file ends on nearly every song, so a few percent is a
+    # normal property of music, not evidence of anything. Measured over a 65-pair
+    # library it fired on 19 of them, in a smooth 0-14% band with no natural break
+    # at 3% -- including MIDI the current converter had just produced.
+    #
+    # It also can't do the job its dialog claimed: a constant-factor tempo error
+    # of a few percent is indistinguishable from a slightly long outro in this one
+    # number, and a SLOW scale error still ends early, so it never shows up as an
+    # overrun either. Detecting real drift needs a second time base (a paired
+    # .rlrr fit, or onset alignment against the audio) -- see FOLLOWUPS_PARKED.
+    # So this is now scoped to what one number CAN support: the chart covering
+    # dramatically less of the audio than it should, plus a genuine overrun.
+    MISMATCH_SHORT_FRAC = 0.45   # chart covers < ~55% of the audio (half-length)
+    MISMATCH_SHORT_SECS = 5.0
+    MISMATCH_OVER_SECS  = 6.0    # slack for encoder padding / trimmed masters
+
+    @classmethod
+    def _timing_mismatch_kind(cls, midi_end_secs, audio_secs):
+        """Return "over", "short", or None. None means "nothing worth saying"."""
+        try:
+            midi_end = float(midi_end_secs or 0.0)
+            audio_secs = float(audio_secs or 0.0)
+        except (TypeError, ValueError):
+            return None
+        if midi_end <= 0 or audio_secs <= 0:
+            return None
+        gap = audio_secs - midi_end          # positive = chart ends early
+        if gap < 0:
+            # Notes past the end of the audio. Physically wrong, but a few
+            # seconds is ordinary: encoder padding, a trimmed master, a stem
+            # that is not exactly the mix the chart was timed against.
+            return "over" if -gap > cls.MISMATCH_OVER_SECS else None
+        if (gap / audio_secs) > cls.MISMATCH_SHORT_FRAC and gap > cls.MISMATCH_SHORT_SECS:
+            return "short"
+        return None
+
+    # ------------------------------------------------------------------
+    # .rlrr drift fit — the STRONG timing test
+    #
+    # A .rlrr stores every event's time as absolute seconds, so when one is
+    # available it is a second, independent time base for the same chart. Fit
+    # t_midi ~= a * t_rlrr + b: `a` is a rate difference (the shape a tempo /
+    # sync bug makes), `b` is a constant shift. This is what the coverage
+    # heuristic could never do — a single last-note-vs-duration number cannot
+    # separate a few-percent rate error from a long outro, and two time bases
+    # can.
+    #
+    # WHAT THIS DOES NOT ESTABLISH (adversarial review, 2026-08-31): a
+    # disagreement between the two files does NOT prove the .mid is the wrong
+    # one. A re-exported .rlrr, one built against a different master, or a bad
+    # .rlrr all land here too. The wording therefore reports that the two files
+    # DISAGREE and by how much; it never tells the user which file to trust.
+    #
+    # Estimator: Theil-Sen (median of pairwise slopes), chosen because hand-
+    # edited notes are outliers. Measured on real charts: it recovers an
+    # injected 1.002 exactly and holds to 1.010000 with 30% of notes moved.
+    #
+    # The residual gate is what makes it safe. Index-wise pairing is only valid
+    # if the two files hold the SAME chart; a delete-then-insert shifts every
+    # correspondence. Measured on four real charts, a one-note shift leaves the
+    # slope at 1.000000 but pushes residuals to a median of 0.06-0.10 s and a
+    # p90 of 0.10-0.27 s, while genuine drift fits with residuals of ZERO. So
+    # residuals — not the slope — are what separate "same chart, drifted" from
+    # "different charts". BOTH gates are needed: a mid-chart edit shows a median
+    # of 0.0000 and only the p90 (0.13-0.20 s) catches it.
+    # ------------------------------------------------------------------
+    DRIFT_MIN_NOTES            = 32      # too few pairs => a precise-looking guess
+    DRIFT_MIN_SPAN_S           = 60.0    # a rate needs a long baseline to be real
+    DRIFT_MAX_MED_RESID_S      = 0.030   # above this the map is not affine
+    DRIFT_MAX_P90_RESID_S      = 0.100   # catches localized mis-pairing
+    DRIFT_MIN_LANE_AGREEMENT   = 0.90    # same drums in the same order, or stop
+    DRIFT_REPORT_DISPLACEMENT_S = 0.30   # player-visible; below it, stay quiet
+    DRIFT_RATE_FLOOR           = 0.001   # |a-1| under this is not a rate difference
+
+    @classmethod
+    def _fit_timing_drift(cls, midi_times, rlrr_times,
+                          midi_lanes=None, rlrr_lanes=None):
+        """Fit t_midi ~= a * t_rlrr + b and classify the result.
+
+        Returns a dict with 'status' one of:
+          'unknown'   — cannot judge (with 'reason'); NEVER shown as a verdict
+          'unrelated' — residuals too large for any affine map to describe
+          'aligned'   — the two agree within DRIFT_REPORT_DISPLACEMENT_S
+          'rate'      — they disagree, and the difference GROWS over the song
+          'offset'    — they disagree by a constant shift
+        plus a, b, med_resid, p90_resid, span, displacement, n.
         """
+        def unknown(reason):
+            return {"status": "unknown", "reason": reason}
+
+        if not midi_times or not rlrr_times:
+            return unknown("one of the two charts has no notes")
+        if len(midi_times) != len(rlrr_times):
+            # A rate error changes WHEN notes happen, never how many there are.
+            return unknown("the two files hold a different number of notes")
+        n = len(midi_times)
+        if n < cls.DRIFT_MIN_NOTES:
+            return unknown("under %d notes" % cls.DRIFT_MIN_NOTES)
+        span = rlrr_times[-1] - rlrr_times[0]
+        if span < cls.DRIFT_MIN_SPAN_S:
+            return unknown("the chart spans under %.0fs" % cls.DRIFT_MIN_SPAN_S)
+        if midi_lanes and rlrr_lanes and len(midi_lanes) == n == len(rlrr_lanes):
+            agree = sum(1 for k in range(n) if midi_lanes[k] == rlrr_lanes[k])
+            if (agree / float(n)) < cls.DRIFT_MIN_LANE_AGREEMENT:
+                return unknown("the two files disagree about which drums are played")
+
+        # --- Theil-Sen slope: median of pairwise slopes over a long baseline.
+        # Pairs are subsampled on a stride so a 2000-note chart stays fast; the
+        # stride is over INDICES, so the sample still spans the whole song.
+        # Only LONG baselines. A 10 ms disagreement across a 1 s gap is a 1%
+        # slope, and short pairs vastly outnumber long ones, so an unrestricted
+        # median can in principle be dragged by quantisation noise. Measured on
+        # a 1442-note chart the effect is negligible (+-50 ms of jitter moved
+        # the estimate 0.0051%, a hundredfold under the gate) -- but the
+        # restriction costs nothing there and protects sparse charts, where the
+        # median has far fewer pairs to hide behind.
+        min_dx = max(1.0, 0.2 * span)
+        slopes = []
+        total_pairs = n * (n - 1) // 2
+        step = max(1, int((total_pairs / 20000.0) ** 0.5)) if total_pairs > 20000 else 1
+        for i in range(0, n, step):
+            ti = rlrr_times[i]
+            for j in range(i + 1, n, step):
+                dx = rlrr_times[j] - ti
+                if dx < min_dx:
+                    continue
+                slopes.append((midi_times[j] - midi_times[i]) / dx)
+        if len(slopes) < 5:
+            return unknown("not enough separated note pairs to measure a rate")
+        slopes.sort()
+        a = slopes[len(slopes) // 2] if len(slopes) % 2 else \
+            0.5 * (slopes[len(slopes) // 2 - 1] + slopes[len(slopes) // 2])
+
+        offs = sorted(midi_times[k] - a * rlrr_times[k] for k in range(n))
+        b = offs[len(offs) // 2] if len(offs) % 2 else \
+            0.5 * (offs[len(offs) // 2 - 1] + offs[len(offs) // 2])
+
+        resid = sorted(abs(midi_times[k] - (a * rlrr_times[k] + b)) for k in range(n))
+        med_resid = resid[len(resid) // 2]
+        p90_resid = resid[min(len(resid) - 1, int(len(resid) * 0.90))]
+
+        out = {"a": a, "b": b, "n": n, "span": span,
+               "med_resid": med_resid, "p90_resid": p90_resid}
+
+        if med_resid > cls.DRIFT_MAX_MED_RESID_S or p90_resid > cls.DRIFT_MAX_P90_RESID_S:
+            # No single stretch-and-shift describes these two files. Usually the
+            # charts differ (an edit shifted the correspondence), not a drift.
+            out["status"] = "unrelated"
+            return out
+
+        # Severity is DISPLACEMENT, not the raw slope: 0.5% means something very
+        # different over 30s than over 4 minutes. Measure it from the RATE term
+        # only -- how far the two files pull apart across the song.
+        out["displacement"] = abs(a - 1.0) * span
+
+        # A constant offset `b` NEVER raises the warning, and both reviewers
+        # pushed on this independently. `a == 1, b != 0` is a rigid shift, not a
+        # sync bug, and it has ordinary causes: a chart authored against
+        # differently-trimmed audio, the app's own offset control, or simply the
+        # two formats not sharing a time origin (MIDI t=0 is the first tick,
+        # .rlrr t=0 is the start of the audio -- a song with a 2 s intro then
+        # shows b ~ 2 s at a perfect scale). Telling that user to "re-extract"
+        # would be wrong advice that can overwrite a good file. It is reported
+        # as information; only a RATE difference is ever surfaced as a problem.
+        out["offset_only"] = abs(b) > cls.DRIFT_REPORT_DISPLACEMENT_S
+
+        if (abs(a - 1.0) > cls.DRIFT_RATE_FLOOR
+                and out["displacement"] > cls.DRIFT_REPORT_DISPLACEMENT_S):
+            out["status"] = "rate"
+        elif out["offset_only"]:
+            out["status"] = "offset"     # informational; never a modal warning
+        else:
+            out["status"] = "aligned"
+        return out
+
+    # ------------------------------------------------------------------
+    # MIDI provenance stamp
+    #
+    # Every MIDI ParaKit writes carries a 'text' meta event at tick 0 saying
+    # which version wrote it. A duration heuristic can never tell an old
+    # extractor's sync bug apart from a song with a long outro; the file
+    # saying who made it can. Text meta is ignored by note extraction, by the
+    # .rlrr builder and by Paradiddle itself, so this changes nothing about
+    # how a chart plays, converts or scores — it only makes the file
+    # self-describing for anything that later wants to reason about its age.
+    # Files written before this existed simply have no stamp, which reads as
+    # "unknown", never as "old".
+    # ------------------------------------------------------------------
+    MIDI_PRODUCER_PREFIX = "ParaKit "
+    #: the release that fixed the extractor sync bug the timing notice mentions
+    MIDI_SYNC_FIX_VERSION = (4, 2, 13)
+
+    @classmethod
+    def _midi_producer_meta(cls, mido_mod):
+        """The stamp itself, ready to append to a freshly-built MidiTrack.
+        Takes the mido module so each call site can pass whichever alias it
+        already imported."""
+        return mido_mod.MetaMessage(
+            'text', text="%s%s" % (cls.MIDI_PRODUCER_PREFIX, cls.VERSION),
+            time=0)
+
+    @classmethod
+    def _midi_producer_version(cls, path):
+        """Read a stamp back as a (major, minor, patch) tuple.
+
+        Returns None when the file has no ParaKit stamp — an older ParaKit
+        MIDI, or a file from another tool. None means UNKNOWN, and callers
+        must not read it as evidence of age in either direction."""
+        if not path:
+            return None
+        try:
+            import mido as _m
+            for _tr in _m.MidiFile(path).tracks:
+                for _msg in _tr:
+                    if _msg.type not in ("text", "track_name"):
+                        continue
+                    _t = str(getattr(_msg, "text", None)
+                             or getattr(_msg, "name", "") or "")
+                    if not _t.startswith(cls.MIDI_PRODUCER_PREFIX):
+                        continue
+                    _raw = _t[len(cls.MIDI_PRODUCER_PREFIX):].strip()
+                    _parts = []
+                    for _chunk in _raw.split("."):
+                        _digits = ""
+                        for _ch in _chunk:
+                            if not _ch.isdigit():
+                                break
+                            _digits += _ch
+                        if not _digits:
+                            break
+                        _parts.append(int(_digits))
+                    if _parts:
+                        return tuple(_parts)
+        except Exception:
+            pass
+        return None
+
+    def _me_warn_suspicious_midi(self, midi_path, midi_end_secs, audio_secs,
+                                 kind="short"):
+        """One-time-per-MIDI-per-session notice that the chart and the audio
+        don't cover the same span. Same copy as the Preview equivalent."""
         if not hasattr(self, "_me_suspicious_midi_warned"):
             self._me_suspicious_midi_warned = set()
         if midi_path in self._me_suspicious_midi_warned:
             return
         self._me_suspicious_midi_warned.add(midi_path)
         try:
-            messagebox.showwarning(
-                "MIDI timing may be off",
-                "The MIDI you just loaded ends "
-                f"{midi_end_secs:.1f}s into the chart, but the paired audio "
-                f"is {audio_secs:.1f}s long — they don't match.\n\n"
-                "Most likely cause: this MIDI was extracted with an older "
-                "version of ParaKit that had a known sync bug. The current "
-                "MIDI Extractor is fixed.\n\n"
-                "What to do:\n"
-                "  - Re-extract this chart from its source .rlrr using the "
-                "MIDI Extractor (in the Audio to MIDI tab).\n"
-                "  - OR fill in the 'Source .rlrr:' field above — point it "
-                "at the chart's .rlrr file and ParaKit will use the timing "
-                "from there instead of the MIDI.\n"
-                "  - OR keep the .rlrr in the same folder as the MIDI and "
-                "ParaKit will pick it up automatically next time.\n\n"
-                "If this is a MIDI from somewhere other than Paradiddle, "
-                "the warning may be a false alarm — the MIDI might just "
-                "not match the audio you loaded. Try a different audio "
-                "file.")
+            messagebox.showwarning(*self._timing_mismatch_copy(
+                midi_end_secs, audio_secs, kind,
+                self._midi_producer_version(midi_path)))
         except Exception:
             pass
+
+    @classmethod
+    def _timing_mismatch_copy(cls, midi_end_secs, audio_secs, kind,
+                              produced_by=None):
+        """(title, body) for the chart-vs-audio notice. Describes what was
+        actually measured — coverage — and offers causes without asserting
+        one, because a single last-note-vs-duration number cannot tell an
+        old-extractor sync bug apart from a long outro.
+
+        ``produced_by`` is the file's ParaKit provenance stamp (see
+        _midi_producer_version), or None for unknown. When it proves the MIDI
+        came from a build at or after the sync fix, the old-extractor cause is
+        dropped from the list rather than offered to a user who cannot act on
+        it."""
+        if kind == "over":
+            return ("Chart runs past the audio",
+                    f"This chart's last note is at {midi_end_secs:.1f}s, but "
+                    f"the audio is only {audio_secs:.1f}s long — the chart "
+                    "continues after the song ends.\n\n"
+                    "Common causes:\n"
+                    "  - The audio and the chart are different versions or "
+                    "edits of the song.\n"
+                    "  - The audio was trimmed after the chart was made.\n"
+                    "  - The wrong audio file is loaded.\n\n"
+                    "Point the 'Source .rlrr:' field at the chart's .rlrr, or "
+                    "load the audio the chart was built from, and ParaKit will "
+                    "use that timing instead.")
+        pct = (midi_end_secs / audio_secs * 100.0) if audio_secs else 0.0
+        # Only offer the old-extractor cause when the file has NOT told us it
+        # came from a build that already has the fix.
+        known_current = bool(produced_by) and produced_by >= cls.MIDI_SYNC_FIX_VERSION
+        old_extractor_line = ("" if known_current else
+                              "  - A MIDI extracted by ParaKit before v"
+                              + ".".join(str(n) for n in cls.MIDI_SYNC_FIX_VERSION)
+                              + ", which had a known sync bug; re-extract it "
+                                "from its .rlrr if so.\n")
+        stamp_line = ("" if not known_current else
+                      "\nThis MIDI was written by ParaKit "
+                      + ".".join(str(n) for n in produced_by)
+                      + ", so the old extractor sync bug is ruled out.")
+        return ("Chart covers only part of the audio",
+                f"This chart's last note is at {midi_end_secs:.1f}s, but the "
+                f"paired audio is {audio_secs:.1f}s long — the chart covers "
+                f"about {pct:.0f}% of the song.\n\n"
+                "That is a big enough gap to be worth a look. Common causes:\n"
+                "  - The chart is unfinished, or was only charted part-way.\n"
+                "  - The audio and the chart are different versions of the "
+                "song (album vs radio edit, a version with a long outro).\n"
+                "  - The chart's tempo is wrong — for example half or double "
+                "the real tempo.\n"
+                + old_extractor_line +
+                "\nIf the chart is simply meant to stop early, ignore this — a "
+                "song that ends on a long outro or fade is normal, and this "
+                "notice appears once per MIDI per session."
+                + stamp_line)
+
+    def _me_rlrr_for_drift(self, midi_path, note_count):
+        """Find an .rlrr to compare the loaded MIDI against, for the drift fit
+        ONLY. Deliberately separate from _me_find_sibling_rlrr, which selects
+        the chart's TIMING SOURCE: widening that search would change which
+        chart the user sees, and this must never do that. This is read-only
+        diagnosis, so it may look further afield.
+
+        Same-folder first (the sibling rule), then the parent folder, then a
+        bounded walk of the parent. Measured on the owner's library, ZERO
+        folders hold both a .mid and a .rlrr -- charts live under FINISHED
+        SONGS and MIDIs sit elsewhere -- so a same-folder-only search would
+        mean this feature never runs.
+        """
+        if not _RLRR_AVAILABLE or not midi_path:
+            return None, None, None
+        try:
+            import glob as _glob
+            midi_dir = os.path.dirname(midi_path)
+            if not midi_dir or not os.path.isdir(midi_dir):
+                return None, None, None
+            parent = os.path.dirname(midi_dir)
+            seen, cands = set(), []
+            for d in (midi_dir, parent):
+                if d and os.path.isdir(d) and d not in seen:
+                    seen.add(d)
+                    cands.extend(sorted(_glob.glob(os.path.join(d, "*.rlrr"))))
+            if parent and os.path.isdir(parent):
+                # Bounded sweep of the parent. The cap has to bound the WALK,
+                # not the result: globbing "**/*.rlrr" and slicing afterwards
+                # still walks the whole tree first, which measured 18 SECONDS
+                # when the parent happened to be a large folder -- on a path
+                # that runs from Save.
+                _found, _dirs = [], 0
+                for _root, _sub, _files in os.walk(parent):
+                    _dirs += 1
+                    if _dirs > 200 or len(_found) >= 400:
+                        break
+                    for _f in _files:
+                        if _f.lower().endswith(".rlrr"):
+                            _found.append(os.path.join(_root, _f))
+                            if len(_found) >= 400:
+                                break
+                cands.extend(sorted(_found))
+            stem = os.path.splitext(os.path.basename(midi_path))[0].lower()
+            # Prefer a name-similar candidate, then fall back to note count.
+            def _score(p):
+                b = os.path.splitext(os.path.basename(p))[0].lower()
+                return 0 if (b in stem or stem in b) else 1
+            for rp in sorted(dict.fromkeys(cands), key=_score):
+                r_notes, _r_bpm = self._load_rlrr_as_me_notes(rp)
+                if not r_notes or len(r_notes) != note_count:
+                    continue
+                return (rp,
+                        [n["time"] for n in r_notes],
+                        [n["lane_idx"] for n in r_notes])
+            return None, None, None
+        except Exception:
+            return None, None, None
+
+    def _me_check_rlrr_drift(self):
+        """Run the strong timing test. Returns the fit dict, or None when the
+        pieces aren't there. Never raises into a save/play path."""
+        try:
+            m_times = getattr(self, "_me_midi_tick_times", None)
+            m_lanes = getattr(self, "_me_midi_tick_lanes", None)
+            if not m_times:
+                return None
+            r_path = getattr(self, "_me_drift_rlrr_path", "") or ""
+            r_times = r_lanes = None
+            if r_path and os.path.isfile(r_path):
+                r_notes, _b = self._load_rlrr_as_me_notes(r_path)
+                if r_notes:
+                    r_times = [n["time"] for n in r_notes]
+                    r_lanes = [n["lane_idx"] for n in r_notes]
+            if r_times is None:
+                # Memoised per load: the wider search walks the parent folder,
+                # and Save can be pressed many times on one chart. Without this
+                # every save paid the walk again.
+                if getattr(self, "_me_drift_search_done", False):
+                    r_path = getattr(self, "_me_drift_found_path", "") or ""
+                    if not r_path:
+                        return None
+                    r_notes, _b2 = self._load_rlrr_as_me_notes(r_path)
+                    if not r_notes:
+                        return None
+                    r_times = [n["time"] for n in r_notes]
+                    r_lanes = [n["lane_idx"] for n in r_notes]
+                else:
+                    r_path, r_times, r_lanes = self._me_rlrr_for_drift(
+                        self._me_last_midi or "", len(m_times))
+                    self._me_drift_search_done = True
+                    self._me_drift_found_path = r_path or ""
+            if not r_times:
+                return None
+            fit = self._fit_timing_drift(m_times, r_times, m_lanes, r_lanes)
+            fit["rlrr_path"] = r_path or ""
+            return fit
+        except Exception:
+            return None
+
+    def _me_warn_timing_drift(self, fit):
+        """One-time-per-MIDI-per-session notice that the .mid and its .rlrr
+        disagree about the RATE of time."""
+        if getattr(self, "_me_drift_warned", False):
+            return
+        self._me_drift_warned = True
+        try:
+            messagebox.showwarning(*self._timing_drift_copy(fit))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _timing_drift_copy(fit):
+        """(title, body). States that the two files DISAGREE and by how much.
+
+        It deliberately does NOT say which file is wrong. A stale .mid against a
+        re-exported .rlrr, a chart built against a different master, and a bad
+        .rlrr all produce the same measurement, and telling the user to
+        re-extract can destroy hand-made work in whichever file was the good
+        one. Naming the disagreement is supported; naming the culprit is not.
+        """
+        a = fit.get("a", 1.0)
+        disp = fit.get("displacement", 0.0)
+        pct = abs(a - 1.0) * 100.0
+        faster = a > 1.0
+        name = os.path.basename(fit.get("rlrr_path") or "") or "its .rlrr"
+        return ("Chart and .rlrr disagree about timing",
+                "This MIDI and %s describe the same chart, but their clocks run "
+                "at different rates.\n\n"
+                "The MIDI runs about %.2f%% %s. By the end of the song the two "
+                "are roughly %.1f seconds apart.\n\n"
+                "This is the shape a tempo/sync problem makes — a steady stretch "
+                "rather than a few moved notes. What it does NOT tell you is "
+                "which of the two files is the correct one:\n"
+                "  - A MIDI extracted by an older ParaKit (before v4.2.13) had a "
+                "known sync bug — re-extracting fixes that.\n"
+                "  - But a .rlrr re-exported at a corrected tempo, or one built "
+                "against a different master of the song, looks identical from "
+                "here.\n\n"
+                "Check which one plays in time against your audio before "
+                "replacing either. While this MIDI Editor has the .rlrr loaded "
+                "it is using the .rlrr's timing, so what you see is the .rlrr's "
+                "version."
+                % (name, pct, "fast" if faster else "slow", disp))
+
+    @staticmethod
+    def _me_pairing_corroborated(midi_path, audio_path):
+        """Is this audio confirmed to be THIS chart's song?
+
+        parakit_onset_align cannot check its own pairing: measured over 870
+        deliberately-wrong chart/stem pairings, 5.1% would have produced a
+        false drift warning, and no statistic separated them from real ones.
+        So the premise has to come from outside, and a shared file name is the
+        evidence available here — the stem was auto-fetched BY name from the
+        MIDI's, or the user picked a file that matches it.
+
+        Deliberately conservative: when in doubt this returns False and the
+        whole check goes quiet, which costs a diagnosis rather than inventing
+        one about the wrong song."""
+        try:
+            if not midi_path or not audio_path:
+                return False
+            if not os.path.isfile(audio_path):
+                return False
+
+            def norm(p):
+                s = os.path.splitext(os.path.basename(p))[0].lower()
+                for pat in (r"\s*\(editor copy\)", r"_drums midi finished",
+                            r"\s*midi finished", r"_drums", r"_backing",
+                            r"_mix", r"\s*midi$",
+                            r"_(easy|medium|hard|expert)$"):
+                    s = re.sub(pat, "", s)
+                return re.sub(r"[^a-z0-9]+", "", s)
+
+            a, b = norm(midi_path), norm(audio_path)
+            if not a or not b:
+                return False
+            return a == b or a.startswith(b) or b.startswith(a)
+        except Exception:
+            return False
+
+    def _me_start_onset_drift_check(self):
+        """Kick off the audio-alignment check on a worker thread.
+
+        Threaded because decoding a song and scanning the scale grid costs
+        roughly a second or two, and this runs off Play/Save — blocking either
+        for that long to deliver a diagnosis would be a worse trade than
+        delivering it a moment late. Tk is touched only via root.after.
+        """
+        if getattr(self, "_me_onset_running", False):
+            return
+        if getattr(self, "_me_onset_warned", False):
+            return
+        midi_path = getattr(self, "_me_last_midi", "") or ""
+        try:
+            stem_path = self.me_audio_var.get().strip()
+        except Exception:
+            stem_path = ""
+        if not self._me_pairing_corroborated(midi_path, stem_path):
+            return
+        times = getattr(self, "_me_midi_tick_times", None)
+        if not times:
+            return
+        weights = [n.get("vel", 100) for n in (self.me_notes or [])]
+        if len(weights) != len(times):
+            weights = None
+        self._me_onset_running = True
+        self._me_onset_result = None
+
+        # The worker ONLY writes an attribute. It must not call root.after or
+        # any other Tk method: Tk is not thread-safe, and a TclError raised
+        # from a worker vanishes into the thread instead of surfacing, which
+        # is exactly how the first version of this failed silently. The main
+        # thread polls for the result instead — see _me_onset_poll, which is
+        # scheduled from HERE, on the main thread, where after() is safe.
+        def _work(t=list(times), w=weights, sp=stem_path):
+            try:
+                import parakit_onset_align as _oa
+                res = _oa.analyse(t, w, sp, pairing_is_corroborated=True)
+            except Exception as exc:
+                res = {"status": "unknown",
+                       "reason": "the alignment check failed (%s)" % type(exc).__name__}
+            self._me_onset_result = res or {"status": "unknown",
+                                            "reason": "no result"}
+            self._me_onset_running = False
+
+        try:
+            threading.Thread(target=_work, daemon=True).start()
+            self.root.after(250, self._me_onset_poll)
+        except Exception:
+            self._me_onset_running = False
+
+    def _me_onset_poll(self, _tries=0):
+        """Main-thread poll for the worker's verdict."""
+        if getattr(self, "_me_onset_running", False):
+            if _tries < 240:            # ~60s ceiling, then give up quietly
+                try:
+                    self.root.after(250, lambda: self._me_onset_poll(_tries + 1))
+                except Exception:
+                    pass
+            return
+        res = getattr(self, "_me_onset_result", None)
+        if res is not None:
+            self._me_onset_result = None
+            self._me_onset_drift_done(res)
+
+    def _me_onset_drift_done(self, fit):
+        """Back on the Tk thread with the alignment verdict."""
+        self._me_onset_running = False
+        self._me_onset_fit = fit
+        if not fit or fit.get("status") != "rate":
+            return
+        if getattr(self, "_me_onset_warned", False):
+            return
+        self._me_onset_warned = True
+        try:
+            messagebox.showwarning(*self._onset_drift_copy(fit))
+        except Exception:
+            pass
+
+    @staticmethod
+    def _onset_drift_copy(fit):
+        """(title, body) for a chart that does not keep time with its audio."""
+        a = fit.get("a", 1.0)
+        disp = fit.get("displacement", 0.0)
+        pct = abs(a - 1.0) * 100.0
+        return ("Chart drifts against the audio",
+                "Lined up against the drum track, this chart's timing runs "
+                "about %.2f%% %s. Over the course of the song the two drift "
+                "roughly %.1f seconds apart.\n\n"
+                "Unlike a constant offset, a difference that GROWS is the "
+                "signature of a tempo or sync problem — the chart will feel "
+                "progressively further out the longer the song plays.\n\n"
+                "Worth checking:\n"
+                "  - Re-extract the chart if it came from an older ParaKit "
+                "(before v4.2.13), which had a known sync bug.\n"
+                "  - Confirm the BPM, especially if the song's tempo was "
+                "entered by hand.\n"
+                "  - Make sure the loaded drum track is this song and this "
+                "version of it.\n\n"
+                "This compares the chart against the drum audio currently "
+                "loaded, so it assumes that audio is the right song."
+                % (pct, "fast" if a > 1.0 else "slow", disp))
 
     def _me_maybe_warn_timing_mismatch(self):
         """v4.5.5: fire the suspicious-MIDI (pre-v4.2.13 extractor drift) warning
@@ -24434,6 +25047,31 @@ demucs.separate.main()
         as the original load-time check (the guard lives in _me_warn_suspicious_midi).
         No-ops when timing came from a .rlrr, when no audio is loaded, or when they
         match — so a normal/partially-edited save never triggers it."""
+        # v4.11.x — STRONG test first. When an .rlrr is available it is a
+        # second, independent time base, and fitting the two against each other
+        # measures a rate difference directly. The old order skipped the check
+        # entirely whenever timing came from an .rlrr, which threw away the one
+        # case where a real answer was possible: the .rlrr's times were used for
+        # display, the user saw a correct chart, and nobody mentioned that the
+        # .mid on disk was drifted. Only a RATE difference is surfaced -- a
+        # constant offset has ordinary causes and is not a defect.
+        _fit = self._me_check_rlrr_drift()
+        if _fit and _fit.get("status") == "rate":
+            self._me_warn_timing_drift(_fit)
+            return
+        if _fit and _fit.get("status") == "aligned":
+            # A second time base says the timing is fine. Believe it over the
+            # coverage heuristic, which cannot tell an outro from a defect.
+            return
+
+        # No .rlrr could settle it. Fall to the audio itself, which reaches far
+        # more charts (73 of 103 have a drum stem, against 3 with a matching
+        # .rlrr). Threaded, and it stays silent unless the loaded audio is
+        # corroborated as this chart's song.
+        self._me_start_onset_drift_check()
+
+        # Weak fallback: chart-vs-audio coverage, only when the MIDI's own ticks
+        # supplied the timing and no .rlrr could settle it.
         if not getattr(self, "_me_timing_from_midi_ticks", False):
             return
         midi_end = getattr(self, "_me_loaded_midi_end", 0.0)
@@ -24445,10 +25083,10 @@ demucs.separate.main()
             audio_secs = 0
         if not audio_secs or audio_secs <= 0:
             return
-        diff_secs = abs(midi_end - audio_secs)
-        if diff_secs / audio_secs > 0.03 and diff_secs > 5.0:
+        kind = self._timing_mismatch_kind(midi_end, audio_secs)
+        if kind:
             self._me_warn_suspicious_midi(
-                self._me_last_midi or "", midi_end, audio_secs)
+                self._me_last_midi or "", midi_end, audio_secs, kind)
 
     def _me_browse_rlrr(self):
         """File-picker handler for the 'Source .rlrr:' override field."""
@@ -24695,6 +25333,23 @@ demucs.separate.main()
             # Final selection: rlrr override > sibling > MIDI fallback
             if chosen_notes is None:
                 chosen_notes = midi_notes
+
+            # v4.11.x — keep the MIDI's OWN tick timing for the .rlrr drift fit
+            # (see _fit_timing_drift). Once an .rlrr is applied above, me_notes
+            # holds the .rlrr's times, so the .mid's own times would otherwise
+            # be gone -- and they are exactly what the fit needs to compare.
+            # Recorded whether or not an .rlrr was used, because the fit is what
+            # tells the user their .mid file is bad even when the display is
+            # already being corrected from the .rlrr.
+            self._me_midi_tick_times = [n["time"] for n in midi_notes]
+            self._me_midi_tick_lanes = [n["lane_idx"] for n in midi_notes]
+            self._me_drift_rlrr_path = chosen_rlrr_path or ""
+            self._me_drift_warned    = False
+            self._me_onset_warned    = False
+            self._me_onset_running   = False
+            self._me_onset_fit       = None
+            self._me_drift_search_done = False
+            self._me_drift_found_path  = ""
 
             notes = chosen_notes
             bpm = chosen_bpm
@@ -26622,6 +27277,7 @@ demucs.separate.main()
             mid.ticks_per_beat = tpb
             tempo_us = int(60_000_000 / self.me_bpm)
 
+            track.append(self._midi_producer_meta(_mido))
             track.append(_mido.MetaMessage('set_tempo', tempo=tempo_us, time=0))
             track.append(_mido.MetaMessage('time_signature',
                                            numerator=4, denominator=4, time=0))
@@ -33922,8 +34578,13 @@ demucs.separate.main()
         # folder + format radios + cookies controls + JS runtime row +
         # progress + log — at 1080p the log got crushed off-screen. Wrap
         # in a scrollable canvas in compact mode.
+        # v4.11.x — fill_height=True so the inner frame fills the viewport, letting
+        # the bottom library/log claim the empty space below on taller windows
+        # (e.g. compact mode on a 1440p monitor). Without it the bottom fell back
+        # to a fixed height=320 and left dead space under it — the same defect the
+        # Stem Splitter fixed, which had this flag and the YT tab did not.
         if getattr(self, "_compact_layout", False):
-            scroll_inner = self._make_scrollable_tab(parent)
+            scroll_inner = self._make_scrollable_tab(parent, fill_height=True)
             main = ttk.Frame(scroll_inner, padding=16)
         else:
             main = ttk.Frame(parent, padding=16)
@@ -34418,18 +35079,15 @@ demucs.separate.main()
 
         # v4.4.61-1 — Bottom split: Downloaded-Songs library + activity log.
         # (v4.4.63 swapped sides: library LEFT, log RIGHT — see below.)
-        # In compact (1080p) mode the tab body lives inside a scroll-canvas whose
-        # <Configure> only syncs WIDTH, so a child packed with expand=True
-        # collapses to zero height. Give the bottom container an explicit height
-        # + pack_propagate(False) in that mode so both panes stay visible and
-        # scroll. Roomy mode keeps fill=BOTH/expand so it grows with the window.
+        # expand=True in BOTH modes: the compact-mode scroll wrapper is now built
+        # with fill_height=True (above), so the inner frame fills the viewport and
+        # this bottom section gets the empty space below to grow into — window-aware
+        # on any monitor. Previously compact mode used a fixed height=320 +
+        # grid_propagate(False), which left dead space under the panes on a taller
+        # window (compact mode on a 1440p display). Roomy mode was always fill=BOTH/
+        # expand; the two branches are now one. (Same fix the Stem Splitter carried.)
         bottom = ttk.Frame(main)
-        if getattr(self, "_compact_layout", False):
-            bottom.configure(height=320)
-            bottom.pack(fill=tk.X, pady=(4, 0))
-            bottom.grid_propagate(False)
-        else:
-            bottom.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+        bottom.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
         # v4.5.8.x (owner) — give the song library more width by shrinking the
         # log: weighted grid (library 3 : log 2) instead of an even pack split,
         # so the library extends right and the log narrows. Also makes room for a
@@ -40239,8 +40897,13 @@ demucs.separate.main()
               "  The lossless FLAC drums stem gives the detector cleaner cymbal/transient\n"
               "  data than the .ogg version, which is lossy. The 'Send Lossless Drums to\n"
               "  MIDI Converter' button on the success popup routes the FLAC automatically.\n\n"
-              "  Use htdemucs for fastest results. htdemucs_ft is slower but slightly\n"
-              "  more accurate. Both are excellent for charting purposes.\n\n"
+              "  Choosing a model: htdemucs is the fastest and sounds great, so it is the\n"
+              "  right pick when you only need audio to listen to or to package for the\n"
+              "  game. htdemucs_ft takes longer but separates the drums more cleanly, and\n"
+              "  that gap matters much more to the detector than it does to your ears —\n"
+              "  the smeared transients and leftover bleed a listener stops noticing are\n"
+              "  exactly what onset detection reads. Use htdemucs_ft when the split is\n"
+              "  headed for Audio → MIDI and you want the most accurate transcription.\n\n"
               "GPU acceleration:\n"
               "  Splitting is much faster on a supported NVIDIA GPU. The\n"
               "  'Hardware speed notes ▸ Check' button verifies whether your GPU\n"
@@ -42108,7 +42771,10 @@ demucs.separate.main()
                  "    (Blackwell) needs a CUDA 12.8+ (cu128) PyTorch build.\n"
                  "    AMD and Intel GPUs always run on CPU — a Demucs limitation, not a\n"
                  "    ParaKit bug.\n"
-                 "  → Use htdemucs (not htdemucs_ft) for faster splits.")
+                 "  → Use htdemucs (not htdemucs_ft) for faster splits — but only when the\n"
+                 "    audio is for listening or game packaging. If the split is headed for\n"
+                 "    Audio → MIDI, htdemucs_ft's cleaner drums are worth the extra time:\n"
+                 "    the detector is far more sensitive to the difference than your ears are.")
         divider(s)
         entry(s, "Drag and drop not working\n"
                  "  → Browse buttons always work as a fallback.\n"
@@ -46297,38 +46963,20 @@ demucs.separate.main()
             pass
         return None
 
-    def _viz_warn_suspicious_midi(self, midi_path, midi_end_secs, audio_secs):
-        """Show a one-time-per-session warning when a MIDI's note timing
-        doesn't match the paired audio's duration (heuristic for the pre-
-        v4.2.13 compound-drift bug). Suppressed if already shown for this
-        MIDI path in this session.
-        """
+    def _viz_warn_suspicious_midi(self, midi_path, midi_end_secs, audio_secs,
+                                  kind="short"):
+        """One-time-per-session notice that the chart and the paired audio
+        don't cover the same span. Shares its wording and its threshold with
+        the MIDI Editor twin — see _timing_mismatch_kind."""
         if not hasattr(self, "_viz_suspicious_midi_warned"):
             self._viz_suspicious_midi_warned = set()
         if midi_path in self._viz_suspicious_midi_warned:
             return
         self._viz_suspicious_midi_warned.add(midi_path)
         try:
-            messagebox.showwarning(
-                "MIDI timing may be off",
-                "The MIDI you just loaded ends "
-                f"{midi_end_secs:.1f}s into the chart, but the paired audio "
-                f"is {audio_secs:.1f}s long — they don't match.\n\n"
-                "Most likely cause: this MIDI was extracted with an older "
-                "version of ParaKit that had a known sync bug. The current "
-                "MIDI Extractor is fixed.\n\n"
-                "What to do:\n"
-                "  - Re-extract this chart from its source .rlrr using the "
-                "MIDI Extractor (in the Audio to MIDI tab).\n"
-                "  - OR fill in the 'Source .rlrr:' field in this tab — "
-                "point it at the chart's .rlrr file and ParaKit will use "
-                "the timing from there instead of the MIDI.\n"
-                "  - OR keep the .rlrr in the same folder as the MIDI and "
-                "ParaKit will pick it up automatically next time.\n\n"
-                "If this is a MIDI from somewhere other than Paradiddle, "
-                "the warning may be a false alarm — the MIDI might just "
-                "not match the audio you loaded. Try a different audio "
-                "file.")
+            messagebox.showwarning(*self._timing_mismatch_copy(
+                midi_end_secs, audio_secs, kind,
+                self._midi_producer_version(midi_path)))
         except Exception:
             pass
 
@@ -46496,13 +47144,13 @@ demucs.separate.main()
                     audio_secs = self._viz_audio_length_secs()
                     if audio_secs and audio_secs > 0:
                         midi_end = chosen_notes[-1][0]
-                        diff_secs = abs(midi_end - audio_secs)
-                        diff_pct = diff_secs / audio_secs
-                        if diff_pct > 0.03 and diff_secs > 5.0:
+                        _kind = self._timing_mismatch_kind(midi_end, audio_secs)
+                        if _kind:
                             self.root.after(
                                 100,
-                                lambda mp=midi_path, me=midi_end, asec=audio_secs:
-                                    self._viz_warn_suspicious_midi(mp, me, asec))
+                                lambda mp=midi_path, me=midi_end, asec=audio_secs,
+                                       k=_kind:
+                                    self._viz_warn_suspicious_midi(mp, me, asec, k))
 
             # Status feedback when .rlrr timing was applied
             if chosen_source in ("override", "sibling") and chosen_rlrr_path:

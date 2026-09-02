@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.11.4  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.12.0  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,104 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.12.0   --   2026-09-01
+------------------------------------------------------------------------------
+  ParaKit can now tell you that a chart and its song disagree about the passage
+  of time. Also in this release: a Reclassify mode for the Preview tab, MIDI
+  files that record which version wrote them, and two windows that did not use
+  the space they were given.
+
+  A CHART THAT HAS DRIFTED OUT OF SYNC IS NOW DETECTED AND REPORTED
+  A chart and its song can disagree about time in a way that a fixed head start
+  does not describe: they can disagree about the RATE, so the two slide further
+  apart the longer the song runs. A chart written against a different master, or
+  exported at a slightly different tempo, looks perfectly normal at the start and
+  is a bar out by the last chorus. Two new checks look for exactly that, and they
+  run when you press Play or when you press Save -- not when the chart loads.
+  (Load-time warnings were removed in 4.5.5 because the previous song's audio was
+  often still in the fields, which produced a warning about a pairing that did
+  not exist.)
+
+    - If a matching .rlrr sits alongside the MIDI, the two are compared
+      directly. This is the strongest test, because both files describe the
+      same chart and the notes can be matched to each other.
+    - Otherwise, if the song's drum stem is loaded AND its file name confirms
+      it belongs to this chart, the chart is measured against the audio itself.
+      That name check is not a formality: measured over 870 deliberately wrong
+      chart-and-stem pairings, 5.1% produced a confident false drift reading,
+      and no statistic separated them from real ones. So the check refuses to
+      run rather than guess which song it is listening to.
+
+  Neither of those two ever reports a constant offset. A chart that is simply
+  shifted by a fixed amount is left alone: that has ordinary causes -- audio
+  trimmed differently, the app's own offset control, or the two formats not
+  sharing a time origin -- and warning about it would prompt re-exporting a file
+  that was never wrong.
+
+  The older check on how much of the song a chart covers still runs when neither
+  of the two can settle the question, and it is a different kind of notice: it
+  reports coverage, not rate, and it is the one that can still speak up about a
+  chart that is merely shifted a very long way.
+
+  The two drift notices differ on purpose about whose fault it is. The .rlrr
+  notice deliberately does NOT say which of the two files is wrong, because a
+  stale MIDI, a chart built against another master, and a bad .rlrr all measure
+  identically from there, and "just re-extract it" can destroy hand-made work in
+  whichever file was the good one. The audio notice does name the chart, and is
+  entitled to: it has already confirmed the audio is this chart's song, so the
+  song is the reference and the chart is the thing that disagrees with it.
+
+  WHAT YOU WILL SEE
+  Nothing at all on a chart that is in sync, which is almost all of them. On a
+  drifted one, a dialog naming the drift as a percentage and as the number of
+  seconds it accumulates to by the end of the song. The coverage notice is a
+  separate, older dialog and reports coverage instead.
+
+  THE "CHART DOES NOT MATCH THE AUDIO" WARNING WAS FIRING ON GOOD CHARTS
+  The old rule warned whenever the gap between a chart's last note and the
+  length of its audio was both more than 3% of the song and more than five
+  seconds, in either direction. That describes almost every real chart: songs
+  have outros, and charts stop at the last drum hit. Across a 50-chart library
+  it fired on 13 of them, and all 13 covered between 86% and 95% of their song
+  -- ordinary charts, every one. The check now looks for a chart covering less
+  than about half its audio, which is the case it was written for: the wrong
+  file entirely, or a chart that stops a third of the way in. On those same 50
+  charts it now fires on none of them. (That library is the author's own; the
+  percentages above are a measurement, not something the program computes.)
+
+  RECLASSIFY MODE IN THE PREVIEW TAB
+  The Preview tab now has the Reclassify mode the MIDI Editor already had.
+  Turn it on with the Reclassify chip or the R key, then click a note to pick
+  its lane from a menu, or drag it sideways to move it between lanes. A note's
+  instrument changes; its time never does, and no click can place a new note
+  while the mode is on. Esc leaves the mode.
+
+  AUDIO-TO-MIDI AND MIDI EDITOR SAVES NOW RECORD WHICH VERSION WROTE THEM
+  A MIDI produced by Audio->MIDI, or saved from the MIDI Editor, now carries the
+  producing version as a text event. This is housekeeping rather than something
+  to use directly: a file's origin can be read from the file itself instead of
+  guessed from its date, which is what lets the timing notices tell whether a
+  chart predates a sync fix. Nothing about the notes, the timing, or how the
+  file plays back changes. The other exporters -- Preview, Spectral, Sheet
+  Music and the extractor panel -- do not stamp yet.
+
+  ONE BUG WORTH NAMING, BECAUSE IT MADE THE STAMP LOOK LIKE IT WORKED
+  The detection cleanup pass, which is on by default, rebuilds the MIDI it
+  cleans rather than editing it. It re-emitted only the tempo, so it silently
+  discarded the stamp on the one path most files take -- a default Convert.
+  The stamp was written, then thrown away, and every such file read back as
+  having no version at all. The cleanup pass now carries the file's existing
+  text events through the rebuild.
+
+  TWO WINDOWS THAT DID NOT USE THE SPACE THEY WERE GIVEN
+  On a 1080p screen the YouTube tab's library and log stopped short of the
+  window edge, leaving a band of empty space beneath them; both now follow the
+  window's height. The Single Song Creator opened at a fixed height that left
+  its lower controls cramped on a large display, and now sizes to the window
+  as well.
+
 
 ------------------------------------------------------------------------------
   v4.11.4   --   2026-08-24

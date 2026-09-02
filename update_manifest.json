@@ -1,10 +1,10 @@
 {
-  "version": "4.11.4",
+  "version": "4.12.0",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Entries marked \"doc\": true are prose -- a hash mismatch on one is skipped by the updater instead of aborting the whole update; everything else stays fatal. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "aa4b168ce04422bb57cae914f0d1d8b136802f7d9ab1ec853f763250e2415258",
+      "sha256": "b6910d1c8850bb5d1125ac0d436c88b34eba286ade5ec6b79689214f0291d8e5",
       "doc": true
     },
     {
@@ -60,12 +60,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "25f4ae9462daf7bd336c95f4d78beb27ac9450e472b789dcce47456ecc6f0ab5",
+      "sha256": "aab74384b347ed8e2451bb459b6a9b590e4a6f188aac16859236d4445a9d0a17",
       "doc": true
     },
     {
       "path": "README.txt",
-      "sha256": "25cef815008a15f92a17fb6fe8e471fedd13551678d7f6ee07d584cfdd271130",
+      "sha256": "11dd4a8525eb7e868ed0c8bc01a10dd8b139dec987ddba7f58217a636bb84c6e",
       "doc": true
     },
     {
@@ -4506,6 +4506,10 @@
       "sha256": "99179f00b65716143cf7e2c899422b08245b3fcaac8bcf59fe09a4e1ffd69705"
     },
     {
+      "path": "parakit_onset_align.py",
+      "sha256": "563c6cd823b70aa5ece4f1e97a4e0ceea8f5c7b989cb7044c0c0508d260471ca"
+    },
+    {
       "path": "parakit_practice_engine.py",
       "sha256": "691d2e666df10ce17a6c2538733df637edb9c7e5250ce066db557fa4ebeb8a50"
     },
@@ -4535,7 +4539,7 @@
     },
     {
       "path": "parakit_preview_tab.py",
-      "sha256": "ab541cd4ad123076c2667a6de5145003be4a1fa8f4a7c2e82f9dc50edc7a66af"
+      "sha256": "8e1611e82bdd24a72f27c18da942795e505953489fc2c2615d92a3ef05ed9dff"
     },
     {
       "path": "parakit_repo_banner.svg",
