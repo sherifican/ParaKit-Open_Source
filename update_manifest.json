@@ -1,10 +1,10 @@
 {
-  "version": "4.13.1",
+  "version": "4.13.2",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Entries marked \"doc\": true are prose -- a hash mismatch on one is skipped by the updater instead of aborting the whole update; everything else stays fatal. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "84416e8aabdbd99fcb0b445f2e65b33c6a9291bf25afb8fbd68a76cb12af23ef",
+      "sha256": "4a074211dfeeed238a80d94c1d68538df544f28a18a1d1784b7b86c413a05664",
       "doc": true
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "f85e3d7f389ac7704b3ab4b81c556605fceb30ef13eb77f9ca3b4443d0cf1186",
+      "sha256": "cb259f505cbb57a89e4d44e08fd527aeddc1a5c51e175b24f4fcce8ebf4fc053",
       "doc": true
     },
     {
@@ -71,6 +71,74 @@
     {
       "path": "Run ParaKit v4.0.bat",
       "sha256": "a9fd9a28d082f2c8bcd186cb956239b466fe89f8990a167a7619334184a64b65"
+    },
+    {
+      "path": "assets/progressbar/bar_endcap_left.png",
+      "sha256": "797b9afd3a76d427b67332de1784df725e585991d807b5ae8319436f8a408786"
+    },
+    {
+      "path": "assets/progressbar/bar_endcap_right.png",
+      "sha256": "91ae74e66d6602e9db85115a5f252917fd5d7d0d50d60520a4c9eb80f48069b6"
+    },
+    {
+      "path": "assets/progressbar/bar_trough.png",
+      "sha256": "b07676f6953484b158218ec627bdd547f2c761ab101a5303f10b12b741d41100"
+    },
+    {
+      "path": "assets/progressbar/dot_lit.png",
+      "sha256": "e5b02af99a9f3c38fb0a69653d34f447820979a65700871685d65cef6e1c8f60"
+    },
+    {
+      "path": "assets/progressbar/dot_lit_v1.png",
+      "sha256": "e5b02af99a9f3c38fb0a69653d34f447820979a65700871685d65cef6e1c8f60"
+    },
+    {
+      "path": "assets/progressbar/dot_lit_v2.png",
+      "sha256": "bd2ea1ee867b940234eb759febec65f5e7a2bab5116bc8c1bff25a739e6916b8"
+    },
+    {
+      "path": "assets/progressbar/dot_lit_v3_tight.png",
+      "sha256": "2c661acda35331ca241124686d69284141e1168712a731d3ce62cb4937f6a717"
+    },
+    {
+      "path": "assets/progressbar/dot_unlit.png",
+      "sha256": "4443e7b801fabe8b9a9e087a6c9825707cf2ba1aed994b83b607bc92ff5731ae"
+    },
+    {
+      "path": "assets/progressbar/dot_unlit_v1.png",
+      "sha256": "4443e7b801fabe8b9a9e087a6c9825707cf2ba1aed994b83b607bc92ff5731ae"
+    },
+    {
+      "path": "assets/progressbar/dot_unlit_v2_dim.png",
+      "sha256": "81eb2addf418dc536bdf6509b32b58d824afa0c9c321856813058543048a1809"
+    },
+    {
+      "path": "assets/progressbar/preview_contact_sheet.png",
+      "sha256": "bbc19bcb6c8b1de54c707c74b8517c194911ff0228b8972c55b88634afc6be83"
+    },
+    {
+      "path": "assets/ui/progress_bars/snare_node_line/snare_hit_left_24.png",
+      "sha256": "d1627058f953c340b5fa599158601227c5650720b3495d2545bfd7d0874b4ce2"
+    },
+    {
+      "path": "assets/ui/progress_bars/snare_node_line/snare_hit_left_32.png",
+      "sha256": "8f3917af2af2a78e42929e4d01ef036ef38f55d70b597467fa3fe8ec171f104e"
+    },
+    {
+      "path": "assets/ui/progress_bars/snare_node_line/snare_hit_right_24.png",
+      "sha256": "5eabba1ac834f1ac8751030ef21335f71f975bfa14edbb75cc4415892233fa3c"
+    },
+    {
+      "path": "assets/ui/progress_bars/snare_node_line/snare_hit_right_32.png",
+      "sha256": "6e11e603b96b7a7bd988e9ab86c703ee13a0a697bbe55423024fc3d48db79537"
+    },
+    {
+      "path": "assets/ui/progress_bars/snare_node_line/snare_idle_24.png",
+      "sha256": "3380e6cbe3b2fec1fa3b9876022796b8556e8dd041149ce40310bd1b3c182ca7"
+    },
+    {
+      "path": "assets/ui/progress_bars/snare_node_line/snare_idle_32.png",
+      "sha256": "8ff6a1b927bc07f276368e6e9723e130e99b008b003885fad8754ef44f25eef7"
     },
     {
       "path": "docs/BUILDING.md",

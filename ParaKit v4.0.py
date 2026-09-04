@@ -5395,6 +5395,15 @@ class _G85AltSnareProgressBar(tk.Canvas):
         self._suppress_configure = False
         self._positions: list = []
 
+        # The count and the three sprite handles exist BEFORE _rebuild can fail.
+        # Every paint path reads _num, and an install without assets/ (the
+        # public repo never carried the sprite folder) left it unset: the bar
+        # rendered empty for years without harm, until the 4.13.0 Song Tester
+        # touched its bar at build time and the whole tab refused to start
+        # (found 2026-09-04 in the shipped 4.13.1 tree).
+        self._num = self._snare_compute_num()
+        self._idle_img = self._hit_left_img = self._hit_right_img = None
+
         try:
             self._rebuild()
         except Exception:
@@ -5436,9 +5445,23 @@ class _G85AltSnareProgressBar(tk.Canvas):
     # -- rendering ----------------------------------------------------------
 
     def _rebuild(self):
-        self._idle_img = self._snare_load_sprite("snare_idle")
-        self._hit_left_img = self._snare_load_sprite("snare_hit_left")
-        self._hit_right_img = self._snare_load_sprite("snare_hit_right")
+        # A missing sprite leaves a usable, empty bar: count kept, items cleared,
+        # nothing raised. _rebuild is re-entered from <Configure>, so the guard
+        # in __init__ alone would still let every resize raise (INV153, 2026-09-04).
+        try:
+            self._idle_img = self._snare_load_sprite("snare_idle")
+            self._hit_left_img = self._snare_load_sprite("snare_hit_left")
+            self._hit_right_img = self._snare_load_sprite("snare_hit_right")
+        except Exception:
+            # _num is NOT recomputed here: the constructor owns the first value and a
+            # resize keeps the last one (the bar is empty, so the count only has to
+            # exist). That keeps the early assignment load-bearing, so its mutation
+            # needle bites instead of being covered by this branch.
+            self._idle_img = self._hit_left_img = self._hit_right_img = None
+            self.delete("all")
+            self._snare_items = []
+            self._line_item = None
+            return
         self._num = self._snare_compute_num()
 
         self._suppress_configure = True
@@ -6510,7 +6533,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.13.1"
+    VERSION = "4.13.2"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -8286,6 +8309,17 @@ class MidiToRlrrApp:
                         break
                     continue
                 wclass = widget.winfo_class()
+                if wclass == 'Canvas' and not str(widget.cget('scrollregion') or '').strip():
+                    # A canvas with no scrollregion is a drawing surface (the Practice
+                    # highway, progress bars, histograms, cover art), not a scroll
+                    # host. yview_scroll on it slides the drawing out of view: the
+                    # Practice tab's whole game surface scrolled under the wheel
+                    # (2026-09-04). Walk past it, as for the progress bars above.
+                    try:
+                        widget = widget.master
+                    except Exception:
+                        break
+                    continue
                 if wclass in ('Canvas', 'Text'):
                     try:
                         widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
@@ -8318,6 +8352,13 @@ class MidiToRlrrApp:
             # subclasses used as UI elements, not scrollable content — walk
             # past them (else the wheel slides the bar graphic out of view).
             if isinstance(widget, (NeonDotProgressBar, _G85AltSnareProgressBar) + _ST_CANVAS_CLASSES):
+                try:
+                    widget = widget.master
+                except Exception:
+                    break
+                continue
+            if widget.winfo_class() == 'Canvas' and not str(widget.cget('scrollregion') or '').strip():
+                # Same rule as the <MouseWheel> walker: no scrollregion, no scrolling.
                 try:
                     widget = widget.master
                 except Exception:

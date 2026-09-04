@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.13.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.13.2  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,45 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.13.2   --   2026-09-04
+------------------------------------------------------------------------------
+  Two fixes on the tabs. The Song Tester refused to start on a fresh install of
+  4.13.0 or 4.13.1, and the Practice tab's game surface scrolled under the
+  mouse wheel.
+
+  THE SONG TESTER STARTS AGAIN
+  On an install made from the public repo, the Song Tester tab showed "Song
+  Tester could not start" in place of the tab. The progress bar it builds draws
+  a row of snare sprites, and those sprite files had never been part of the
+  public repo: every progress bar in ParaKit had been drawing an empty strip on
+  such installs, quietly, and the redesigned tab was the first to paint its bar
+  while building, which turned the quiet gap into a refusal. Two things change.
+  The sprite files now ship (assets/progressbar and assets/ui/progress_bars join
+  the update set, so Download update now brings them), and the bar no longer
+  needs them to exist: a missing sprite leaves an empty bar that still answers
+  every call, on first build and on every resize.
+
+  THE PRACTICE TAB STAYS PUT
+  The mouse wheel over the Practice highway scrolled the whole game surface up
+  and down. The handler that scrolls whichever page is under the pointer took
+  the highway canvas for a scrolling page. Canvases that are drawings rather
+  than scroll hosts (the highway, the progress bars, the histograms, the cover
+  art) are now passed over by both wheel paths, and a page that really scrolls
+  still does.
+
+  WHAT DID NOT CHANGE
+  Detection, charting and the layouts. The five protected functions are
+  byte-identical.
+
+  UNDER THE HOOD
+  INV152 drives both wheel paths on a plain canvas and on a scroll host; INV153
+  builds the snare bar with its sprite folder pointed nowhere, drives set, tick
+  and resize, then confirms the real sprites still render. The mutation
+  sandbox now carries the sprite folders: its red baseline on INV128/INV130
+  since 4.13.0 was the shipped tree, not the sandbox. A release now runs the
+  invariants suite inside the served tree before the push.
 
 ------------------------------------------------------------------------------
   v4.13.1   --   2026-09-03
