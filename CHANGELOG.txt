@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.13.2  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.13.3  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,72 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.13.3   --   2026-09-04
+------------------------------------------------------------------------------
+  This release adds no feature. It verifies that the animated progress bars are
+  on screen, and it explains what 4.13.2 repaired, because that part deserves
+  saying plainly.
+
+  THE ANIMATED PROGRESS BARS WERE NEVER VISIBLE. NOW THEY ARE.
+  ParaKit draws its progress bars as a row of snare-drum sprites that light up
+  as work proceeds. Those sprite images were never included in the public
+  download. From May 2026 until 4.13.2 yesterday, on every copy of ParaKit
+  installed from the public repository, those bars drew nothing at all: a dark
+  empty strip where the animation belongs. Eleven of them, across nine tabs.
+
+  If you ever watched a conversion run against a blank bar and wondered whether
+  anything was happening, that is what you were looking at. The work itself was
+  never affected. Only the picture of it was missing.
+
+  MOST OF IT WAS SILENT. TWO PARTS WERE NOT.
+  On the bars that simply switch on and off -- Single Song Creator, Stem
+  Splitter, Audio to MIDI, Sheet Music to MIDI, YouTube to FLAC, the .ogg
+  converter, both Create Multiple Songs bars and the Asset Manager search --
+  starting, running and stopping all succeeded on an empty bar. No error, no
+  message, nothing in any log. Those tabs just showed a blank strip.
+
+  Two places behaved worse, and if you hit either one, this is what it was:
+
+    - The MIDI Extractor, inside Audio to MIDI. Picking a file or a folder, and
+      every step of a batch extraction, tried to move a bar that had nothing to
+      move and raised an error. If you run ParaKit from the .bat file you would
+      have seen "Exception in Tkinter callback" and a traceback in the console
+      window, usually right after a file preview had loaded correctly. The
+      extraction count beside the bar also stopped updating. This has been the
+      case since the bar was added in May.
+
+    - The Song Tester, from 4.13.0 on. The tab did not open at all. In its place
+      was "Song Tester could not start", followed by a suggestion that two
+      program files were missing from your folder. That suggestion was wrong --
+      the files were there. The real cause was the missing sprite images, the
+      same ones behind everything else described here.
+
+  WHAT WAS MEASURED
+  A fresh install built from the public repository was opened, and every
+  progress bar it creates was found by inspecting the program's own window
+  contents, then started, run and stopped:
+
+    on the previously published version   10 bars, all drawing nothing
+    on the current version                11 bars, all drawing and animating
+
+  The eleventh is the Song Tester's, absent from the first count because that
+  tab could not open.
+
+  WHY IT WENT UNSEEN FOR FOUR MONTHS
+  A missing sprite left a bar empty instead of stopping anything, and the nine
+  quiet bars never complained. The MIDI Extractor's error went to a console
+  window that most people never look at. Only the Song Tester failed somewhere
+  impossible to miss, and only after its rebuild in 4.13.0 -- which is the sole
+  reason any of this was found at all.
+
+  A new check now opens the program, finds every progress bar in it, and fails
+  if any of them draws nothing. Drawing nothing is no longer a silent pass.
+
+  WHAT DID NOT CHANGE
+  Detection, charting, the layouts and every tab's behavior. The five protected
+  functions are byte-identical.
 
 ------------------------------------------------------------------------------
   v4.13.2   --   2026-09-04
