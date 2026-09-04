@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.12.1  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.13.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,102 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.13.1   --   2026-09-03
+------------------------------------------------------------------------------
+  The layout mode applies without a restart. Choosing Auto, Compact or Roomy
+  used to save the setting and ask for a relaunch; the header, tab bar and
+  control sizes now change in place, and a Layout button at the top right of
+  the window cycles the three modes. The Song Tester also stops scrolling
+  above its own heading on displays where the whole tab already fits.
+
+  LAYOUT MODE, LIVE
+  The Layout button (top right, beside Dark) and Tools > Layout Mode both
+  apply the choice now: the header shrinks or grows, the tab bar reflows, and
+  every button, label and field takes the size the mode uses. The status line
+  says what changed and, when the mode is already in effect, says that
+  instead. Every tab follows: the Song Tester, the MIDI Editor and
+  Audio->MIDI re-apply their spacing in place, and the Stem Splitter and
+  YouTube->FLAC now sit in a scrolling page in both modes, so nothing
+  waits for a relaunch.
+
+  If the setting cannot be saved (a locked or full config file), the layout
+  still applies for the session, and ParaKit says the choice was not saved
+  rather than reporting a success.
+
+  THE SONG TESTER STOPS AT ITS OWN TOP
+  On a display where the whole tab fit with room to spare, the Song Tester
+  could still be scrolled, and scrolling up pushed the whole tab down and
+  painted an empty band above the heading. The same gap sat unused below the
+  Report. Both are gone: the tab fills the space it is given, the Report grows
+  into what is left over, and there is nothing to scroll unless the content is
+  genuinely taller than the window, which is still the case in Roomy on a
+  1080p display.
+
+  THE AUTO-FIX CARD IS TWO HALVES
+  When a run finds issues, the Auto-Fix card used to put its Fix Log under
+  the options as a five-line strip, which made the card tall enough to drop
+  below the fold in Roomy on a 1080p window. The options now sit on the left
+  and the Fix Log on the right, as tall as the options beside it, the same
+  shape as the Audio->MIDI tab's Log card. The two action buttons stack.
+
+  WHAT THE LAYOUT MESSAGE SAYS NOW
+  Choosing a layout used to end with "tab layouts update on the next
+  launch", which read as an instruction to relaunch when the button press
+  had already done the work. The status line now states a fact instead:
+  "Layout: Compact — applied." The header hint and Help say the same, and
+  none of them lists an exception, because there is none.
+
+  WHAT DID NOT CHANGE
+  The two layouts themselves. A freshly launched app in either mode is
+  pixel-identical to 4.13.0 on every tab, with one visible exception: the
+  Stem Splitter and YouTube->FLAC pages show their scrollbar in roomy as
+  well as compact. A swapped-to layout is pixel-identical to a fresh launch
+  in that mode, header rows and all four of those tabs alike. The five
+  protected functions are byte-identical.
+
+  UNDER THE HOOD
+  The header is built by one method that a live swap can call again; the tab
+  bar rebuilds its buttons without disturbing the notebook underneath. A gate
+  driver, tools/layout_swap_smoke_2026-09-03.py, proves the swap against fresh
+  launches (90 checks), and INV151 keeps the rebuilt tab bar aligned with the
+  notebook in the invariants suite.
+------------------------------------------------------------------------------
+  v4.13.0   --   2026-09-03
+------------------------------------------------------------------------------
+  The Song Tester tab is rebuilt to the v5 design. Same analysis, same files,
+  same buttons; the result is now readable at a glance instead of buried in a
+  log.
+
+  THE SONG TESTER TAB, REDESIGNED
+  Two columns. On the left: the hand-edit caveat (now collapsible), Files,
+  Difficulty, Run Sync Test, Adjust & Re-test, and the Auto-Fix panel, which
+  still appears only when a run finds issues. On the right: a Result strip
+  with the rating badge (EXCELLENT / GOOD / NEEDS WORK), Detected BPM, Offset,
+  Avg distance, Worst drift and Notes, a sync progress bar, and a score bar
+  that fills to "N of M sections within 0.15 s drift"; below it a Sync
+  Timeline that draws every section's drift with the chart notes and the
+  audio onsets as tick lanes; and the Report, with an Export button. The two
+  columns stack when the window is narrow.
+
+  The Adjust fields fill with the detected BPM and offset when a run
+  finishes, and stay disabled while one is running. An .rlrr-only run now
+  reports all seven progress phases (it used to skip the first). The Files
+  note says what happens when both a MIDI and an .rlrr are set: the .rlrr
+  supplies the notes, the MIDI only its tempo.
+
+  WHAT DID NOT CHANGE
+  The analysis itself. Detection, alignment scoring, the section drift
+  thresholds, the rating rule and the report text are the same code as
+  4.12.1; the redesign is the tab around them. The five protected functions
+  are byte-identical.
+
+  UNDER THE HOOD
+  The tab lives in two sidecar modules next to the app,
+  parakit_song_tester_tab.py and parakit_song_tester_widgets.py, the same
+  way the Spectral Comparison tab does. If either is missing, the tab shows
+  a message saying so instead of failing to build.
 
 ------------------------------------------------------------------------------
   v4.12.1   --   2026-09-01

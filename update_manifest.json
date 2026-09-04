@@ -1,10 +1,10 @@
 {
-  "version": "4.12.1",
+  "version": "4.13.1",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Entries marked \"doc\": true are prose -- a hash mismatch on one is skipped by the updater instead of aborting the whole update; everything else stays fatal. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "9b03a1be9d10b010ce70f8713f5e395aa1ceda058f54aa4c2d0b36dd93ebdd0b",
+      "sha256": "84416e8aabdbd99fcb0b445f2e65b33c6a9291bf25afb8fbd68a76cb12af23ef",
       "doc": true
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "e01d6d276f79724a4c941435f25d6d6b136c50f152e05cfd474865067a2f5eeb",
+      "sha256": "ddc53907ce007f53065d473dad91d46752d43f8a71aa9f91cfd0629d08161166",
       "doc": true
     },
     {
@@ -4560,6 +4560,14 @@
     {
       "path": "parakit_separators/model_resolver.py",
       "sha256": "ad4bb632462a31b102a79b93ef78009f49ce7d7f55c5b93b026e23012630161b"
+    },
+    {
+      "path": "parakit_song_tester_tab.py",
+      "sha256": "e3955ccf3f7259269a1d1d173fa63079b11fa823021d07d43c90e003c04f6729"
+    },
+    {
+      "path": "parakit_song_tester_widgets.py",
+      "sha256": "14bbbbc6eeb25ed958f9886c6c0d55f1f0273d42ddb69c0865e69dc1ac520e9d"
     },
     {
       "path": "parakit_spectral_engine.py",
