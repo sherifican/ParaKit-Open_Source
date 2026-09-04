@@ -485,6 +485,7 @@ or exported. Detection itself is untouched — the tab only reads audio and char
 
 ### 13 · Practice
 <img src="screenshots/app-11b-practice.png?v=20260821" width="900" alt="Practice tab">
+<img src="screenshots/app-11c-practice-gameplay.png?v=20260904" width="900" alt="Practice tab, gameplay: the note highway with the Live Settings panel open">
 
 ### 14 · Quick Start & FAQ
 <img src="screenshots/app-12-quick-start-faq.png?v=20260821" width="900" alt="Quick Start & FAQ">
