@@ -60,12 +60,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "ddc53907ce007f53065d473dad91d46752d43f8a71aa9f91cfd0629d08161166",
+      "sha256": "9ba25a5394c566092c60c4220d25aeb206575e88819c673cfe7e5401c98f6481",
       "doc": true
     },
     {
       "path": "README.txt",
-      "sha256": "a3f82e10a5966e46f83055d9f5ed9013f55148c7727601b95df3b73694f21a34",
+      "sha256": "02574c1a88518ff95cff1606ef3934b4e9420132e779e0a3010ea32d1524c41b",
       "doc": true
     },
     {
