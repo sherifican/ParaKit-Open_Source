@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.13.3  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.13.4  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,80 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.13.4   --   2026-09-07
+------------------------------------------------------------------------------
+  This release ships the three Folder Batch starter presets the help text
+  already named, and it stops several places that silently did the wrong
+  thing or said they had done something they had not.
+
+  FOLDER BATCH STARTER PRESETS NOW SHIP
+  Folder Batch's three starter presets -- default.json, fast_rock.json,
+  and metal.json -- ship with the download for the first time. The help
+  text already promised them. They were never in the public download.
+
+  TWO SAME-NAMED CHARTS KEEP BOTH MIDI FILES
+  Extracting two charts with the same file name in one batch no longer
+  overwrites one MIDI with the other. The second is written as
+  <stem> (N).mid. This holds in the extractor inside Audio to MIDI and
+  in the standalone extractor.
+
+  SPECTRAL COMPARE READS UTF-16 CHARTS
+  Spectral Compare now reads UTF-16 charts and the tempo recorded in
+  them. 119 of the 1,341 charts in the library were UTF-16 and failed
+  Compare before.
+
+  PREVIEW PLAYS ITS OWN AUDIO AFTER PRACTICE
+  After Practice has been used, Preview plays the audio it has selected,
+  not Practice's song under Preview's file name. Preview submits its own
+  selection before every Play, and does not start if that load fails.
+
+  PREVIEW'S IMPORT AND EXPORT ARROWS POINT THE RIGHT WAY
+  Import MIDI points down. Export MIDI points up, on the button and on
+  the export status line. They were swapped.
+
+  PREVIEW'S FALLBACK READER KEEPS ITS TIMING
+  When Preview has to use its fallback MIDI reader, notes before a late
+  first tempo keep the timing they had at 120 BPM until that tempo,
+  instead of being shifted as if the later tempo had always been in force.
+
+  REPAIR REPORTS A FAILED FILE-LIST DOWNLOAD
+  Dependency repair reports a failed or malformed download of the file
+  list it needs, instead of printing "Nothing to do." after doing nothing.
+
+  PRACTICE CONTROLS THAT WERE NEVER WIRED SAY SO
+  Save as, Pin to song, Export backup, Import backup, and Reset
+  everything are marked "Unavailable in this version". They used to
+  post status text that implied they had done something.
+
+  THE SONG TESTER NAMES THE PERCENTAGE
+  The result card's note count reads NOTES (% OF EXPECTED), because the
+  number is the detected count and the percentage is against the expected
+  minimum. The report prints, under that percentage, that the expected
+  minimum is an estimate: 2 hits per beat from the chart's start to its
+  last note at the chart's BPM, with 8 per beat as the upper reference,
+  and that rests and breaks can put real charts below the minimum.
+
+  AUDIO TO MIDI FILLS ITS COLUMNS
+  The Log and, while it is shown, the MIDI Extractor fill the height of
+  their columns instead of leaving a band of empty space beneath them.
+
+  THE REPO BANNER USES THE APP'S OWN LOGO
+  The repository banner's ParaKit wordmark is the app's own header logo.
+
+  THE HEADER WORDMARK IS NAMED AS IT SHIPS
+  The app looks for its header wordmark as parakit_header_logo.png,
+  the name the file ships under. The three references spelled it with
+  a capital P; with only the shipped lowercase file present, that
+  lookup fails on a case-sensitive file system. No file is renamed.
+
+  RELEASES ARE CHECKED FOR MISSING FILES
+  A public download is now checked for the files the app needs before it
+  goes out.
+
+  WHAT DID NOT CHANGE
+  Detection and charting.
 
 ------------------------------------------------------------------------------
   v4.13.3   --   2026-09-04

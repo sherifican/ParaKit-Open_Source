@@ -1,0 +1,24 @@
+{
+    "_comment": "ParaKit Folder Batch Template — schema_version 1. TODO: tune from paradb corpus once Kimi's extractor lands.",
+    "schema_version": 1,
+    "name": "default",
+    "chart": {
+        "difficulty": "Expert",
+        "complexity": 3,
+        "creator": "ParaKit"
+    },
+    "difficulty_reduction": {
+        "enabled": false,
+        "difficulty": "Expert"
+    },
+    "metadata_defaults": {
+        "artist": "",
+        "album": "",
+        "year": null,
+        "genre": ""
+    },
+    "output": {
+        "folder_pattern": "{title}",
+        "overwrite_policy": "skip"
+    }
+}

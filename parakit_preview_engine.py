@@ -676,8 +676,9 @@ def _read_midi_minimal(path: str) -> Tuple[List[Tuple[float, int, int]], float]:
     if not tempo_events:
         tempo_events = [(0, 500000)]
     tempo_events.sort(key=lambda e: e[0])
-    if tempo_events[0][0] != 0:
-        tempo_events.insert(0, (0, tempo_events[0][1]))
+    first_declared = tempo_events[0][1]
+    if tempo_events[0][0] > 0:
+        tempo_events.insert(0, (0, 500000))
 
     def tick_to_sec(tick: int) -> float:
         sec = 0.0
@@ -691,7 +692,7 @@ def _read_midi_minimal(path: str) -> Tuple[List[Tuple[float, int, int]], float]:
         sec += (tick - prev_tick) * prev_usec / 1_000_000.0 / ticks_per_beat
         return sec
 
-    bpm = 60_000_000.0 / tempo_events[0][1]
+    bpm = 60_000_000.0 / first_declared
     rows = sorted((tick_to_sec(t), note, vel) for t, note, vel in note_events)
     return rows, safe_bpm(bpm)
 

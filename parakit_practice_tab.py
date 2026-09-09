@@ -2635,10 +2635,21 @@ class KitStudioPanel(tk.Frame):
 
         act = tk.Frame(body, background=PANEL)
         act.pack(fill=tk.X, pady=(0, 6))
-        OutlineButton(act, "Save as…", accent=PURPLE_EDGE,
-                     command=self._save_as).pack(side=tk.LEFT, padx=(0, 4))
-        OutlineButton(act, "Pin to song", accent=PURPLE_EDGE,
-                     command=self._pin).pack(side=tk.LEFT, padx=4)
+        self.save_as_btn = OutlineButton(
+            act, "Save as…", accent=PURPLE_EDGE,
+            command=self._save_as, tooltip="Unavailable in this version")
+        self.save_as_btn.set_enabled(False)
+        self.save_as_btn.pack(side=tk.LEFT, padx=(0, 4))
+        self.pin_btn = OutlineButton(
+            act, "Pin to song", accent=PURPLE_EDGE,
+            command=self._pin, tooltip="Unavailable in this version")
+        self.pin_btn.set_enabled(False)
+        self.pin_btn.pack(side=tk.LEFT, padx=4)
+        self._unavailable_note = tk.Label(
+            body, text="Save as / Pin to song: Unavailable in this version",
+            background=PANEL, foreground=MUTED, font=F_SMALL,
+            wraplength=270, justify=tk.LEFT, anchor=tk.W)
+        self._unavailable_note.pack(fill=tk.X, pady=(0, 6))
         self.lefty_sw = ToggleSwitch(act, on=bool(self._get_layout().get("lefty")),
                                     command=self._on_lefty, background=PANEL)
         self.lefty_sw.pack(side=tk.RIGHT)
@@ -2922,10 +2933,12 @@ class KitStudioPanel(tk.Frame):
             self._commit()
 
     def _save_as(self):
-        self._note("Save-as user presets are wired at integration (config seam).")
+        self._note("Unavailable in this version")
+        return
 
     def _pin(self):
-        self._note("Pin-to-song persists to the song record at integration.")
+        self._note("Unavailable in this version")
+        return
 
     def _hw_sliders(self, parent):
         prefs = self._get_prefs()
@@ -3868,28 +3881,37 @@ class SettingsOverlay(_Overlay):
     # ----- Data tab -----
     def _tab_data(self) -> None:
         c = self.content
-        OutlineButton(c, "Export backup…", accent=PURPLE_EDGE,
-                     command=self._export_backup).pack(anchor=tk.W, pady=3)
-        OutlineButton(c, "Import backup…", accent=PURPLE_EDGE,
-                     command=self._import_backup).pack(anchor=tk.W, pady=3)
-        OutlineButton(c, "Reset everything…", accent=AMBER,
-                     command=self._reset_everything).pack(anchor=tk.W, pady=3)
+        self.export_backup_btn = OutlineButton(
+            c, "Export backup…", accent=PURPLE_EDGE,
+            command=self._export_backup, tooltip="Unavailable in this version")
+        self.export_backup_btn.set_enabled(False)
+        self.export_backup_btn.pack(anchor=tk.W, pady=3)
+        self.import_backup_btn = OutlineButton(
+            c, "Import backup…", accent=PURPLE_EDGE,
+            command=self._import_backup, tooltip="Unavailable in this version")
+        self.import_backup_btn.set_enabled(False)
+        self.import_backup_btn.pack(anchor=tk.W, pady=3)
+        self.reset_everything_btn = OutlineButton(
+            c, "Reset everything…", accent=AMBER,
+            command=self._reset_everything, tooltip="Unavailable in this version")
+        self.reset_everything_btn.set_enabled(False)
+        self.reset_everything_btn.pack(anchor=tk.W, pady=3)
+        self._unavailable_note = tk.Label(
+            c, text="Unavailable in this version",
+            background=PANEL, foreground=MUTED, font=F_SMALL)
+        self._unavailable_note.pack(anchor=tk.W, pady=(6, 0))
 
     def _export_backup(self):
-        path = filedialog.asksaveasfilename(
-            title="Export practice backup", defaultextension=".json",
-            filetypes=[("JSON", "*.json")])
-        if path:
-            self._note(f"Backup export lands at integration (config seam). ({os.path.basename(path)})")
+        self._note("Unavailable in this version")
+        return
 
     def _import_backup(self):
-        path = filedialog.askopenfilename(title="Import practice backup",
-                                         filetypes=[("JSON", "*.json")])
-        if path:
-            self._note("Backup import lands at integration (config seam).")
+        self._note("Unavailable in this version")
+        return
 
     def _reset_everything(self):
-        self._note("Reset-everything is a danger-confirm action wired at integration.")
+        self._note("Unavailable in this version")
+        return
 
     # ----- shared control factories -----
     def _seg_row(self, parent, label, options, idx, on_change):

@@ -6067,7 +6067,9 @@ class MidiExtractorPanel:
         # Wrap everything in a padded inner frame — no explicit bg needed;
         # ttk widgets inherit the theme background.
         body = ttk.Frame(self._frame, padding=16)
-        body.pack(fill="x")
+        # expand: the panel's log is packed to take whatever height the
+        # reveal frame is given; that height must reach the body first.
+        body.pack(fill="both", expand=True)
 
         if not _RLRR_AVAILABLE:
             ttk.Label(body,
@@ -6432,6 +6434,7 @@ class MidiExtractorPanel:
         # mid-batch used to strand the UI on "Running…" with no error shown.
         ok_count = err_count = skip_count = 0
         total = len(rlrr_files)
+        self._produced_outputs: set[str] = set()  # per-run collision guard
         try:
             self._frame.after(0, lambda: self._progress.configure(
                 maximum=max(total, 1), value=0))
@@ -6490,6 +6493,26 @@ class MidiExtractorPanel:
         return True, f"{label} -> {out_path.name} ({len(notes)} notes)"
 
     def _resolve_output(self, rlrr_path: Path) -> Path:
+        if self._output_dir is not None:
+            base = self._output_dir / rlrr_path.with_suffix(".mid").name
+            out_path = base
+            seen = self._produced_outputs
+            key = lambda p: os.path.normcase(os.path.abspath(p))
+            # Only the first claimant may reuse its bare on-disk name.
+            if key(base) in seen:
+                n = 2
+                while True:
+                    out_path = base.with_name(f"{base.stem} ({n}).mid")
+                    if (key(out_path) not in seen
+                            and not out_path.exists()):
+                        break
+                    n += 1
+            seen.add(key(out_path))
+            if out_path != base:
+                self._frame.after(0, lambda b=base.name, o=out_path.name: self._log_write(
+                    f"warn: {b} already written this run — using {o} instead\n",
+                    "warn"))
+            return out_path
         dest_dir = self._output_dir if self._output_dir else rlrr_path.parent
         return dest_dir / rlrr_path.with_suffix(".mid").name
 
@@ -6533,7 +6556,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.13.3"
+    VERSION = "4.13.4"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -7040,12 +7063,12 @@ class MidiToRlrrApp:
             wordmark_candidates = []
             if getattr(sys, 'frozen', False):
                 wordmark_candidates.append(
-                    os.path.join(os.path.dirname(sys.executable), 'Parakit_header_logo.png'))
+                    os.path.join(os.path.dirname(sys.executable), 'parakit_header_logo.png'))
                 wordmark_candidates.append(
-                    os.path.join(getattr(sys, "_MEIPASS", ""), 'Parakit_header_logo.png'))
+                    os.path.join(getattr(sys, "_MEIPASS", ""), 'parakit_header_logo.png'))
             else:
                 wordmark_candidates.append(
-                    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Parakit_header_logo.png'))
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'parakit_header_logo.png'))
             wordmark_path = next((p for p in wordmark_candidates if p and os.path.exists(p)), None)
             if wordmark_path and os.path.exists(wordmark_path):
                 from PIL import Image, ImageTk
@@ -8866,7 +8889,8 @@ class MidiToRlrrApp:
         hash-verified after download, and backed up (*.prev) before an atomic
         replace. Does NOT touch the main 'ParaKit v4.0.py'. Synchronous, no UI —
         call from a worker thread. Returns (updated_list, skipped_count,
-        failed_list); a repo with no manifest yields ([], 0, []).
+        failed_list). Manifest retrieval, parsing and structure errors raise;
+        a valid manifest with an empty files list yields ([], 0, []).
 
         *progress*, if given, is called as progress(status, rel, done, total):
         once with status="start" (rel=None, done=0), then per file with
@@ -8885,14 +8909,19 @@ class MidiToRlrrApp:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.read()
 
-        dep = []
         try:
             man = _json.loads(
                 _fetch(self.PARAKIT_MANIFEST_RAW_URL, timeout=30).decode("utf-8"))
-            if isinstance(man, dict):
-                dep = man.get("files", []) or []
-        except Exception:
-            dep = []
+        except Exception as e:
+            raise RuntimeError(
+                f"could not fetch/parse update_manifest.json ({e})") from e
+        if not isinstance(man, dict):
+            raise ValueError(
+                "update_manifest.json is malformed (manifest must be an object)")
+        if not isinstance(man.get("files"), list):
+            raise ValueError(
+                "update_manifest.json is malformed (files must be a list)")
+        dep = man["files"]
 
         # HARD path sanitization: reject absolute paths and '..' traversal; the
         # resolved path MUST stay under app_dir, so a bad/hostile manifest can
@@ -9859,8 +9888,8 @@ class MidiToRlrrApp:
                 updated, skipped, failed = self._sync_manifest_deps(
                     app_dir, progress=dep_progress)
             except Exception as e:
-                _finish("Restore failed — check your internet connection and "
-                        "try again. (%s)" % e, "err")
+                _finish("Restore failed — %s. Try again later; if this persists, "
+                        "report this problem." % e, "err")
                 return
             parts = []
             if updated:
@@ -17825,10 +17854,15 @@ demucs.separate.main()
         def _toggle_midi_extractor():
             self._midi_extractor_visible = not self._midi_extractor_visible
             if self._midi_extractor_visible:
-                self._midi_extractor_frame.pack(fill=tk.X, pady=(4, 0))
+                # The Advanced card and the reveal frame expand only while
+                # the extractor is shown, so its log fills the right column;
+                # hidden, the card keeps its natural height as before.
+                adv_frame.pack_configure(fill=tk.BOTH, expand=True)
+                self._midi_extractor_frame.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
                 midi_reveal_btn.configure(text="▴  Hide MIDI Extractor")
             else:
                 self._midi_extractor_frame.pack_forget()
+                adv_frame.pack_configure(fill=tk.X, expand=False)
                 midi_reveal_btn.configure(text="▾  MIDI Extractor (hidden)")
 
         midi_reveal_btn = ttk.Button(adv_frame,
@@ -18025,7 +18059,9 @@ demucs.separate.main()
         # Output card (frees the left column's lower half for the Song Library).
         a2m_log_frame = ttk.LabelFrame(mid_body, text=" Log ", padding=5,
                                        style="Card.TLabelframe")
-        a2m_log_frame.pack(fill=tk.X, pady=(0, 10))
+        # expand: the middle column is stretched to the settings column's
+        # height, and the Log is the card that should take that height.
+        a2m_log_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         a2m_log_btn_row = ttk.Frame(a2m_log_frame)
         a2m_log_btn_row.pack(fill=tk.X, pady=(0, 4))
@@ -49097,6 +49133,11 @@ demucs.separate.main()
             ratio_pct = effective_note_count / expected_min * 100
             self._tester_log(f"  Notes: {effective_note_count}  "
                              f"({ratio_pct:.0f}% of expected minimum)")
+            self._tester_log(
+                f"    (estimate: the minimum reference is 2 hits per beat from the chart's "
+                f"start to its last note at {midi_bpm:.0f} BPM; the upper reference is "
+                f"8 per beat; rests and breaks can put real charts below the minimum)",
+                "#888888")
 
             if effective_note_count < warn_min:
                 ratio = effective_note_count / expected_min

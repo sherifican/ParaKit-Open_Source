@@ -14,6 +14,7 @@ v3: per-difficulty filter (batch), pre-extraction preview + metadata edit
 """
 from __future__ import annotations
 
+import os
 import re
 import threading
 from pathlib import Path
@@ -429,7 +430,7 @@ class App(tk.Tk):
         total = len(rlrr_files)
         self.after(0, lambda: self._progress.config(maximum=max(total, 1), value=0))
         ok_count = err_count = skip_count = 0
-        self._produced_outputs: set[Path] = set()  # per-run collision guard
+        self._produced_outputs: set[str] = set()  # per-run collision guard
 
         for i, rlrr_path in enumerate(rlrr_files, 1):
             if self._stop_event.is_set():
@@ -484,20 +485,23 @@ class App(tk.Tk):
         dest_dir = self._output_dir if self._output_dir else rlrr_path.parent
         out_path = dest_dir / rlrr_path.with_suffix(".mid").name
         if self._output_dir is not None:
-            # Flattened mode: two same-named charts from different subfolders
-            # would collide — uniquify against names already produced this run.
-            seen = getattr(self, "_produced_outputs", None)
-            if seen is not None:
-                base = out_path
+            base = out_path
+            seen = self._produced_outputs
+            key = lambda p: os.path.normcase(os.path.abspath(p))
+            # Only the first claimant may reuse its bare on-disk name.
+            if key(base) in seen:
                 n = 2
-                while out_path in seen:
+                while True:
                     out_path = base.with_name(f"{base.stem} ({n}).mid")
+                    if (key(out_path) not in seen
+                            and not out_path.exists()):
+                        break
                     n += 1
-                if out_path != base:
-                    self.after(0, lambda b=base.name, o=out_path.name: self._log_write(
-                        f"warn: {b} already written this run — using {o} instead\n",
-                        "warn"))
-                seen.add(out_path)
+            seen.add(key(out_path))
+            if out_path != base:
+                self.after(0, lambda b=base.name, o=out_path.name: self._log_write(
+                    f"warn: {b} already written this run — using {o} instead\n",
+                    "warn"))
         return out_path
 
     # ------------------------------------------------------------------

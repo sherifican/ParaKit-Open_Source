@@ -2435,7 +2435,7 @@ class PreviewTab(ttk.Frame):
 
         self._sep(bar).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=4)
         self.import_btn = OutlineButton(
-            bar, "⇧ Import MIDI…", accent="#e09a3a", command=self._on_import,
+            bar, "⇩ Import MIDI…", accent="#e09a3a", command=self._on_import,
             tooltip="Import a chart (.mid / .rlrr / parakit-chart .json) "
                     "into the preview.")
         self.import_btn.pack(**pad)
@@ -2444,7 +2444,7 @@ class PreviewTab(ttk.Frame):
             bar, text="no chart", background=PANEL, foreground=MUTED, font=F_SMALL)
         self.chart_path_label.pack(side=tk.LEFT, padx=(0, 6), pady=6)
         self.export_btn = OutlineButton(
-            bar, "⇩ Export MIDI…", accent=CYAN, command=self._on_export,
+            bar, "⇧ Export MIDI…", accent=CYAN, command=self._on_export,
             tooltip="Export the current chart — a GM drum .mid (the "
                     "default) or a lossless parakit-chart .json.")
         self.export_btn.pack(**pad)
@@ -2792,6 +2792,11 @@ class PreviewTab(ttk.Frame):
         if playing:
             start_at = self.canvas.now
             self._synth_prev_t = start_at
+            if not self._submit_local_stems():
+                self.canvas.pause()
+                self.play_btn.configure(text="▶ Play")
+                return
+            self._apply_mix_state()
             ok, res = self._hook_call("mixer_play", start_at,
                                       self._speed)
             # RE-ANCHOR THE CLOCK (owner-reported desync, 2026-08-17): the chart
@@ -3256,6 +3261,20 @@ class PreviewTab(ttk.Frame):
         self._cfg_set(T9_AUDIO_DIR_KEY, os.path.dirname(path))
         self._load_stem(bus, path)
 
+    def _submit_local_stems(self):
+        if "mixer_load_stems" not in self.hooks:
+            # Standalone (run_preview_tab.bat constructs PreviewTab with no hooks):
+            # there is no shared host store to restore, so the clock plays as it
+            # always did. Only a PRESENT loader that raises or returns False refuses.
+            return True
+        specs = [{"path": p, "bus": b} for b, p in self._stem_paths.items() if p]
+        ok, res = self._hook_call("mixer_load_stems", specs)
+        if not ok or res is False:
+            self._status("Could not restore Preview audio. "
+                         "Playback was not started.", AMBER)
+            return False
+        return True
+
     def _load_stem(self, bus, path):
         if not path:
             return
@@ -3370,6 +3389,11 @@ class PreviewTab(ttk.Frame):
         self.canvas.set_capture_hook(self._on_capture_lane)
         if not self.canvas.is_playing:
             self._on_play_toggle()
+            if not self.canvas.is_playing:
+                self._rec_state = "idle"
+                self._set_record_look("● Record", rec=False)
+                self.canvas.set_capture_hook(None)
+                return
         self._status("● Recording — keys 1–8 drop hits at the hit line.")
 
     def _stop_recording(self):
@@ -3616,7 +3640,7 @@ class PreviewTab(ttk.Frame):
             self._status("Export failed — %s" % exc, AMBER)
             return False
         self._chart_dirty = False   # exported: the edits are preserved on disk
-        self._status("⇩ Exported %d notes → %s" % (count, os.path.basename(path)))
+        self._status("⇧ Exported %d notes → %s" % (count, os.path.basename(path)))
         return True
 
     def _on_export(self):

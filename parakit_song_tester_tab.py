@@ -510,7 +510,7 @@ class SongTesterTab(ttk.Frame):
         self._stat = {}
         for i, (key, label) in enumerate((("bpm", "Detected BPM"), ("offset", "Offset"),
                                            ("avg", "Avg distance"), ("worst", "Worst drift"),
-                                           ("notes", "Notes"))):
+                                           ("notes", "Notes (% of expected)"))):
             cell = ttk.Frame(stats)
             cell.grid(row=0, column=i, padx=(0, 14), sticky="w")
             ttk.Label(cell, text=label.upper(), style="Sub.TLabel", foreground=MUTED,

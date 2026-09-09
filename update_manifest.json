@@ -1,10 +1,10 @@
 {
-  "version": "4.13.3",
+  "version": "4.13.4",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Entries marked \"doc\": true are prose -- a hash mismatch on one is skipped by the updater instead of aborting the whole update; everything else stays fatal. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "f9f4d9d2f3d27bbfb1cadd68831b2cae5a5f1398a03e58a3d711c4eb1f9ce7fa",
+      "sha256": "effc1204dc730cf5b530830125a5f5bbf3b417faa71df749f1de9300918cbef0",
       "doc": true
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "5820d11e97ed6b633c0e8bb71159b8957e6c66070dfe074106303b082370a5b9",
+      "sha256": "72249e0fe79e05292f038aa9775fa69321288d9795fb0ee051ac9f6a18b79b77",
       "doc": true
     },
     {
@@ -183,7 +183,7 @@
     },
     {
       "path": "extractor/rlrr_extract_gui.py",
-      "sha256": "c63a4c40d3e2dc50593932fc4d38032894234b33e1e6747be57fa05686961b15"
+      "sha256": "35aa6b450927c436f8e22e1f3f669d7f5f9d3114cbbbd21cc24af9945e7eeeaf"
     },
     {
       "path": "extractor/rlrr_parse.py",
@@ -4591,7 +4591,7 @@
     },
     {
       "path": "parakit_practice_tab.py",
-      "sha256": "48fa8b075f13101d6dbbee5e159a624aaf06defb5e72c3f47079302b59970aa1"
+      "sha256": "057cd8aac317783616f1b11fb3635877b4f80a7d9913e7f1f14d187c46f6a09a"
     },
     {
       "path": "parakit_practice_widgets.py",
@@ -4599,7 +4599,7 @@
     },
     {
       "path": "parakit_preview_engine.py",
-      "sha256": "c1a6c8de0cbf9ef5a7a5fd1e19c185ba827a21d8324fb2e5ef43674fc9db551a"
+      "sha256": "abf40fd9f20ee23f624629f20ec9083d67d8d40c0dafc1974c273bae7c8f0153"
     },
     {
       "path": "parakit_preview_sprites.py",
@@ -4607,11 +4607,11 @@
     },
     {
       "path": "parakit_preview_tab.py",
-      "sha256": "8e1611e82bdd24a72f27c18da942795e505953489fc2c2615d92a3ef05ed9dff"
+      "sha256": "0503c6c75f9791159199b0ca2b698fea4ac36a36bc5bcc379be5d3e15d01f9ad"
     },
     {
       "path": "parakit_repo_banner.svg",
-      "sha256": "98189b12bcae8f423da9f4e1df5145e29c0e0c3e015b1ae739beb97559d4166a"
+      "sha256": "7b6b03e89b4540fbc87a79d9ff3bc7d639e9fe154d1d18a3f395f2c9b50394b5"
     },
     {
       "path": "parakit_separators/__init__.py",
@@ -4631,7 +4631,7 @@
     },
     {
       "path": "parakit_song_tester_tab.py",
-      "sha256": "e3955ccf3f7259269a1d1d173fa63079b11fa823021d07d43c90e003c04f6729"
+      "sha256": "1e90f6ba3fad068d37fe09a8e32698e5168db459a861b969b4f76c4a2db57958"
     },
     {
       "path": "parakit_song_tester_widgets.py",
@@ -4639,7 +4639,7 @@
     },
     {
       "path": "parakit_spectral_engine.py",
-      "sha256": "3e52f6c58b4c34e68cacf4a69295f95f5ef07de3e2f6b4a4c13ea62527909f4a"
+      "sha256": "e9ea3592d0aeb3034f839c39ec84bc7faa8c08d9bd7d00ca2eb56828574eb384"
     },
     {
       "path": "parakit_spectral_tab.py",
@@ -4897,6 +4897,18 @@
     {
       "path": "rlrr_parse.py",
       "sha256": "630d7d2c513b3d582062a8daa5d198fc6c6ceff89e1824d930e2c8b72ebe07d6"
+    },
+    {
+      "path": "templates/default.json",
+      "sha256": "aa9a6c1f6a27ed17544bb8c1b7fdc6a378adcc883381c9691201bfef797836f8"
+    },
+    {
+      "path": "templates/fast_rock.json",
+      "sha256": "bd50ced69286d7e5d94d3702a84a377a9ae741a1f2b48376baafd7e33e34fb7d"
+    },
+    {
+      "path": "templates/metal.json",
+      "sha256": "9e949d057a1a5f004046119cc98d3c2f01e442c7225fbb2daea510c80fea4d24"
     }
   ]
 }

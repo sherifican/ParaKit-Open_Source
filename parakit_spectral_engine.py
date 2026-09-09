@@ -359,6 +359,22 @@ def _midi_tempo_map(mid):
     return tempo_map
 
 
+def _decode_chart_bytes(path) -> str:
+    """Read chart text through Preview's strict encoding ladder."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    failure = None
+    for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, UnicodeError) as exc:
+            failure = exc
+    raise UnicodeDecodeError(
+        failure.encoding, raw, failure.start, failure.end,
+        "chart decoding failed with utf-8-sig, utf-8, utf-16 and cp1252",
+    ) from failure
+
+
 def chart_bpm(path):
     """First tempo of the chart as BPM, or None on any error (the caller falls
     back to 120). .mid/.midi: first tempo by tick order across all tracks (the
@@ -377,8 +393,7 @@ def chart_bpm(path):
             return None
     if ext == ".rlrr":
         try:
-            with open(path, "r", encoding="utf-8-sig") as f:
-                data = json.load(f)
+            data = json.loads(_decode_chart_bytes(path))
             evs = data.get("bpmEvents") or []
             for ev in evs:
                 bpm = float(ev.get("bpm", 0) or 0)
@@ -519,8 +534,7 @@ def _load_midi_notes(path):
 
 def _load_rlrr_notes(path):
     import math
-    with open(path, encoding="utf-8-sig") as f:
-        data = json.load(f)
+    data = json.loads(_decode_chart_bytes(path))
     if not isinstance(data, dict):
         raise ValueError("rlrr chart: top level must be an object, got %s"
                          % type(data).__name__)
@@ -573,9 +587,8 @@ def _load_rlrr_notes(path):
 
 def _load_json_notes(path):
     import math
-    # utf-8-sig: Windows editors love BOM-prefixing JSON (audit 2026-07-20).
-    with open(path, encoding="utf-8-sig") as f:
-        data = json.load(f)
+    # Accept UTF-8 BOM and UTF-16 charts through the shared decoder.
+    data = json.loads(_decode_chart_bytes(path))
     if not isinstance(data, dict):
         raise ValueError("chart JSON: top level must be an object, got %s"
                          % type(data).__name__)
