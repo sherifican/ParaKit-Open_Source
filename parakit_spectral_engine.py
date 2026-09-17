@@ -409,7 +409,79 @@ def chart_bpm(path):
     return None
 
 
-def write_chart_midi(notes, bpm, path):
+CHART_END_MARKER_TEXT = "ParaKit Chart End"
+
+
+def read_chart_end_secs(path):
+    """Latest exact Chart End marker in seconds; unreadable/invalid -> None."""
+    try:
+        import math
+        import mido
+        mid = mido.MidiFile(path)
+        tpb = mid.ticks_per_beat
+        if tpb <= 0 or mid.type == 2:
+            return None
+        best = None
+        for track in mid.tracks:
+            tick = 0
+            for msg in track:
+                tick += msg.time
+                if (msg.type == "marker"
+                        and msg.text == CHART_END_MARKER_TEXT):
+                    best = tick if best is None else max(best, tick)
+        if best is None:
+            return None
+        secs, prev_tick, prev_tempo = 0.0, 0, 500000
+        for tick, tempo in _midi_tempo_map(mid):
+            if tick >= best:
+                break
+            secs += (tick - prev_tick) * prev_tempo / tpb / 1e6
+            prev_tick, prev_tempo = tick, tempo
+        secs += (best - prev_tick) * prev_tempo / tpb / 1e6
+        return secs if math.isfinite(secs) and secs >= 0 else None
+    except Exception:
+        return None
+
+
+def _write_chart_midi_atomic(path, payload):
+    """Commit already-serialized bytes through a unique sibling temp file."""
+    import os
+    import tempfile
+    path = os.path.abspath(os.fspath(path))
+    fd, tmp = tempfile.mkstemp(
+        prefix=".pkmidisave.", suffix=".tmp", dir=os.path.dirname(path))
+    stream = None
+    try:
+        stream = os.fdopen(fd, "wb")
+        fd = None  # stream owns the descriptor, including on write/flush failure.
+        if stream.write(payload) != len(payload):
+            raise OSError("Short MIDI write")
+        stream.flush()
+        stream.close()
+        stream = None
+        os.replace(tmp, path)
+    except BaseException as exc:
+        if stream is not None:
+            try:
+                stream.close()
+            except BaseException as close_error:
+                exc.add_note("MIDI temp stream close failed: %s" % close_error)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError as close_error:
+                exc.add_note("MIDI temp descriptor close failed: %s" % close_error)
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass
+        except OSError as cleanup_error:
+            # Keep the primary exception; a denied cleanup cannot be guaranteed.
+            exc.add_note("MIDI temp cleanup failed: %s" % cleanup_error)
+        raise
+
+
+def write_chart_midi(notes, bpm, path, chart_end_secs=None):
     """Write ``[(time_s, lane, vel)]`` to a format-0 SMF (prototype writeMidi):
     tpb 480, drum channel 9, one constant-tempo meta event, note-off 60 ticks
     (tpb>>3) after each note-on. Times are re-gridded to ticks at the constant
@@ -467,7 +539,19 @@ def write_chart_midi(notes, bpm, path):
         kind_name = "note_on" if kind else "note_off"
         track.append(mido.Message(kind_name, channel=9, note=note,
                                   velocity=vel, time=delta))
-    mid.save(path)
+    if chart_end_secs is not None:
+        end = float(chart_end_secs)
+        if not (_math_wm.isfinite(end) and end >= 0):
+            raise ValueError("Chart End must be finite and nonnegative")
+        # Use the rounded tempo actually emitted, not the requested BPM.
+        end_tick = max(last, round(end * 1e6 * tpb / round(6e7 / bpm)))
+        track.append(mido.MetaMessage(
+            "marker", text=CHART_END_MARKER_TEXT, time=end_tick - last))
+    # Serialize first: mido validation cannot create a filesystem artifact.
+    import io
+    payload = io.BytesIO()
+    mid.save(file=payload)
+    _write_chart_midi_atomic(path, payload.getvalue())
 
 
 def _load_midi_notes(path):

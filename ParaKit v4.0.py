@@ -803,8 +803,9 @@ BUNDLE_LAUNCH_COPY = (
     "JS runtime (Deno or Node), and ADB. Download Requirements.Files.ONLY.bundle.zip "
     "from the GitHub link, extract, and put the files in a Requirements folder next "
     "to ParaKit (recommended: Requirements\\platform-tools\\ for adb.exe + its two "
-    "DLLs). Core charting (Audio → MIDI, MIDI Editor, Song Creator, Song Tester) "
-    "does not need this bundle."
+    "DLLs). Core charting (Audio → MIDI from .ogg, .mp3, .wav or .flac files, MIDI "
+    "Editor, Song Creator, Song Tester) does not need this bundle. Other Audio → "
+    "MIDI formats work when FFmpeg is on PATH or this bundle is present."
 )
 BUNDLE_MANUAL_NOTE = (
     "Automatic download and install is not in this build. Use Show me how."
@@ -834,8 +835,9 @@ BUNDLE_HOW_LAYOUTS = (
 )
 BUNDLE_HOW_TAIL = (
     "A JS runtime is Node or Deno; either is accepted.\n"
-    "Core charting (Audio → MIDI, MIDI Editor, Song Creator, Song Tester) "
-    "does not need this bundle."
+    "Core charting (Audio → MIDI from .ogg, .mp3, .wav or .flac files, MIDI "
+    "Editor, Song Creator, Song Tester) does not need this bundle. Other Audio → "
+    "MIDI formats work when FFmpeg is on PATH or this bundle is present."
 )
 _PE_SUPPORTED = {0x8664}
 _PE_UNSUPPORTED = {
@@ -1532,13 +1534,188 @@ class BundleDialogOwner:
 # ---------------------------------------------------------------------------
 # FFmpeg path helper — ensures pydub can find ffmpeg in both .py and .exe
 # ---------------------------------------------------------------------------
-def _setup_ffmpeg(base_dir=None, path_lookup=shutil.which):
+def _ffmpeg_name_on_path(path_lookup):
+    """First existing ffmpeg or avconv from a PATH lookup, or None.
+
+    These are the names audioread's FFmpeg backend spawns. A sibling
+    ffprobe is not required. Used to decide whether PATH already has a
+    decoder; not a pair-policy helper.
+    """
+    lookup = path_lookup or (lambda _name: None)
+    for name in ("ffmpeg", "avconv"):
+        found = lookup(name)
+        if found and os.path.isfile(found):
+            return found
+    return None
+
+
+def _path_dir_is_listed(directory, path_value):
+    """True if directory is already an entry of path_value. Order is not changed."""
+    want = os.path.normcase(os.path.normpath(os.path.abspath(directory)))
+    for entry in (path_value or "").split(os.pathsep):
+        if not entry:
+            continue
+        try:
+            got = os.path.normcase(os.path.normpath(os.path.abspath(entry)))
+        except (OSError, ValueError, TypeError):
+            continue
+        if got == want:
+            return True
+    return False
+
+
+def _ensure_ffmpeg_dir_on_path(base_dir=None, path_lookup=shutil.which,
+                               environ=None):
+    """Append the local FFmpeg directory to PATH only when none is on PATH.
+
+    If ffmpeg or avconv is already discoverable by name, PATH is left
+    alone so that by-name winner does not change. If neither is found
+    and _resolve_ffmpeg_paths selected a local Requirements/legacy pair,
+    that directory is appended (not prepended) so existing by-name
+    winners for other tools stay first. Never reorders or removes
+    existing entries. Idempotent. Tests pass `environ` so the real
+    process PATH is never written. Returns True if PATH was changed.
+    """
+    env = os.environ if environ is None else environ
+    if _ffmpeg_name_on_path(path_lookup):
+        return False  # a2m-decode-guard: existing ffmpeg keeps PATH
+    ffmpeg, _ffprobe = _resolve_ffmpeg_paths(
+        base_dir=base_dir, path_lookup=path_lookup)
+    if not ffmpeg:
+        return False
+    pair_dir = os.path.dirname(os.path.abspath(ffmpeg))
+    raw = env.get("PATH", "")
+    if raw is None:
+        raw = ""
+    if _path_dir_is_listed(pair_dir, raw):
+        return False
+    if raw:
+        env["PATH"] = raw + os.pathsep + pair_dir  # a2m-decode-guard: append once
+    else:
+        env["PATH"] = pair_dir
+    return True
+
+
+def _flush_audioread_backends():
+    """Rebuild audioread's cached backend list. Import-guarded; no-op if absent."""
+    try:
+        import audioread
+    except ImportError:
+        return
+    fn = getattr(audioread, "available_backends", None)
+    if not callable(fn):
+        return
+    try:
+        fn(flush_cache=True)
+    except TypeError:
+        return
+    except Exception:
+        return
+
+
+def _a2m_ffmpeg_backend_available(ffmpeg_probe=None):
+    """True if audioread can use an FFmpeg backend after a cache flush.
+
+    This is the capability Audio to MIDI's librosa fallback needs:
+    ffmpeg or avconv that audioread would actually pick, not a
+    same-directory ffprobe pair. The flush is intentional: a negative
+    cache from an earlier miss in this process would otherwise refuse
+    a now-available decoder. Decodable soundfile inputs never reach
+    this function. Tests inject ffmpeg_probe so this stays off the
+    machine's PATH.
+    """
+    if ffmpeg_probe is not None:
+        return bool(ffmpeg_probe())
+    try:
+        import audioread
+    except ImportError:
+        return False
+    fn = getattr(audioread, "available_backends", None)
+    if not callable(fn):
+        return False
+    try:
+        backends = fn(flush_cache=True)  # a2m-decode-guard: flush before an undecodable decision
+    except TypeError:
+        try:
+            backends = fn()
+        except Exception:
+            return False
+    except Exception:
+        return False
+    for backend in backends or ():
+        name = getattr(backend, "__name__", type(backend).__name__)
+        if "ffmpeg" in name.lower():
+            return True
+    return False
+
+
+A2M_DECODE_REFUSAL = (
+    "This file cannot be decoded as audio (%s). "
+    ".ogg, .mp3, .wav and .flac files work as they are. "
+    "Other formats need FFmpeg on PATH or from the Requirements bundle, "
+    "or a conversion in the Audio to .ogg Converter first."
+)
+
+
+def _a2m_soundfile_can_open(path, info_fn=None):
+    """True if soundfile can read `path`. info_fn is for tests."""
+    probe = info_fn
+    if probe is None:
+        try:
+            import soundfile as sf
+            probe = sf.info
+        except Exception:
+            return False
+    try:
+        probe(path)
+        return True
+    except Exception:
+        return False
+
+
+def _a2m_decode_guard(path, *, soundfile_ok=None, ffmpeg_reachable=None,
+                      soundfile_probe=None, ffmpeg_probe=None):
+    """Return None to proceed, or the frozen refusal text.
+
+    Pure of Tk. soundfile can open -> proceed, no FFmpeg lookup.
+    Cannot, and FFmpeg reachable -> proceed (librosa fallback, same path).
+    Cannot, and no FFmpeg -> refusal.
+    """
+    if soundfile_ok is None:
+        if soundfile_probe is not None:
+            soundfile_ok = bool(soundfile_probe(path))
+        else:
+            soundfile_ok = _a2m_soundfile_can_open(path)
+    if soundfile_ok:
+        return None  # a2m-decode-guard: decodable input needs no FFmpeg lookup
+    if ffmpeg_reachable is None:
+        if ffmpeg_probe is not None:
+            ffmpeg_reachable = bool(ffmpeg_probe())
+        else:
+            ffmpeg_reachable = _a2m_ffmpeg_backend_available()
+    if ffmpeg_reachable:
+        return None
+    return A2M_DECODE_REFUSAL % os.path.basename(path)
+
+
+def _setup_ffmpeg(base_dir=None, path_lookup=shutil.which, environ=None):
     """Point pydub at the selected same-directory FFmpeg pair.
 
     PATH-directory pair first, then Requirements / legacy, in source and
     frozen alike. No pair → leave pydub unset. Function-local `import shutil`
     is gone so a fixture `path_lookup` is not bypassed.
+
+    When no ffmpeg/avconv is discoverable by name and a local pair exists,
+    append that directory so audioread can spawn ffmpeg without changing
+    which ffmpeg already won. Then flush audioread's backend cache if the
+    real process PATH changed. Tests pass a fake `environ` so PATH and the
+    audioread cache stay untouched.
     """
+    env = os.environ if environ is None else environ
+    changed = _ensure_ffmpeg_dir_on_path(
+        base_dir=base_dir, path_lookup=path_lookup, environ=env)
+    if changed and env is os.environ:
+        _flush_audioread_backends()
     from pydub import AudioSegment
     if True:  # bundle source-mode ffmpeg pair
         ffmpeg, ffprobe = _resolve_ffmpeg_paths(
@@ -7947,7 +8124,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.14.0"
+    VERSION = "4.14.1"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -8781,9 +8958,9 @@ class MidiToRlrrApp:
             ("book_open",      "🎼", "Sheet Music → MIDI",    "#1a3a8f", WHT),   # 7  Tom-1 navy (owner recolour, v4.8.0)
             ("play",           "▶",  "YouTube → FLAC",        "#e63946", WHT),   # 8  red (snare / YouTube's own brand red)
             ("image",          "🎨", "Asset Manager",         "#00d4d4", DRK),   # 9  cyan
-            ("beaker",         "🔬", "Song Tester",           PUR,       WHT),   # 10
+            ("beaker",         "🔬", "Song Tester",           "#ff6ec7", DRK),   # 10
             ("tv",             "▶",  "Preview",               "#ff6ec7", DRK),   # 11  pink (v4.9.0 — distinct tint)
-            ("note_lanes",     "🥁", "Practice",              PUR,       WHT),   # 12  (v4.9.0)
+            ("note_lanes",     "🥁", "Practice",              "#ff6ec7", DRK),   # 12  (v4.9.0)
             ("question_circle", "📖", "Quick Start & FAQ",    "#bd02c1", WHT),   # 13 magenta
         ]
 
@@ -11499,6 +11676,10 @@ class MidiToRlrrApp:
         already None. C1 production never calls the one-argument form.
         The callback is the captured-request continuation, not a kickoff.
         """
+        try:
+            _setup_ffmpeg()  # a2m-decode-guard: mid-session install reaches PATH
+        except Exception:
+            pass
         if cb is None:
             cb = getattr(self, "_bundle_on_installed", None)
             self._bundle_on_installed = None
@@ -21129,6 +21310,17 @@ demucs.separate.main()
             return
         if not output_dir:
             messagebox.showerror("No Output Folder", "Please select an output folder.")
+            return
+
+        try:
+            _setup_ffmpeg()
+        except Exception:
+            pass
+        _refuse = _a2m_decode_guard(input_path)
+        if _refuse:  # a2m-decode-guard: refuse before the worker starts
+            self._a2m_log(_refuse)
+            self._set_global_status(_refuse)
+            messagebox.showerror("Cannot decode this file", _refuse)
             return
 
         # DATA-LOSS GUARD (R2-4): the conversion writes <out>/MIDIs/<song> MIDI.mid
@@ -45936,8 +46128,10 @@ demucs.separate.main()
               "  Requirements.Files.ONLY.bundle.zip from the GitHub link, extract,\n"
               "  and put the files in a Requirements folder next to ParaKit\n"
               "  (recommended: Requirements\\platform-tools\\ for adb.exe + its two\n"
-              "  DLLs). Core charting (Audio → MIDI, MIDI Editor, Song Creator,\n"
-              "  Song Tester) does not need this bundle.\n"
+              "  DLLs). Core charting (Audio → MIDI from .ogg, .mp3, .wav or\n"
+              "  .flac files, MIDI Editor, Song Creator, Song Tester) does not\n"
+              "  need this bundle. Other Audio → MIDI formats work when FFmpeg\n"
+              "  is on PATH or this bundle is present.\n"
               "  The GitHub link is on the Show me how button of the extra-tools\n"
               "  dialog that opens when a tool is missing.\n"
               "  If ParaKit reports 'No JS runtime detected', the 'Get Deno' button\n"
@@ -46045,8 +46239,10 @@ demucs.separate.main()
               "  Requirements.Files.ONLY.bundle.zip from the GitHub link, extract,\n"
               "  and put the files in a Requirements folder next to ParaKit\n"
               "  (recommended: Requirements\\platform-tools\\ for adb.exe + its two\n"
-              "  DLLs). Core charting (Audio → MIDI, MIDI Editor, Song Creator,\n"
-              "  Song Tester) does not need this bundle.\n"
+              "  DLLs). Core charting (Audio → MIDI from .ogg, .mp3, .wav or\n"
+              "  .flac files, MIDI Editor, Song Creator, Song Tester) does not\n"
+              "  need this bundle. Other Audio → MIDI formats work when FFmpeg\n"
+              "  is on PATH or this bundle is present.\n"
               "  The GitHub link is on the Show me how button of the extra-tools\n"
               "  dialog that opens when a tool is missing.\n\n"
               "  adb.exe, AdbWinApi.dll and AdbWinUsbApi.dll must be together\n"

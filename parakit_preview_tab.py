@@ -3603,6 +3603,12 @@ class PreviewTab(ttk.Frame):
         bpm = eng.safe_bpm(bpm)
         self._before_chart_swap()
         self.canvas.set_chart(notes, bpm)
+        self.canvas.model.chart_end_secs = (
+            eng.read_chart_end_secs(path)
+            if str(path).lower().endswith((".mid", ".midi")) else None)
+        self.canvas.model.midi_source_path = (
+            os.path.normcase(os.path.abspath(path))
+            if str(path).lower().endswith((".mid", ".midi")) else None)
         self.seek_t1.configure(text=fmt_short(self.canvas.duration))
         self._update_seek_from_view(0.0)
         self._sync_bpm_label()
@@ -3648,8 +3654,24 @@ class PreviewTab(ttk.Frame):
             return False
         try:
             if path.lower().endswith((".mid", ".midi")):
-                count = eng.write_smf0(notes, self.canvas.model.bpm, path)
+                source_path = getattr(self.canvas.model, "midi_source_path", None)
+                same_file = (source_path is not None and
+                    os.path.normcase(os.path.abspath(path)) ==
+                    os.path.normcase(os.path.abspath(source_path)))
+                disk_end = (eng.read_chart_end_secs(path)
+                            if same_file and os.path.isfile(path) else None)
+                chart_end = (disk_end if disk_end is not None
+                             else getattr(self.canvas.model, "chart_end_secs", None))
+                count = eng.write_smf0(notes, self.canvas.model.bpm, path,
+                                       chart_end_secs=chart_end)
             else:
+                if getattr(self.canvas.model, "chart_end_secs", None) is not None:
+                    if not messagebox.askyesno(
+                            "Export chart",
+                            "This export format does not preserve Chart End.\n"
+                            "Export without Chart End?",
+                            parent=self):
+                        return False
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(eng.dump_parakit_chart_v1(notes, self.canvas.model.bpm))
                 count = len(notes)
@@ -3758,6 +3780,12 @@ class PreviewTab(ttk.Frame):
             self._chart_dirty = False   # a freshly installed chart is clean
             self._chart_title = payload.get("title") or source
             p = payload.get("path") or ""
+            self.canvas.model.chart_end_secs = (
+                eng.read_chart_end_secs(p)
+                if str(p).lower().endswith((".mid", ".midi")) else None)
+            self.canvas.model.midi_source_path = (
+                os.path.normcase(os.path.abspath(p))
+                if str(p).lower().endswith((".mid", ".midi")) else None)
             self._chart_file_basename = (os.path.basename(str(p)) if p
                                          else str(self._chart_title or ""))
             self._set_song_readout()

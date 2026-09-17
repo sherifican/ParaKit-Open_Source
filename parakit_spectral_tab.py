@@ -1059,6 +1059,8 @@ class MockSpectralModel:
     """
 
     def __init__(self, seed: int = 20260719):
+        self.chart_end_secs = None
+        self.midi_source_path = None
         rng = random.Random(seed)
         self.bpm = 120.0
         beat = 60.0 / self.bpm
@@ -1367,7 +1369,10 @@ class _SpectralModel:
     """Adapter wrapping the real ``parakit_spectral_engine`` output into the
     same shape MockSpectralModel provides, so the views need no changes."""
 
-    def __init__(self, spec: dict, notes, issues, bpm, wave_env=None):
+    def __init__(self, spec: dict, notes, issues, bpm, wave_env=None,
+                 chart_end_secs=None, midi_source_path=None):
+        self.chart_end_secs = chart_end_secs
+        self.midi_source_path = midi_source_path
         self._spec = spec
         # Optional: (top, bot) amplitude envelopes for the Waveform render
         # style. None is a supported state -- GramView falls back to deriving a
@@ -4075,6 +4080,12 @@ class SpectralTab(ttk.Frame):
                     "bpm": bpm,
                     "ref": ref,
                     "cand": cand,
+                    "midi_source_path": (os.path.normcase(os.path.abspath(cand))
+                        if os.path.splitext(cand)[1].lower() in (".mid", ".midi")
+                        else None),
+                    "chart_end_secs": (eng.read_chart_end_secs(cand)
+                        if os.path.splitext(cand)[1].lower() in (".mid", ".midi")
+                        else None),
                     "wave_env": wave_env,
                     "mix_as_drums": bool(mix_as_drums),
                 }
@@ -4125,7 +4136,9 @@ class SpectralTab(ttk.Frame):
         # path (or a hand-built one in a test) has no such key, and a missing
         # waveform must not break a Compare the other two views can serve.
         self._model = _SpectralModel(spec, notes, issues, bpm,
-                                     wave_env=data.get("wave_env"))
+                                     wave_env=data.get("wave_env"),
+                                     chart_end_secs=data.get("chart_end_secs"),
+                                     midi_source_path=data.get("midi_source_path"))
         # Provenance was captured when THIS job started and travelled on
         # data["mix_as_drums"]. Do not re-query the host: a later conversion
         # may have rewritten `_a2m_source_file` while the worker ran.
@@ -4956,7 +4969,17 @@ class SpectralTab(ttk.Frame):
     def _write_midi(self, path: str):
         try:
             import parakit_spectral_engine as eng
-            eng.write_chart_midi(self._model.notes, self._model.bpm, path)
+            # Only the loaded MIDI source may supply a fresher saved end.
+            source_path = getattr(self._model, "midi_source_path", None)
+            same_file = (source_path is not None and
+                os.path.normcase(os.path.abspath(path)) ==
+                os.path.normcase(os.path.abspath(source_path)))
+            disk_end = (eng.read_chart_end_secs(path)
+                        if same_file and os.path.isfile(path) else None)
+            chart_end = (disk_end if disk_end is not None
+                         else getattr(self._model, "chart_end_secs", None))
+            eng.write_chart_midi(self._model.notes, self._model.bpm, path,
+                                 chart_end_secs=chart_end)
             self._status("Wrote %d notes to %s"
                          % (len(self._model.notes), os.path.basename(path)),
                          GREEN)

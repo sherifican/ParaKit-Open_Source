@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.14.0  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.14.1  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,80 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.14.1   --   2026-09-17
+------------------------------------------------------------------------------
+  This hotfix updates MIDI saves in Spectral and Preview and the audio checks
+  before Audio to MIDI conversion. It also changes the Song Tester and
+  Practice tab colors.
+
+  CHART END IN MIDI SAVES
+  In 4.14.0, Spectral's Overwrite MIDI and Export MIDI and Preview's MIDI
+  export left out the MIDI Editor's saved Chart End. When Spectral or Preview
+  can read a saved Chart End from the loaded MIDI, a successful MIDI save now
+  carries it into the saved file. The end is rounded to MIDI ticks and moved
+  later if needed so it does not fall before the end of the last saved note.
+
+  SAVING BACK TO THE LOADED FILE
+  When saving back to the loaded MIDI's path, a Chart End that can be read
+  from that file takes priority over the loaded value. Otherwise, the loaded
+  value is used. Saving to a different path does not take a Chart End from the
+  file being replaced.
+
+  CHARTS WITHOUT A SAVED END
+  Without a saved Chart End, a successful .rlrr conversion uses its default
+  length: five seconds after the last mapped event before difficulty
+  reduction, with the conversion offset and chart timing shift applied.
+
+  RECOVERING AN END LOST IN 4.14.0
+  If a 4.14.0 Spectral or Preview save lost Chart End:
+  1. Reopen the MIDI in the MIDI Editor.
+  2. Drag and release the orange Chart End handle at the intended end until
+     the status includes "follow off".
+  3. Save the MIDI. If "Overwrite loses content" appears, review it before
+     agreeing to overwrite, and wait for the save to succeed.
+  4. Reload that saved MIDI in Spectral Comparison and run Compare again, or
+     import it again in Preview, before exporting another MIDI.
+  Saving with Follow last note on does not store a Chart End marker.
+
+  MIDI SAVE ERRORS
+  For Spectral's Overwrite MIDI and Export MIDI and Preview's MIDI export,
+  ParaKit writes the new MIDI to a separate temporary file first. It replaces
+  the chosen file only after that temporary save succeeds. If saving or
+  replacing the file reports an error, these actions do not retry by writing
+  directly over the chosen file.
+
+  PREVIEW JSON EXPORT
+  If Preview has notes and a loaded Chart End, it asks before exporting its
+  ParaKit chart JSON. That export does not keep Chart End.
+
+  AUDIO TO MIDI
+  Before starting a conversion, Audio to MIDI checks whether it can open the
+  selected audio directly or find an available FFmpeg decoder. Files it can
+  open directly, including supported .ogg, .mp3, .wav and .flac files, can
+  proceed without FFmpeg. For other files, an available FFmpeg decoder allows
+  a conversion attempt.
+
+  If neither check passes, Convert shows "Cannot decode this file" and does
+  not start the conversion. Passing these checks does not guarantee that the
+  file will decode or convert successfully.
+
+  FINDING THE EXTRA AUDIO TOOLS
+  If neither FFmpeg nor avconv is found on PATH (the list of tool folders),
+  setup can add a local tools folder. This requires both FFmpeg and ffprobe to
+  pass ParaKit's tool checks in that folder, under Requirements or a supported
+  older location. The folder goes at the end of the list, leaving existing
+  entries in their order. This setup step leaves PATH unchanged if either
+  decoder is already found there.
+
+  AUDIO HELP TEXT
+  The two extra-tools guidance messages and the YouTube and Push to Quest Help
+  sections now distinguish .ogg, .mp3, .wav and .flac from other audio
+  formats.
+
+  TAB COLORS
+  The Song Tester and Practice tab buttons now use the same pink as Preview.
 
 ------------------------------------------------------------------------------
   v4.14.0   --   2026-09-17

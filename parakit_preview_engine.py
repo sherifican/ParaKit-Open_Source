@@ -300,6 +300,8 @@ UNDO_DEPTH = 100
 class ChartModel:
     def __init__(self, bpm: float = 120.0) -> None:
         self.notes: List[EdNote] = []
+        self.chart_end_secs = None
+        self.midi_source_path = None
         self.bpm = float(bpm) if bpm > 0 else 120.0
         self.duration = 0.0
         self._index = TimeIndex()
@@ -603,7 +605,7 @@ def _write_vlq(value: int) -> bytes:
     return bytes(reversed(buf))
 
 
-def _read_midi_minimal(path: str) -> Tuple[List[Tuple[float, int, int]], float]:
+def _read_midi_minimal(path: str, chart_end_only=False):
     """Hand-rolled SMF reader: returns [(time_sec, midi_note, vel), ...] onset
     rows (note-offs / vel==0 note-ons are consumed but not returned) + the
     first tempo as BPM. No sysex/meta payload other than Set Tempo is
@@ -617,11 +619,14 @@ def _read_midi_minimal(path: str) -> Tuple[List[Tuple[float, int, int]], float]:
     fmt, ntrks, division = struct.unpack(">HHH", data[8:8 + 6])
     if division & 0x8000:
         raise ValueError("SMPTE-timecode MIDI files are not supported")
+    if chart_end_only and (division == 0 or fmt == 2):
+        raise ValueError("Chart End requires positive PPQ and synchronous tracks")
     ticks_per_beat = division or 480
     pos = 8 + header_len
 
     tempo_events: List[Tuple[int, int]] = []   # (abs_tick, usec_per_beat)
     note_events: List[Tuple[int, int, int]] = []  # (abs_tick, note, vel)
+    marker_ticks = []
 
     for _ in range(ntrks):
         if data[pos:pos + 4] != b"MTrk":
@@ -656,6 +661,9 @@ def _read_midi_minimal(path: str) -> Tuple[List[Tuple[float, int, int]], float]:
                     usec = (meta_data[0] << 16) | (meta_data[1] << 8) | meta_data[2]
                     if usec > 0:
                         tempo_events.append((abs_tick, usec))
+                if (chart_end_only and meta_type == 0x06
+                        and meta_data == CHART_END_MARKER_TEXT.encode("ascii")):
+                    marker_ticks.append(abs_tick)
                 if meta_type == 0x2F:
                     break
             elif status in (0xF0, 0xF7):
@@ -692,6 +700,11 @@ def _read_midi_minimal(path: str) -> Tuple[List[Tuple[float, int, int]], float]:
         sec += (tick - prev_tick) * prev_usec / 1_000_000.0 / ticks_per_beat
         return sec
 
+    if chart_end_only:
+        if not marker_ticks:
+            return None
+        secs = tick_to_sec(max(marker_ticks))
+        return secs if math.isfinite(secs) and secs >= 0 else None
     bpm = 60_000_000.0 / first_declared
     rows = sorted((tick_to_sec(t), note, vel) for t, note, vel in note_events)
     return rows, safe_bpm(bpm)
@@ -787,7 +800,71 @@ def _as_rows(notes: Iterable) -> List[Tuple[float, int, int]]:
     return rows
 
 
-def _write_midi_minimal(notes: Iterable, bpm: float, path: str) -> int:
+CHART_END_MARKER_TEXT = "ParaKit Chart End"
+
+
+def read_chart_end_secs(path):
+    """Prefer the shared mido reader; retain the dependency-free fallback."""
+    try:
+        from parakit_spectral_engine import read_chart_end_secs as read_saved_end
+        end = read_saved_end(path)
+        if end is not None:
+            return end
+    except Exception:
+        pass
+    try:
+        return _read_midi_minimal(path, chart_end_only=True)
+    except Exception:
+        return None
+
+
+def _chart_end_tick(chart_end_secs, tempo, tpb, last_tick):
+    end = float(chart_end_secs)
+    if not (math.isfinite(end) and end >= 0):
+        raise ValueError("Chart End must be finite and nonnegative")
+    return max(last_tick, round(end * 1e6 * tpb / tempo))
+
+
+def _write_midi_atomic(path, payload):
+    """Commit already-serialized bytes through a unique sibling temp file."""
+    import os
+    import tempfile
+    path = os.path.abspath(os.fspath(path))
+    fd, tmp = tempfile.mkstemp(
+        prefix=".pkmidisave.", suffix=".tmp", dir=os.path.dirname(path))
+    stream = None
+    try:
+        stream = os.fdopen(fd, "wb")
+        fd = None  # stream owns the descriptor, including on write/flush failure.
+        if stream.write(payload) != len(payload):
+            raise OSError("Short MIDI write")
+        stream.flush()
+        stream.close()
+        stream = None
+        os.replace(tmp, path)
+    except BaseException as exc:
+        if stream is not None:
+            try:
+                stream.close()
+            except BaseException as close_error:
+                exc.add_note("MIDI temp stream close failed: %s" % close_error)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError as close_error:
+                exc.add_note("MIDI temp descriptor close failed: %s" % close_error)
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass
+        except OSError as cleanup_error:
+            # Keep the primary exception; a denied cleanup cannot be guaranteed.
+            exc.add_note("MIDI temp cleanup failed: %s" % cleanup_error)
+        raise
+
+
+def _write_midi_minimal(notes: Iterable, bpm: float, path: str,
+                        chart_end_secs=None) -> int:
     """Hand-rolled SMF format-0 writer -- no third-party deps. Matches
     write_smf0's semantics exactly (480 tpb, channel 9, 1/8-beat note length,
     canonical per-lane GM note)."""
@@ -818,18 +895,26 @@ def _write_midi_minimal(notes: Iterable, bpm: float, path: str) -> int:
             track += bytes([0x90 | channel, note & 0x7F, vel & 0x7F])
         else:
             track += bytes([0x80 | channel, note & 0x7F, 0])
+    if chart_end_secs is not None:
+        end_tick = _chart_end_tick(chart_end_secs, usec, tpb, prev_tick)
+        marker = CHART_END_MARKER_TEXT.encode("ascii")
+        track += (_write_vlq(end_tick - prev_tick) + bytes([0xFF, 0x06])
+                  + _write_vlq(len(marker)) + marker)
     track += _write_vlq(0) + bytes([0xFF, 0x2F, 0x00])
 
     header = b"MThd" + struct.pack(">IHHH", 6, 0, 1, tpb)
     chunk = b"MTrk" + struct.pack(">I", len(track)) + bytes(track)
-    with open(path, "wb") as f:
-        f.write(header + chunk)
+    _write_midi_atomic(path, header + chunk)
     return len(rows)
 
 
-def write_smf0(notes: Iterable, bpm: float, path: str) -> int:
-    """Write notes+bpm as an SMF format-0 .mid. Tries mido first, falls back
-    to the hand-rolled writer on any failure (including mido absent)."""
+def write_smf0(notes: Iterable, bpm: float, path: str, chart_end_secs=None) -> int:
+    """Build with mido (minimal fallback), then commit without an I/O retry."""
+    # Materialize once so a mido build failure cannot exhaust a generator
+    # before the minimal writer sees it. Validate the marker before any I/O.
+    notes = _as_rows(notes)
+    if chart_end_secs is not None:
+        _chart_end_tick(chart_end_secs, 500000, 480, 0)
     try:
         import mido
         bpm_f = float(bpm) if bpm and bpm > 0 else 120.0
@@ -859,11 +944,21 @@ def write_smf0(notes: Iterable, bpm: float, path: str) -> int:
             else:
                 track.append(mido.Message("note_off", note=note, velocity=0,
                                            channel=9, time=delta))
+        if chart_end_secs is not None:
+            end_tick = _chart_end_tick(
+                chart_end_secs, mido.bpm2tempo(bpm_f), tpb, prev_tick)
+            track.append(mido.MetaMessage(
+                "marker", text=CHART_END_MARKER_TEXT, time=end_tick - prev_tick))
         track.append(mido.MetaMessage("end_of_track", time=0))
-        mid.save(path)
-        return len(rows)
+        import io
+        payload = io.BytesIO()
+        mid.save(file=payload)
     except Exception:
-        return _write_midi_minimal(notes, bpm, path)
+        return _write_midi_minimal(notes, bpm, path, chart_end_secs=chart_end_secs)
+    # Destination failures must propagate; the minimal writer cannot repair
+    # a denied/locked/directory target or a failed temp write/replace.
+    _write_midi_atomic(path, payload.getvalue())
+    return len(rows)
 
 
 # ---------------------------------------------------------------------------

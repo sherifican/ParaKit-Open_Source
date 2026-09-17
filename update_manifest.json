@@ -1,10 +1,10 @@
 {
-  "version": "4.14.0",
+  "version": "4.14.1",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Entries marked \"doc\": true are prose -- a hash mismatch on one is skipped by the updater instead of aborting the whole update; everything else stays fatal. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "c4da82effd114a3bc748a16bab1d22651a65e815160d39f0dd931fab4e7d5d07",
+      "sha256": "3b556086f9bc912a1ac5a8bd31399c3a4380bbe655999c38fa91b63ca823244e",
       "doc": true
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "18dca43a92d863a963e9b5bde5f1946bdbaf802af4aea03716f256059aeb471a",
+      "sha256": "37f23946fdf779b08bc6a24822fdd08e145261bebb2171b50ae6860a4494901a",
       "doc": true
     },
     {
@@ -4599,7 +4599,7 @@
     },
     {
       "path": "parakit_preview_engine.py",
-      "sha256": "abf40fd9f20ee23f624629f20ec9083d67d8d40c0dafc1974c273bae7c8f0153"
+      "sha256": "5c454f71078ada055922f8d6015bc2f2ab5057076dce8df82be0b3c438b341af"
     },
     {
       "path": "parakit_preview_sprites.py",
@@ -4607,7 +4607,7 @@
     },
     {
       "path": "parakit_preview_tab.py",
-      "sha256": "6d3fe4019fa29ac5aefa7732d07ec7fcc4e13d3b3c6d7219819b60ca304a5941"
+      "sha256": "22b21c794f106700600b7852cc491cc520bc01070b15881d733c9617b6bd973d"
     },
     {
       "path": "parakit_repo_banner.svg",
@@ -4639,11 +4639,11 @@
     },
     {
       "path": "parakit_spectral_engine.py",
-      "sha256": "e9ea3592d0aeb3034f839c39ec84bc7faa8c08d9bd7d00ca2eb56828574eb384"
+      "sha256": "9778f9f0e5536560c4adeab502a8be0a7c718f929696ae2b9a14cc9a9db3bda3"
     },
     {
       "path": "parakit_spectral_tab.py",
-      "sha256": "53d58f16d4f33762695ae7f5e04a17b488066a1568ad7c155fe7f5b06daad5d6"
+      "sha256": "8e4800abd1b20d876cf82d79360a5a65c045fc414b988367b8f102cf6e0e0cc8"
     },
     {
       "path": "parakit_synth_voices.py",
