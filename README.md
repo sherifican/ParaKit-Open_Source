@@ -87,7 +87,7 @@ None of the libraries this app is built on publishes a real hardware minimum, an
 
 New to GitHub? The easiest way to get ParaKit, with every file placed correctly, is a few copy-paste commands in your terminal (**Command Prompt**, **PowerShell**, or **Terminal**). You need two free things installed first: **[Git](https://git-scm.com/downloads)** and **[Python 3.12](https://www.python.org/downloads/)** (3.12 is required).
 
-> **Don't have Git, or don't want it?** You don't need it. Click the green **`<> Code`** button near the top of this page → **Download ZIP**, unzip it wherever you like, and skip straight to **step 3**. ParaKit itself never uses Git — the only difference is that you'll update with the in-app **Download update now** button instead of `git pull`, which works exactly the same either way. **Python 3.12 is the only real requirement.**
+> **Don't have Git, or don't want it?** You don't need it. Click the green **`<> Code`** button near the top of this page → **Download ZIP**, unzip it wherever you like, then continue at **step 2**. The extracted folder is named `ParaKit-Open_Source-main` (not `ParaKit-Open_Source`), so `cd` into that name. Skip the `git clone` in step 1. ParaKit itself never uses Git — the only difference is that you'll update with the in-app **Download update now** button instead of `git pull`, which works exactly the same either way. **Python 3.12 is the only real requirement.**
 
 **1 — Download everything.** Open **Command Prompt** or **PowerShell** and run the command below. It creates a `ParaKit-Open_Source` folder **inside whatever folder your terminal is currently in** — a fresh window opens in your user folder, so by default you'll get it at **`C:\Users\YourName\ParaKit-Open_Source`** (an easy place to find it again):
 
@@ -134,7 +134,9 @@ That's it. To **update** to the latest version later, just run `git pull` inside
 >
 > The reason is simple: ParaKit updates itself by downloading changed files. A compiled `.exe` bundles those files inside itself, so the updater cannot replace them — compiling breaks the update system. Running the `.py` keeps updates working.
 
->**Requirements bundle:** [Requirements.zip (GitHub release - permanent link)](https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip)
+>**.exe DOWNLOAD:** [LimeWire Bundle Link](https://limewire.com/d/UV9Zm#DHqxKgEtmn)
+
+>**Requirements bundle:** [Requirements.Files.ONLY.bundle.zip (GitHub release)](https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip)
 
 >**Note (v4.5.3.1-1):** The in-app download button for the Jarredou neural stem-isolation model has been **rewired to the official [Hugging Face repo](https://huggingface.co/Politrees/UVR_resources)** for it, with a **second Hugging Face mirror as an automatic fallback**. If *both* of those ever go down for any reason, see `docs/TROUBLESHOOTING.md` for the manual placement steps.
 
@@ -511,20 +513,36 @@ py -3.12 -m pip install -r requirements.txt
 ParaKit shells out to several tools that are **not** Python packages:
 
 - **FFmpeg** (`ffmpeg` / `ffplay` / `ffprobe`) — audio conversion / `pydub`
-- **yt-dlp** (+ **deno**, its JS signature runtime) — YouTube → FLAC downloads
+- **yt-dlp** (+ a **JS runtime**: Deno or Node) — YouTube → FLAC downloads
 - **ADB** (+ `AdbWinApi.dll`, `AdbWinUsbApi.dll`) — "push to Quest" / device transfer
 
-These are distributed separately as the **`Requirements.zip` bundle** (≈174 MB — too large to
-include in the Git repo). **Download it here → [Requirements.zip (GitHub release)](https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip)**
+Some features need the Requirements bundle (~174 MB): FFmpeg, yt-dlp + a JS runtime (Deno or Node), and ADB. Download Requirements.Files.ONLY.bundle.zip from the GitHub link, extract, and put the files in a `Requirements` folder next to ParaKit (recommended: `Requirements\platform-tools\` for adb.exe + its two DLLs). Core charting (Audio → MIDI, MIDI Editor, Song Creator, Song Tester) does not need this bundle. When files are missing, ParaKit's extra-tools window lists them; under that list it says which features stop working without each missing group.
 
-This is a GitHub release asset on this repository, so the link is permanent - it does not expire.
+````
+ParaKit\                      <- the folder ParaKit.exe is in
+├── ParaKit.exe
+└── Requirements\
+    ├── ffmpeg.exe
+    ├── ffprobe.exe
+    ├── yt-dlp.exe
+    ├── deno.exe              <- or node.exe
+    └── platform-tools\
+        ├── adb.exe
+        ├── AdbWinApi.dll
+        └── AdbWinUsbApi.dll
+````
+
+From source, that folder holds `ParaKit v4.0.py`.
+
+The tools are distributed separately as a GitHub release asset (too large for the Git repo). **Download it here → [Requirements.Files.ONLY.bundle.zip (GitHub release)](https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip)**
 
 The Jarredou model is **not** in this bundle. The app has a download button that fetches it straight from Hugging Face and places it where it needs to go.
+The optional Jarredou path also needs the Python package `audio-separator` (`pip install audio-separator`); downloading the model file alone is not enough.
 
-Download it, extract it, then place the files next to `ParaKit v4.0.py`, or keep them in the
-included `Requirements\` subfolder beside it. They're shipped as a release asset rather than
-committed to the Git tree on purpose — large third-party binaries with their own licenses.
-Leave yt-dlp's auto-update on so it stays current with YouTube changes.
+Extract it, then place the files next to `ParaKit v4.0.py`, or keep them in a
+`Requirements\` subfolder beside it. They're kept out of the Git tree on purpose — large
+binaries with their own licenses, well over GitHub's per-file size limit. Leave yt-dlp's
+auto-update on so it stays current with YouTube changes.
 
 ---
 
