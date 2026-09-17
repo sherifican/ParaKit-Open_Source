@@ -32,8 +32,9 @@ _PAD_NO_GLOW = 3  # stroke / AA only (ghost, flash)
 
 # "oval" = a wide ellipse (owner: cymbals-as-ovals, easier to read rapid runs).
 # Renders like "circle" but the radial disc is squashed to the w×h body box.
-_KINDS = frozenset({"circle", "oval", "bar", "kickbar", "kickline"})
-_STATES = frozenset({"normal", "ghost", "past", "flash"})
+_KINDS = frozenset({"circle", "oval", "bar", "kickbar", "kickline", "diamond"})
+_STATES = frozenset({"normal", "ghost", "past", "flash", "dark"})
+_DARK_KINDS = frozenset({"bar", "diamond"})
 # "hq" = current gradient+glow sprites (DEFAULT — byte-identical path).
 # "classic" = flat charting-game highway: cymbals = filled circle + crisp white
 # outline; drums/kick = filled rounded rect + crisp white outline. 4× SS.
@@ -70,6 +71,8 @@ def sprite_pad(kind: str, state: str, style: str = _DEFAULT_STYLE) -> int:
     if state not in _STATES:
         raise ValueError(f"unknown state {state!r}; expected one of {sorted(_STATES)}")
     style = _norm_style(style)
+    if state == "dark" and (kind not in _DARK_KINDS or style != "hq"):
+        raise ValueError(f"unknown kind {kind!r}; expected one of {sorted(_DARK_KINDS)}")
     if style == "classic":
         return _PAD_CLASSIC
     if state in ("ghost", "flash"):
@@ -97,8 +100,9 @@ def note_sprite(
 ) -> "ImageTk.PhotoImage":
     """Return a cached note PhotoImage.
 
-    kind in {circle, oval, bar, kickbar, kickline};
-    state in {normal, ghost, past, flash}.
+    kind in {circle, oval, bar, kickbar, kickline, diamond};
+    state in {normal, ghost, past, flash, dark}.
+    dark is HQ-only for bar/diamond (black-toward-lane, no white).
     style in {hq, classic} — default ``hq`` keeps the pre-existing gradient+glow
     look byte-identical; ``classic`` is a flat filled shape + crisp white outline
     (cymbals = smooth supersampled circle; drums/kick = rounded rect).
@@ -112,6 +116,8 @@ def note_sprite(
     if state not in _STATES:
         raise ValueError(f"unknown state {state!r}; expected one of {sorted(_STATES)}")
     style = _norm_style(style)
+    if state == "dark" and (kind not in _DARK_KINDS or style != "hq"):
+        raise ValueError(f"unknown kind {kind!r}; expected one of {sorted(_DARK_KINDS)}")
 
     w = _even_up(w)
     h = _even_up(h)
@@ -200,6 +206,92 @@ def _scale_alpha(img: Image.Image, factor: float) -> Image.Image:
     return Image.merge("RGBA", (r, g, b, a))
 
 
+def _clamp_to_lane(img: Image.Image, lc: Tuple[int, int, int]) -> Image.Image:
+    """Dark HQ post-LANCZOS clamp: no channel may exceed the lane color."""
+    px = img.load()
+    lr, lg, lb = lc
+    w, h = img.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a == 0:
+                continue
+            if r > lr or g > lg or b > lb:
+                px[x, y] = (
+                    r if r <= lr else lr,
+                    g if g <= lg else lg,
+                    b if b <= lb else lb,
+                    a,
+                )
+    return img
+
+
+def _diamond_xy(cx: float, cy: float, hw: float, hh: float):
+    """Rotated-square diamond vertices, clockwise from the top."""
+    return [
+        (cx, cy - hh),
+        (cx + hw, cy),
+        (cx, cy + hh),
+        (cx - hw, cy),
+    ]
+
+
+def _diamond_mask(w: int, h: int) -> Image.Image:
+    m = Image.new("L", (max(1, w), max(1, h)), 0)
+    if w < 1 or h < 1:
+        return m
+    cx = (w - 1) * 0.5
+    cy = (h - 1) * 0.5
+    hw = (w - 1) * 0.5
+    hh = (h - 1) * 0.5
+    ImageDraw.Draw(m).polygon(_diamond_xy(cx, cy, hw, hh), fill=255)
+    return m
+
+
+def _draw_diamond_gradient(
+    bw: int, bh: int, lc: Tuple[int, int, int],
+    hot: Tuple[int, int, int] = (255, 255, 255),
+) -> Image.Image:
+    """Same vertical white-hot gradient as bar, clipped to a rotated square."""
+    if bw < 1 or bh < 1:
+        return Image.new("RGBA", (max(1, bw), max(1, bh)), (0, 0, 0, 0))
+    grad = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    px = grad.load()
+    denom = max(1, bh - 1)
+    for y in range(bh):
+        t = y / denom
+        if t <= 0.25:
+            u = t / 0.25
+            rr, gg, bb = _lerp_rgb(hot, lc, u)
+        else:
+            rr, gg, bb = lc
+        row = (rr, gg, bb, 255)
+        for x in range(bw):
+            px[x, y] = row
+    mask = _diamond_mask(bw, bh)
+    out = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+    out.paste(grad, (0, 0), mask)
+    return out
+
+
+def _stroke_diamond(
+    canvas: Image.Image,
+    cx: float,
+    cy: float,
+    hw: float,
+    hh: float,
+    color: Tuple[int, int, int, int],
+    width: float,
+) -> None:
+    if hw <= 0 or hh <= 0 or width <= 0:
+        return
+    ImageDraw.Draw(canvas).polygon(
+        _diamond_xy(cx, cy, hw, hh),
+        outline=color,
+        width=max(1, int(round(width))),
+    )
+
+
 def _rounded_rect_mask(
     w: int, h: int, radius: int
 ) -> Image.Image:
@@ -247,20 +339,20 @@ def _draw_radial_disc(
 
 
 def _draw_bar_gradient(
-    bw: int, bh: int, radius: int, lc: Tuple[int, int, int]
+    bw: int, bh: int, radius: int, lc: Tuple[int, int, int],
+    hot: Tuple[int, int, int] = (255, 255, 255),
 ) -> Image.Image:
     """Vertical linear gradient rounded rect: 0=#fff, 0.25=lc, 1.0=lc."""
     if bw < 1 or bh < 1:
         return Image.new("RGBA", (max(1, bw), max(1, bh)), (0, 0, 0, 0))
     grad = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
     px = grad.load()
-    white = (255, 255, 255)
     denom = max(1, bh - 1)
     for y in range(bh):
         t = y / denom
         if t <= 0.25:
             u = t / 0.25
-            rr, gg, bb = _lerp_rgb(white, lc, u)
+            rr, gg, bb = _lerp_rgb(hot, lc, u)
         else:
             rr, gg, bb = lc
         row = (rr, gg, bb, 255)
@@ -389,6 +481,14 @@ def _render_rgba(
         elif kind == "oval":
             ImageDraw.Draw(base).ellipse(
                 [bx, by, bx + ss_bw - 1, by + ss_bh - 1], fill=(255, 255, 255, 255))
+        elif kind == "diamond":
+            body = Image.new("RGBA", (ss_bw, ss_bh), (0, 0, 0, 0))
+            ImageDraw.Draw(body).polygon(
+                _diamond_xy((ss_bw - 1) * 0.5, (ss_bh - 1) * 0.5,
+                            (ss_bw - 1) * 0.5, (ss_bh - 1) * 0.5),
+                fill=(255, 255, 255, 255),
+            )
+            base.alpha_composite(body, (bx, by))
         else:
             rad = 2 * _SS if kind in ("kickbar", "kickline") else 5 * _SS
             shape = _draw_flat_rr(ss_bw, ss_bh, rad, (255, 255, 255, 255))
@@ -408,6 +508,14 @@ def _render_rgba(
             ImageDraw.Draw(base).ellipse(
                 [bx + inset, by + inset, bx + ss_bw - 1 - inset, by + ss_bh - 1 - inset],
                 outline=stroke_c, width=max(1, int(round(sw))))
+        elif kind == "diamond":
+            inset = sw * 0.5
+            _stroke_diamond(
+                base, cx, cy,
+                max(1.0, ss_bw * 0.5 - inset),
+                max(1.0, ss_bh * 0.5 - inset),
+                stroke_c, sw,
+            )
         else:
             rad = 2 * _SS if kind in ("kickbar", "kickline") else 5 * _SS
             # inset slightly so stroke stays inside body+pad
@@ -415,6 +523,58 @@ def _render_rgba(
             box = (bx + inset, by + inset, bx + ss_bw - 1 - inset, by + ss_bh - 1 - inset)
             _stroke_rr(base, box, max(0, rad - inset), stroke_c, sw)
         return base.resize((out_w, out_h), Image.Resampling.LANCZOS)
+
+    # ── DARK: black-toward-lane, black glow, dark outline (bar/diamond) ─────
+    if state == "dark":  # spec-reactive: dark HQ sprite, black-toward-lane
+        if kind not in _DARK_KINDS:
+            raise ValueError(
+                f"unknown kind {kind!r}; expected one of {sorted(_DARK_KINDS)}"
+            )
+        hot = (0, 0, 0)  # spec-reactive: dark HQ sprite, black-toward-lane
+        dark_outline = (0, 0, 0, int(0.35 * 255))
+        if kind == "bar":
+            rad = 5 * _SS
+            body = _draw_bar_gradient(ss_bw, ss_bh, rad, lc, hot=hot)
+            glow = _glow_layer(
+                ss_w, ss_h, body, bx, by, hot, _GLOW_BLUR_12, strength=0.75)
+            base = Image.alpha_composite(base, glow)
+            base.alpha_composite(body, (bx, by))
+            if ring_rgb:
+                _stroke_rr(
+                    base,
+                    (bx, by, bx + ss_bw - 1, by + ss_bh - 1),
+                    rad,
+                    (*ring_rgb, 255),
+                    2.5 * _SS,
+                )
+            else:
+                _stroke_rr(
+                    base,
+                    (bx, by, bx + ss_bw - 1, by + ss_bh - 1),
+                    rad,
+                    dark_outline,
+                    1.2 * _SS,
+                )
+        else:
+            body = _draw_diamond_gradient(ss_bw, ss_bh, lc, hot=hot)
+            glow = _glow_layer(
+                ss_w, ss_h, body, bx, by, hot, _GLOW_BLUR_12, strength=0.75)
+            base = Image.alpha_composite(base, glow)
+            base.alpha_composite(body, (bx, by))
+            hw = ss_bw * 0.5
+            hh = ss_bh * 0.5
+            if ring_rgb:
+                _stroke_diamond(
+                    base, cx, cy, hw - 1.25 * _SS, hh - 1.25 * _SS,
+                    (*ring_rgb, 255), 2.5 * _SS,
+                )
+            else:
+                _stroke_diamond(
+                    base, cx, cy, hw - 0.75 * _SS, hh - 0.75 * _SS,
+                    dark_outline, 1.2 * _SS,
+                )
+        out = base.resize((out_w, out_h), Image.Resampling.LANCZOS)
+        return _clamp_to_lane(out, lc)
 
     # ── NORMAL / PAST (past = normal then bake 45% opacity) ──────────────────
     want_glow = True
@@ -481,6 +641,25 @@ def _render_rgba(
                 rad,
                 (255, 255, 255, int(0.35 * 255)),
                 1.2 * _SS,
+            )
+
+    elif kind == "diamond":  # spec-reactive: diamond kind
+        body = _draw_diamond_gradient(ss_bw, ss_bh, lc)
+        if want_glow:
+            glow = _glow_layer(ss_w, ss_h, body, bx, by, lc, _GLOW_BLUR_12, strength=0.75)
+            base = Image.alpha_composite(base, glow)
+        base.alpha_composite(body, (bx, by))
+        hw = ss_bw * 0.5
+        hh = ss_bh * 0.5
+        if ring_rgb:
+            _stroke_diamond(
+                base, cx, cy, hw - 1.25 * _SS, hh - 1.25 * _SS,
+                (*ring_rgb, 255), 2.5 * _SS,
+            )
+        else:
+            _stroke_diamond(
+                base, cx, cy, hw - 0.75 * _SS, hh - 0.75 * _SS,
+                (255, 255, 255, int(0.35 * 255)), 1.2 * _SS,
             )
 
     else:  # kickbar / kickline — flat lc @ 85% alpha, glow blur 9
@@ -586,6 +765,7 @@ def _render_classic_rgba(
     cy = by + ss_bh * 0.5
     base = Image.new("RGBA", (ss_w, ss_h), (0, 0, 0, 0))
     is_cymbal = kind in ("circle", "oval")
+    is_diamond = kind == "diamond"
 
     if state == "flash":
         fill = (255, 255, 255, 255)
@@ -593,6 +773,14 @@ def _render_classic_rgba(
             ImageDraw.Draw(base).ellipse(
                 [bx, by, bx + ss_bw - 1, by + ss_bh - 1], fill=fill
             )
+        elif is_diamond:
+            body = Image.new("RGBA", (ss_bw, ss_bh), (0, 0, 0, 0))
+            ImageDraw.Draw(body).polygon(
+                _diamond_xy((ss_bw - 1) * 0.5, (ss_bh - 1) * 0.5,
+                            (ss_bw - 1) * 0.5, (ss_bh - 1) * 0.5),
+                fill=fill,
+            )
+            base.alpha_composite(body, (bx, by))
         else:
             body = _draw_flat_rr(ss_bw, ss_bh, corner, fill)
             base.alpha_composite(body, (bx, by))
@@ -609,6 +797,14 @@ def _render_classic_rgba(
                 outline=stroke_c, width=max(1, int(round(sw))),
             )
             _CLASSIC_SS_HITS += 1
+        elif is_diamond:
+            inset = sw * 0.5
+            _stroke_diamond(
+                base, cx, cy,
+                max(1.0, ss_bw * 0.5 - inset),
+                max(1.0, ss_bh * 0.5 - inset),
+                stroke_c, sw,
+            )
         else:
             inset = max(0, int(round(sw * 0.5)))
             box = (bx + inset, by + inset,
@@ -632,6 +828,17 @@ def _render_classic_rgba(
             width=stroke_w,
         )
         _CLASSIC_SS_HITS += 1
+    elif is_diamond:
+        mask = _diamond_mask(ss_bw, ss_bh)
+        body = _classic_flat_fill(ss_bw, ss_bh, lc, mask)
+        base.alpha_composite(body, (bx, by))
+        inset = sw * 0.5
+        _stroke_diamond(
+            base, cx, cy,
+            max(1.0, ss_bw * 0.5 - inset),
+            max(1.0, ss_bh * 0.5 - inset),
+            outline_rgba, float(stroke_w),
+        )
     else:
         mask = _rounded_rect_mask(ss_bw, ss_bh, corner)
         body = _classic_flat_fill(ss_bw, ss_bh, lc, mask)
@@ -705,6 +912,30 @@ def _selftest() -> None:
     assert sprite_pad("circle", "flash") == _PAD_NO_GLOW
     assert sprite_pad("circle", "normal", style="classic") == _PAD_CLASSIC
     assert sprite_pad("bar", "normal", style="classic") == _PAD_CLASSIC
+    assert "diamond" in _KINDS
+    assert sprite_pad("diamond", "normal") == _PAD_GLOW_12
+    assert sprite_pad("diamond", "flash") == _PAD_NO_GLOW
+    assert sprite_pad("diamond", "ghost") == _PAD_NO_GLOW
+    assert sprite_pad("diamond", "normal", style="classic") == _PAD_CLASSIC
+    assert "dark" in _STATES
+    assert sprite_pad("bar", "dark") == _PAD_GLOW_12
+    assert sprite_pad("diamond", "dark") == _PAD_GLOW_12
+    for _bad in ("circle", "oval", "kickbar", "kickline"):
+        try:
+            sprite_pad(_bad, "dark")
+            raise AssertionError("dark accepted for %s" % _bad)
+        except ValueError:
+            pass
+    for _dst in ("normal", "ghost", "past", "flash"):
+        for _stl in ("hq", "classic"):
+            note_sprite("#00e5ff", "diamond", 16, 16, _dst, master=root, style=_stl)
+            _dk = (
+                _norm_hex("#00e5ff"), "diamond", 16, 16, _dst, None, _stl,
+            )
+            assert _dk in _PIL_CACHE
+            _dimg = _PIL_CACHE[_dk]
+            assert _dimg.width > 0 and _dimg.height > 0
+            assert _dimg.getextrema()[3][1] > 0, "diamond %s/%s empty" % (_dst, _stl)
 
     # ── HQ default path byte-identical to explicit style='hq' ────────────────
     clear_cache()

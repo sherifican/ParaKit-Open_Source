@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.13.4  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.14.0  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -25,6 +25,175 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.14.0   --   2026-09-17
+------------------------------------------------------------------------------
+  This release adds a movable Chart End in the MIDI Editor, replaces
+  extra-tool dead ends with a steps dialog, and corrects copy and
+  controls that described something they did not do.
+
+  MOVABLE CHART END
+  The MIDI Editor Chart End line follows the last note by default.
+  Drag the orange knob in the beat ruler, drawn a little below the
+  playhead, to set where the song ends in game. Right-click the knob
+  and choose Follow last note to snap it back; that item is disabled
+  while the line is already following. A dragged end is saved in the
+  MIDI and used as the exported chart length. Older ParaKit versions
+  ignore that marker and drop it on the next Save. Saving over a MIDI
+  while Follow last note is on warns if that would drop a Chart End
+  marker already stored in the file. Dragging the knob or choosing
+  Follow last note is undoable, restores through redo, and marks the
+  chart edited for Send to Creator. The end cannot sit before the last
+  note; when the loaded audio is long enough to hold the notes, the
+  end is also held to that audio. A marker that loaded too early is
+  repaired, and a change of audio re-clamps or warns when notes or the
+  end run past the file. The timeline, Duration readout, and waveform
+  shade follow the end and the audio. Tagless stems now keep their
+  audio length in the editor and the visualizer.
+  Paradiddle to Clone Hero uses the recorded length from the first
+  difficulty that has notes, in Expert, Hard, Medium, Easy order.
+  A missing, invalid, or non-positive length, or a length within 0.05
+  seconds of that difficulty's last event plus five, uses the old
+  last-event-plus-five padding. Only a selected positive length
+  outside that tolerance is kept; if that length is more than
+  0.0001 seconds before that difficulty's last event, conversion
+  is refused and nothing is written. A log note is printed when
+  both recorded lengths are valid and the difference from the
+  Expert-first chosen length is greater than 0.05 seconds. If notes
+  land past a chosen manual end because of a Creator offset or
+  Chart Timing, the conversion is refused and nothing is written.
+
+  REQUIREMENTS BUNDLE AT FEATURE ENTRY
+  Push to Quest, YouTube to FLAC, and Convert to .ogg now open a
+  steps dialog when the extra tools are missing, instead of a
+  dead-end error or a log-only miss. While extra tools are missing,
+  a notice at every launch points at the same dialog until you
+  tick Don't show this again. That launch notice waits until any
+  dependency-repair prompt is finished, and it does not open on top
+  of an extra-tools dialog that is already up. Download
+  Requirements.Files.ONLY.bundle.zip from the GitHub release, extract
+  it, and put the files in a Requirements folder next to ParaKit
+  (recommended: Requirements\platform-tools\ for adb.exe and its
+  two DLLs). ADB is not ready without those two sibling DLLs next to
+  adb.exe. Show me how draws that tree. The dialog's Without these
+  files list names which features stop without each missing group.
+  FFmpeg is accepted only as a same-directory pair with ffprobe, in
+  source mode as well as in a frozen build. A file that exists but is
+  a known-unsupported kind of program for this PC is refused, so a
+  working FFmpeg can start being rejected if it is the wrong
+  architecture. Closing the window takes the same first-page decline
+  as No thanks or Not now. Choose No thanks at feature entry, or Not
+  now at launch, to see which features will not work on this machine,
+  with the detector reasons in plain language. YouTube to FLAC
+  captures auto-update and runtime choices at the moment the request
+  is made, before its worker starts. Automatic download is not in
+  this build. Core charting does not need the bundle. Convert to .ogg
+  no longer tells FFmpeg to be installed when the missing piece is a
+  Python audio component.
+
+  SEND TO SPECTRAL PRESSES COMPARE
+  Send to Spectral now presses Compare when the tab switch
+  succeeded, a chart and audio are present, the tab is idle, and
+  there is no undo or redo history to destroy. Each outcome says
+  what happened and what to do next. Every source field is replaced
+  on every send, so a second song cannot be scored against the
+  previous song's audio. Replacing the mix field shows the Analyze
+  Drums / Full Mix selector when a mix was sent, and hides it when
+  that field is cleared.
+
+  P JOINS SPACE ON SPECTRAL AND PREVIEW
+  P plays and pauses on the Spectral and Preview tabs, alongside
+  Space, matching the MIDI Editor.
+
+  A FULL MIX IN THE DRUMS FIELD SAYS SO
+  When the audio being compared is the file the Audio to MIDI tab
+  converted, Spectral says so in a footer note and a persistent
+  notice, because a full mix analyzed as a stem produces confident
+  wrong MISS and PHANTOM counts. The wording claims only a possible
+  full mix.
+
+  SPECTRAL SNAP DEFAULTS OFF
+  Spectral edit mode no longer snaps added notes to the nearest
+  sixteenth by default. Snap 1/16 starts off. Turn it on for grid
+  placement.
+
+  NEURAL STEM ISOLATION DESCRIBES THE CONTROL THAT SHIPS
+  Help and the Audio to MIDI card no longer call Neural Stem
+  Isolation experimental, and they no longer say to leave it off
+  or that it turns on automatically once the model is installed.
+  A saved Off stays Off. With no saved choice, it is on only if
+  the model is already on disk.
+
+  DEMUCS IS OPTIONAL AT LAUNCH
+  Skipping demucs, as requirements.txt already allowed, no longer
+  stops the app before it opens. Stem Splitter disables Split Stems
+  and shows the install line until demucs is installed. Other
+  missing packages still stop startup. The missing-packages dialog
+  still recommends installing demucs.
+
+  ZIP INSTALL KEEPS THE CHANGE-DIRECTORY STEP
+  Download-ZIP instructions no longer skip the cd into the extracted
+  folder, which GitHub names ParaKit-Open_Source-main.
+
+  JARREDOU NAMES ITS PYTHON PACKAGE
+  The dependency list and the README name audio-separator as the
+  optional package Neural Stem Isolation imports. The Jarredou model
+  is not in the Requirements bundle; the app has its own download for
+  that file.
+
+  STALE README LINES
+  Features no longer advertise genre presets that were removed. The
+  accuracy-report path is described as development-repository only.
+
+  PRACTICE DROPS CONTROLS THAT WERE NEVER WIRED
+  Kit Studio no longer shows Save as or Pin to song. Settings no
+  longer has a Data tab of Export backup, Import backup, and Reset
+  everything. Those five controls were marked "Unavailable in this
+  version" and did not save anything. Named kit presets, per-song
+  pins, and backup or Reset everything remain unbuilt. Lefty stays,
+  and the kit you chose is still remembered.
+
+  PREVIEW WARNS WHEN SELECTED AUDIO IS MISSING
+  A stem selected in Preview whose file is no longer on disk now warns
+  that Preview audio is missing -- the selected file is no longer on
+  disk; playback continues, instead of keeping the pick-time
+  "Loaded stems:" text. Files still on disk are still used.
+
+  YOUTUBE ALREADY-DOWNLOADED LOOKUP, NODE PATH PICKER, AND CTRL+S
+  When a YouTube to FLAC download reports the file has already been
+  downloaded, the path yt-dlp printed is tried first when it names a
+  file in the output folder of the requested format; otherwise the
+  last such path from the console; otherwise a bounded look in the
+  folder, which can still find nothing and does not prove the file
+  belongs to this video. When the path the download printed or logged
+  is accepted and already present, a possible reuse is logged. Adding
+  that file to the library with this video's title and artist asks
+  first.
+  The Node.js Path picker starts in an existing folder -- the
+  configured Node location when that folder is still there, otherwise
+  a detected Node install, a default Node folder, or Program Files
+  when one of them exists -- and suggests node.exe. Ctrl+S on the
+  MIDI Editor turns Snap to notes on and off. It does not fire from
+  a text field or from another tab. S without Ctrl still stops.
+  Save MIDI Editor File no longer lists Ctrl+S as its shortcut.
+
+  SPECTRAL FLASH HAS A STYLE SELECTOR
+  A style selector on the Spectral toolbar now picks how notes light as
+  the playhead crosses them, on both the lane view and the spectrogram
+  note strip. Reactive Notes, the default, flares each note toward
+  white in the note's own color with a soft halo and settles back after
+  the playhead passes. Flash Notes (Classic Style) is the original
+  solid-white flash. Dark Flash darkens the same shape toward black
+  with a dark halo, so the hit stays visible on a bright colormap.
+  The choice is remembered. Diamond and bar notes both light in every
+  style. The Flash chips on each view remain the on/off switches; the
+  selector is disabled while both are off.
+
+  SEND TO SPECTRAL USES THE CONVERSION SOURCE
+  The MIDI Editor's Spectral button now sends the chart's
+  Audio to MIDI source when the Drums field is empty and that source
+  was recorded for this chart.
 
 ------------------------------------------------------------------------------
   v4.13.4   --   2026-09-07
@@ -1325,8 +1494,11 @@
   Rewritten from the live tab, and Practice is documented as its own tab
   rather than a button that is no longer reachable. Related label fixes:
   the drum separator's "Off" choice no longer claims to be the default;
-  Neural Stem Isolation is no longer marked "(experimental)" -- it defaults
-  on once installed; Spectral Comparison lost a "New!" badge it had
+  Neural Stem Isolation is no longer marked "(experimental)" -- the
+  claimed rationale that it "defaults on once installed" is corrected
+  here as inaccurate: a saved Off stays Off, and with no saved choice
+  it is on only if the model is already on disk; Spectral Comparison
+  lost a "New!" badge it had
   outgrown; the YouTube Requirements list now names the JS runtime and the
   Get Deno button; the Review Issues legend names both causes of an orange
   outline; and the save-before-handoff prompts in Preview and Song Creator

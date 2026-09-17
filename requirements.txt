@@ -1,4 +1,4 @@
-# ParaKit v4.4.57.99-10 — Python dependencies  (Python 3.12 required)
+# ParaKit — Python dependencies  (Python 3.12 required)
 #
 # Install:   py -3.12 -m pip install -r requirements.txt
 #
@@ -40,3 +40,9 @@ mutagen>=1.47          # read / write audio tags (FLAC / MP3 / MP4 / OGG)
 # torch yourself from PyTorch's own index; RTX 50-series (Blackwell, sm_120) specifically
 # needs the cu128 one. See docs/TROUBLESHOOTING.md.
 demucs>=4.0
+
+# --- Optional neural isolation (Jarredou MDX23C) -----------------------------
+# audio-separator is imported as audio_separator by
+# parakit_separators/jarredou_mdx23c.py. Not required to launch. Install it
+# if you will use Neural Stem Isolation:
+# audio-separator>=0.44

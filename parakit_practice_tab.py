@@ -47,7 +47,7 @@ import random
 import sys
 import time
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import ttk
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from parakit_practice_widgets import (
@@ -236,7 +236,6 @@ _VOICE_CHOICES = ["hihat", "crash", "crash13", "china", "snare", "tom1", "tom2",
 
 _CFG_PREFS_KEY = "practice_prefs"
 _CFG_KIT_KEY = "practice_kit_layout"
-_CFG_PINS_KEY = "practice_kit_pins"
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -2588,13 +2587,12 @@ class ResultsScreen(tk.Frame):
 # keyboard hotkeys are a v5 NO-OP -- ported as-is per DISPATCH PR-J).
 # ===========================================================================
 class KitStudioPanel(tk.Frame):
-    def __init__(self, parent, *, get_layout, get_prefs, get_chart, on_layout_changed,
+    def __init__(self, parent, *, get_layout, get_prefs, on_layout_changed,
                  on_pref_changed, on_done, note, hook_call) -> None:
         super().__init__(parent, background=PANEL, highlightthickness=1,
                          highlightbackground=PURPLE_EDGE)
         self._get_layout = get_layout
         self._get_prefs = get_prefs
-        self._get_chart = get_chart
         self._on_layout_changed = on_layout_changed
         self._on_pref_changed = on_pref_changed
         self._on_done = on_done
@@ -2635,21 +2633,6 @@ class KitStudioPanel(tk.Frame):
 
         act = tk.Frame(body, background=PANEL)
         act.pack(fill=tk.X, pady=(0, 6))
-        self.save_as_btn = OutlineButton(
-            act, "Save as…", accent=PURPLE_EDGE,
-            command=self._save_as, tooltip="Unavailable in this version")
-        self.save_as_btn.set_enabled(False)
-        self.save_as_btn.pack(side=tk.LEFT, padx=(0, 4))
-        self.pin_btn = OutlineButton(
-            act, "Pin to song", accent=PURPLE_EDGE,
-            command=self._pin, tooltip="Unavailable in this version")
-        self.pin_btn.set_enabled(False)
-        self.pin_btn.pack(side=tk.LEFT, padx=4)
-        self._unavailable_note = tk.Label(
-            body, text="Save as / Pin to song: Unavailable in this version",
-            background=PANEL, foreground=MUTED, font=F_SMALL,
-            wraplength=270, justify=tk.LEFT, anchor=tk.W)
-        self._unavailable_note.pack(fill=tk.X, pady=(0, 6))
         self.lefty_sw = ToggleSwitch(act, on=bool(self._get_layout().get("lefty")),
                                     command=self._on_lefty, background=PANEL)
         self.lefty_sw.pack(side=tk.RIGHT)
@@ -2932,14 +2915,6 @@ class KitStudioPanel(tk.Frame):
             self._sel = None
             self._commit()
 
-    def _save_as(self):
-        self._note("Unavailable in this version")
-        return
-
-    def _pin(self):
-        self._note("Unavailable in this version")
-        return
-
     def _hw_sliders(self, parent):
         prefs = self._get_prefs()
         specs = (("Highway width", "hwWidth", 0.4, 1.0, "{:.2f}"),
@@ -2975,7 +2950,7 @@ class KitStudioPanel(tk.Frame):
 
 
 # ===========================================================================
-# Overlays: Settings (4 tabs) + Calibration + Mixer. Each is a dim-backdrop
+# Overlays: Settings (3 tabs) + Calibration + Mixer. Each is a dim-backdrop
 # Frame placed over the whole tab; Close hides it.
 # ===========================================================================
 class _Overlay(tk.Frame):
@@ -3670,7 +3645,7 @@ class SettingsOverlay(_Overlay):
         self.tabbar.pack(fill=tk.X)
         self._tab_btns: Dict[str, tk.Label] = {}
         for key, label in (("input", "Input"), ("audio", "Audio"),
-                           ("display", "Display"), ("data", "Data")):
+                           ("display", "Display")):
             b = tk.Label(self.tabbar, text=label, background=DARKER, foreground=MUTED,
                         font=F_SMALL, padx=14, pady=4, cursor="hand2")
             b.pack(side=tk.LEFT, padx=(0, 2))
@@ -3686,7 +3661,7 @@ class SettingsOverlay(_Overlay):
         # on the tab dispatch (breaker fix P2, 2026-07-21).
         if key in ("keybinds", "keys", "binds"):
             key = "input"
-        elif key not in ("input", "audio", "display", "data"):
+        elif key not in ("input", "audio", "display"):
             key = "input"
         self._active_tab = key
         self._set("_settings_tab", key)
@@ -3696,7 +3671,7 @@ class SettingsOverlay(_Overlay):
         for w in self.content.winfo_children():
             w.destroy()
         {"input": self._tab_input, "audio": self._tab_audio,
-         "display": self._tab_display, "data": self._tab_data}[key]()
+         "display": self._tab_display}[key]()
 
     # ----- Input tab -----
     def _tab_input(self) -> None:
@@ -3877,41 +3852,6 @@ class SettingsOverlay(_Overlay):
                                         style="Prac.Horizontal.TScale")
         tk.Label(c, text="(UI-scale slider is inert per spec -- not shown)",
                  background=PANEL, foreground=MUTED, font=F_SMALL).pack(anchor=tk.W, pady=(8, 0))
-
-    # ----- Data tab -----
-    def _tab_data(self) -> None:
-        c = self.content
-        self.export_backup_btn = OutlineButton(
-            c, "Export backup…", accent=PURPLE_EDGE,
-            command=self._export_backup, tooltip="Unavailable in this version")
-        self.export_backup_btn.set_enabled(False)
-        self.export_backup_btn.pack(anchor=tk.W, pady=3)
-        self.import_backup_btn = OutlineButton(
-            c, "Import backup…", accent=PURPLE_EDGE,
-            command=self._import_backup, tooltip="Unavailable in this version")
-        self.import_backup_btn.set_enabled(False)
-        self.import_backup_btn.pack(anchor=tk.W, pady=3)
-        self.reset_everything_btn = OutlineButton(
-            c, "Reset everything…", accent=AMBER,
-            command=self._reset_everything, tooltip="Unavailable in this version")
-        self.reset_everything_btn.set_enabled(False)
-        self.reset_everything_btn.pack(anchor=tk.W, pady=3)
-        self._unavailable_note = tk.Label(
-            c, text="Unavailable in this version",
-            background=PANEL, foreground=MUTED, font=F_SMALL)
-        self._unavailable_note.pack(anchor=tk.W, pady=(6, 0))
-
-    def _export_backup(self):
-        self._note("Unavailable in this version")
-        return
-
-    def _import_backup(self):
-        self._note("Unavailable in this version")
-        return
-
-    def _reset_everything(self):
-        self._note("Unavailable in this version")
-        return
 
     # ----- shared control factories -----
     def _seg_row(self, parent, label, options, idx, on_change):
@@ -4649,7 +4589,6 @@ class PracticeTab(ttk.Frame):
         if self._studio_panel is None:
             self._studio_panel = KitStudioPanel(
                 self.play, get_layout=lambda: self._layout, get_prefs=lambda: self._prefs,
-                get_chart=lambda: (self._current or {}).get("chart"),
                 on_layout_changed=self._rebuild_session_live,
                 on_pref_changed=self._on_pref_changed, on_done=self._exit_studio,
                 note=self._status, hook_call=self._hook_call)

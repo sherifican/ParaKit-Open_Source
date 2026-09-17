@@ -14,13 +14,15 @@ RMS-louder regression: Jarredou MDX23C drives +0.240 snare / +0.162 kick /
 allowlist per its F-DET-012 verdict.
 
 Architecture summary:
-    1. User opts in via Settings ("Neural Stem Isolation (experimental)").
+    1. Settings panel ("Neural Stem Isolation"). A saved preference
+       (including off) wins; with no saved preference, ON only if the
+       Jarredou model is already on disk, else Off.
     2. _a2m_do_convert sees opt-in, calls active_separator.separate(audio).
     3. Result dict {class: stem_path} is composited into a single drums-
        equivalent .wav by composite.py.
     4. Composite is fed into the existing hybrid detection path (no
        detection logic changed).
-    5. Default OFF; OFF path = current behavior verbatim.
+    5. Off path = unseparated detection, current behavior verbatim.
 
 The base class is intentionally narrow: name + output classes + license/
 bundling status + path resolution + availability check + separate(). Any
@@ -41,8 +43,8 @@ class StemSeparator(ABC):
     """
 
     # Short stable identifier, lowercase + underscore. Used as the cache
-    # subdirectory name and the value persisted in config when this
-    # separator is the active opt-in.
+    # subdirectory name and as the value stored in config when this
+    # separator is the saved choice.
     name: str = ""
 
     # Per-class output names this separator produces, lowercase. ParaKit's

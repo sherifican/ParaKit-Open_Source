@@ -9,14 +9,19 @@ gates passed for the same reason. Every automated check agreed, because every
 one of them asks "is the published set internally consistent?" and none asks
 "is the published set the code that was tested?"
 
-WHAT IT ASSERTS (batch 9f). For every entry in the candidate's staged
+WHAT IT ASSERTS (batch 9f + 11a). For every entry in the candidate's staged
 `update_manifest.json` that has a counterpart at `HEAD:<path>` in the dev
 checkout, the two *index blobs* are identical (raw sha256). Candidate bytes
 are `git cat-file blob <write-tree>:<path>`, never the worktree. Reference
 bytes are `git cat-file blob HEAD:<path>` in dev, never the worktree — except
-the LFS case below. Hashing is raw; gen_update_manifest's CRLF->LF heuristic
-is not used. `tools/gen_update_manifest.py` and `tools/release_gate.py` are
-compared even though they are not in M.
+the LFS case below. Manifest hashing is raw. A second walk compares every
+path in ship_parity.UNMANIFESTED_PUBLISHED_PATHS (the app and the four gate
+tools) the same way; those records carry manifested=false. The app is
+compared after sha256_lf (CRLF->LF, the generator's text rule); the four
+tools are raw. A missing candidate path is code missing. A path absent at
+dev HEAD is reference_unavailable (the list names dev files). 9f still
+compares tools/gen_update_manifest.py and tools/release_gate.py as
+generator_stale / gate_stale.
 
 LFS. A dev HEAD blob that is a Git LFS pointer is not the model. The
 reference is the dev worktree file (the smudge), named as diagnostic
@@ -138,6 +143,140 @@ def _reference_bytes(sp, dev_root, rel):
 LAST_SCANNER_SOURCE = None
 
 
+def _walk_unmanifested(sp, dev_root, candidate_root, tree_id, manifested_seen):
+    """Candidate index blobs vs dev HEAD for published paths that are not in M."""
+    issues = []
+    missing = []
+    diagnostics = []
+    compared = 0
+    if True:  # check2 unmanifested walk
+        paths = getattr(sp, "UNMANIFESTED_PUBLISHED_PATHS", None)
+        if not paths:
+            issues.append({
+                "stage": "check2_drift",
+                "code": "reference_unavailable",
+                "path": "UNMANIFESTED_PUBLISHED_PATHS",
+                "manifested": False,
+                "reason": (
+                    "scanner has no UNMANIFESTED_PUBLISHED_PATHS;"
+                    " the unmanifested list is not established"
+                ),
+            })
+            return compared, missing, issues, diagnostics
+        app_name = getattr(sp, "APP", "ParaKit v4.0.py")
+        tool_names = tuple(getattr(sp, "REQUIRED_GATE_TOOLS", ()))
+        for rel in paths:
+            rel = (rel or "").replace("\\", "/")
+            if not rel or rel in manifested_seen:
+                continue
+            kind, ref_bytes, status = _reference_bytes(sp, dev_root, rel)
+            if status == "absent":
+                issues.append({
+                    "stage": "check2_drift",
+                    "code": "reference_unavailable",
+                    "path": rel,
+                    "manifested": False,
+                    "reason": (
+                        "unmanifested published path is absent at dev HEAD;"
+                        " the list names dev files"
+                    ),
+                })
+                continue
+            if status == "reference_unavailable":
+                issues.append({
+                    "stage": "check2_drift",
+                    "code": "reference_unavailable",
+                    "path": rel,
+                    "manifested": False,
+                    "reason": (
+                        "dev HEAD listing failed for the path;"
+                        " an unestablished reference is not a permitted skip"
+                        if kind == "listing_failed" else
+                        "dev HEAD lists the path but its blob cannot be read;"
+                        " an unreadable reference is not a permitted skip"
+                    ),
+                })
+                continue
+            if status == "lfs_unsmudged":
+                issues.append({
+                    "stage": "check2_drift",
+                    "code": "lfs_reference_unsmudged",
+                    "path": rel,
+                    "manifested": False,
+                    "reason": (
+                        "dev HEAD blob is an LFS pointer and the worktree is missing "
+                        "or still a pointer; pointer bytes are not the model"
+                    ),
+                })
+                continue
+            try:
+                cand = sp.cat_file_blob(
+                    candidate_root, "%s:%s" % (tree_id, rel)
+                )
+            except Exception as exc:
+                missing.append(rel)
+                issues.append({
+                    "stage": "check2_drift",
+                    "code": "missing",
+                    "path": rel,
+                    "manifested": False,
+                    "reason": "candidate blob missing: %s" % exc,
+                })
+                continue
+            if sp.is_lfs_pointer(cand):
+                issues.append({
+                    "stage": "check2_drift",
+                    "code": "candidate_lfs_pointer",
+                    "path": rel,
+                    "manifested": False,
+                    "reason": (
+                        "candidate index blob is a Git LFS pointer;"
+                        " pointer bytes are not compared as content"
+                    ),
+                })
+                continue
+            compared += 1
+            is_app = rel == app_name
+            is_tool = rel in tool_names
+            if is_app:
+                if True:  # check2 unmanifested app exact
+                    differ = sp.sha256_lf(ref_bytes) != sp.sha256_lf(cand)
+                else:
+                    differ = False
+            elif is_tool:
+                if True:  # check2 unmanifested tools exact
+                    differ = sp.sha256_raw(ref_bytes) != sp.sha256_raw(cand)
+                else:
+                    differ = False
+            else:
+                differ = sp.sha256_raw(ref_bytes) != sp.sha256_raw(cand)
+            if differ:
+                ref_digest = sp.sha256_raw(ref_bytes)
+                cand_digest = sp.sha256_raw(cand)
+                dev_date = _last_commit_date(sp, dev_root, rel)
+                cand_date = _last_commit_date(sp, candidate_root, rel)
+                direction = _direction(dev_date, cand_date)
+                issues.append({
+                    "stage": "check2_drift",
+                    "code": "content_drift",
+                    "path": rel,
+                    "dev_sha256": ref_digest,
+                    "candidate_sha256": cand_digest,
+                    "direction": direction,
+                    "dev_date": dev_date,
+                    "candidate_date": cand_date,
+                    "reference": kind,
+                    "reason": (
+                        "candidate index blob differs from the frozen"
+                        " dev reference"
+                    ),
+                    "manifested": False,
+                })
+        return compared, missing, issues, diagnostics
+    else:
+        return 0, [], [], []
+
+
 def check_frozen_drift(dev_root, candidate_root, tree_id=None, sp=None):
     """Compare candidate index blobs to frozen dev HEAD blobs (Check 2 drift).
 
@@ -228,12 +367,14 @@ def check_frozen_drift(dev_root, candidate_root, tree_id=None, sp=None):
         })
         return _drift_result(1, tree_id, 0, 0, expected, missing, issues, setup, diagnostics, True)
 
+    manifested_seen = set()
     for ent in entries:
         if not isinstance(ent, dict):
             continue
         rel = (ent.get("path") or "").replace("\\", "/")
         if not rel:
             continue
+        manifested_seen.add(rel)
         kind, ref_bytes, status = _reference_bytes(sp, dev_root, rel)
         if status == "absent":
             no_dev += 1
@@ -327,11 +468,19 @@ def check_frozen_drift(dev_root, candidate_root, tree_id=None, sp=None):
         1 for item in tool_issues if item.get("code") == "reference_unavailable"
     )
 
+    un_comp, un_missing, un_issues, un_diag = _walk_unmanifested(
+        sp, dev_root, candidate_root, tree_id, manifested_seen
+    )
+    missing.extend(un_missing)
+    issues.extend(un_issues)
+    diagnostics.extend(un_diag)
+
     rc = 1 if issues else 2 if setup else 0
     result = _drift_result(
         rc, tree_id, compared, no_dev, expected, missing, issues, setup, diagnostics, ran
     )
     result["tools_compared"] = tools_compared
+    result["unmanifested_compared"] = un_comp
     return result
 
 
@@ -372,6 +521,9 @@ def _print_cli_report(result):
     print("  listed but absent from public    %d" % len(missing))
     print("  DRIFTED                          %d" % len(drift))
     print("  STALE TOOLS                      %d" % len(stale))
+    print("== published, not in the manifest ==")
+    print("  paths compared                      %d"
+          % result.get("unmanifested_compared", 0))
     for rel in missing:
         print("  [!!] MISSING in public   %s" % rel)
     for item in drift:
@@ -414,12 +566,14 @@ def _print_cli_report(result):
         print(
             "\nDRIFT CHECK PASSED - compared %d manifest path(s) and %d release"
             " tool(s) against the frozen dev HEAD; %d expected difference(s);"
-            " %d path(s) unchecked (no dev counterpart)"
+            " %d path(s) unchecked (no dev counterpart);"
+            " %d published, not in the manifest"
             % (
                 result.get("compared", 0),
                 result.get("tools_compared", 0),
                 len(expected),
                 result.get("no_dev", 0),
+                result.get("unmanifested_compared", 0),
             )
         )
         return 0

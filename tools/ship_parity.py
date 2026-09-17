@@ -106,6 +106,7 @@ REQUIRED_GATE_TOOLS = (
     "tools/ship_parity.py",
     "tools/check_release_file_drift.py",
 )
+UNMANIFESTED_PUBLISHED_PATHS = (APP,) + REQUIRED_GATE_TOOLS
 DELIVERY_SCREENSHOTS = (
     "screenshots/app-01-single-song-creator.png",
     "screenshots/app-02-create-multiple-songs.png",
@@ -209,10 +210,19 @@ PROBES = {
     "node/node.exe",
     "ffmpeg.exe",
     "ffprobe.exe",
+    # the extensionless spellings the same-directory pair probe tries next
+    "ffmpeg",
+    "ffprobe",
     "yt-dlp",
     "yt-dlp.exe",
     "adb.exe",
     "platform-tools/adb.exe",
+    # adb's two sibling DLLs, probed beside whichever adb.exe was found
+    # (the requirements-bundle detector reports them as a unit with adb).
+    "AdbWinApi.dll",
+    "AdbWinUsbApi.dll",
+    "platform-tools/AdbWinApi.dll",
+    "platform-tools/AdbWinUsbApi.dll",
 }
 
 # Exact code-supported dispositions, not extension-based exemptions.

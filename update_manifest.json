@@ -1,10 +1,10 @@
 {
-  "version": "4.13.4",
+  "version": "4.14.0",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Entries marked \"doc\": true are prose -- a hash mismatch on one is skipped by the updater instead of aborting the whole update; everything else stays fatal. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "effc1204dc730cf5b530830125a5f5bbf3b417faa71df749f1de9300918cbef0",
+      "sha256": "c4da82effd114a3bc748a16bab1d22651a65e815160d39f0dd931fab4e7d5d07",
       "doc": true
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "c85eedb81f35f7fd0cdc9fac765d6c96cf17afd67a3a4d6c608b46a54b9f7612",
+      "sha256": "e81d1a3097a9ee4a63330f5f47efaef50a774a694b24d55a9ea06972e92956f7",
       "doc": true
     },
     {
@@ -4591,7 +4591,7 @@
     },
     {
       "path": "parakit_practice_tab.py",
-      "sha256": "057cd8aac317783616f1b11fb3635877b4f80a7d9913e7f1f14d187c46f6a09a"
+      "sha256": "57c594fea83baba59bf1cbc23340c2e41cf6aebaf541b26c4a00bff676e8f7b0"
     },
     {
       "path": "parakit_practice_widgets.py",
@@ -4603,11 +4603,11 @@
     },
     {
       "path": "parakit_preview_sprites.py",
-      "sha256": "6495ac0537ca6bf2eaf7df7a00f59e213f0fe40158edf5215fbd00a238a11ba0"
+      "sha256": "55ceab6b478843626232498e3c6541b0f215ce8337ce526bc185bb4594069468"
     },
     {
       "path": "parakit_preview_tab.py",
-      "sha256": "0503c6c75f9791159199b0ca2b698fea4ac36a36bc5bcc379be5d3e15d01f9ad"
+      "sha256": "6d3fe4019fa29ac5aefa7732d07ec7fcc4e13d3b3c6d7219819b60ca304a5941"
     },
     {
       "path": "parakit_repo_banner.svg",
@@ -4615,7 +4615,7 @@
     },
     {
       "path": "parakit_separators/__init__.py",
-      "sha256": "317be060414de8dd4985349f66c1ac857ae84f9c38ab330740afe896ca707bd1"
+      "sha256": "6dc408996a26126af89e5cf9c16d1524453c3eeb6534649ad9da7c84a1ec65e7"
     },
     {
       "path": "parakit_separators/composite.py",
@@ -4643,7 +4643,7 @@
     },
     {
       "path": "parakit_spectral_tab.py",
-      "sha256": "93cf0f89410183c94419940beefacf2a9d49dd902cda7ccff3117b7193da827e"
+      "sha256": "53d58f16d4f33762695ae7f5e04a17b488066a1568ad7c155fe7f5b06daad5d6"
     },
     {
       "path": "parakit_synth_voices.py",
@@ -4892,7 +4892,7 @@
     },
     {
       "path": "requirements.txt",
-      "sha256": "20d0131b0175f53fd6e9151431734be5a2489591a48336f746ccf520cc0da153"
+      "sha256": "ac7d033972067700628b679619000da8c4a94a013e8f0a67dac229f43a9ffa0b"
     },
     {
       "path": "rlrr_parse.py",

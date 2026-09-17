@@ -362,7 +362,24 @@ def _pretty_log_segments(text):
     return out
 
 
-def _yt_resolve_js_runtimes(custom_node_path=""):
+def _yt_default_node_extras():
+    return (
+        r"C:\Program Files\nodejs\node.exe",
+        r"C:\Program Files (x86)\nodejs\node.exe",
+    )
+
+
+def _yt_default_deno_extras():
+    return (
+        os.path.join(os.path.expanduser("~"), ".deno", "bin", "deno.exe"),
+        r"C:\Program Files\deno\deno.exe",
+    )
+
+
+def _yt_resolve_js_runtimes(custom_node_path="", base_dir=None,
+                            path_lookup=shutil.which,
+                            extra_node_candidates=None,
+                            extra_deno_candidates=None):
     """Detect installed JavaScript runtimes for yt-dlp's signature solver.
 
     yt-dlp v2025+ only auto-enables `deno`; Node.js (and others) have to be
@@ -370,7 +387,7 @@ def _yt_resolve_js_runtimes(custom_node_path=""):
     Deno across four placement tiers:
 
         0. User-specified path (custom_node_path) — checked first.
-        1. PATH (`shutil.which`) — the simplest case.
+        1. PATH (`path_lookup`, default `shutil.which`) — the simplest case.
         2. Bundled inside ParaKit's `Requirements\\` folder. The "Get Deno"
            button on the YouTube tab drops `deno.exe` here.
         3. Standard system install paths (`C:\\Program Files\\nodejs\\`, etc.)
@@ -378,10 +395,16 @@ def _yt_resolve_js_runtimes(custom_node_path=""):
            when the running process has a stale PATH.
         4. Per-user install paths (`~/.deno/bin/`, etc.).
 
+    `base_dir` and `path_lookup` govern every local and PATH lookup.
+    `extra_node_candidates` / `extra_deno_candidates` default to the current
+    system/per-user list; pass `()` to isolate from the host. Production
+    callers omit them.
+
     Returns a list of `(name, full_path)` tuples for whichever runtimes
     were found. Empty list = nothing detected.
     """
     found = []
+    which = path_lookup or (lambda _name: None)
 
     # Build node.exe candidates — user path (if set) is tried first.
     node_candidates = []
@@ -392,23 +415,23 @@ def _yt_resolve_js_runtimes(custom_node_path=""):
             p = os.path.join(p, "node.exe")
         node_candidates.append(p)
     node_candidates += [
-        shutil.which("node"),
-        _external_path("node.exe"),
-        _external_path(os.path.join("node", "node.exe")),
-        r"C:\Program Files\nodejs\node.exe",
-        r"C:\Program Files (x86)\nodejs\node.exe",
+        which("node"),
+        _external_path("node.exe", base_dir=base_dir),
+        _external_path(os.path.join("node", "node.exe"), base_dir=base_dir),
     ]
+    if extra_node_candidates is None:
+        extra_node_candidates = _yt_default_node_extras()
+    node_candidates += list(extra_node_candidates)
     for p in node_candidates:
         if p and os.path.isfile(p):
             found.append(("node", p))
             break
 
-    deno_candidates = [shutil.which("deno")]
-    deno_candidates += [
-        _external_path("deno.exe"),
-        os.path.join(os.path.expanduser("~"), ".deno", "bin", "deno.exe"),
-        r"C:\Program Files\deno\deno.exe",
-    ]
+    deno_candidates = [which("deno")]
+    deno_candidates += [_external_path("deno.exe", base_dir=base_dir)]
+    if extra_deno_candidates is None:
+        extra_deno_candidates = _yt_default_deno_extras()
+    deno_candidates += list(extra_deno_candidates)
     for p in deno_candidates:
         if p and os.path.isfile(p):
             found.append(("deno", p))
@@ -474,6 +497,170 @@ def _yt_extra_error_guidance(log_text):
     return lines
 
 
+def _yt_line_is_print_file_notice(line):
+    """yt-dlp's print-to-file notice is not a path line and is not logged."""
+    s = line or ""
+    return s.startswith("[info] Writing ") and " to: " in s
+
+
+def _yt_has_already_downloaded_evidence(lines):
+    """True for either already-downloaded form, any path, any extension."""
+    for line in lines or ():
+        s = (line or "").rstrip("\r\n")
+        if s == "[download] The file has already been downloaded":
+            return True
+        if s.startswith("[download] ") and s.endswith(" has already been downloaded"):
+            return True
+    return False
+
+
+def _yt_console_candidate_from_line(line, requested_fmt):
+    """Return (path, kind) from one console line, or None. No filesystem check."""
+    s = (line or "").rstrip("\r\n")
+    if s.startswith("[ExtractAudio] Destination:"):
+        return (s.split("Destination:", 1)[1].strip(), "destination")
+    prefix = "[ExtractAudio] Not converting audio "
+    if s.startswith(prefix):
+        rest = s[len(prefix):]
+        mark_target = "; file is already in target format "
+        mark_common = "; the file is already in a common audio format"
+        if mark_target in rest:
+            return (rest[:rest.rindex(mark_target)].strip(), "not_converting")
+        if mark_common in rest:
+            return (rest[:rest.rindex(mark_common)].strip(), "not_converting_common")
+        return None
+    suffix = " has already been downloaded"
+    dl_prefix = "[download] "
+    if (s.startswith(dl_prefix) and s.endswith(suffix)
+            and s != "[download] The file has already been downloaded"):
+        path = s[len(dl_prefix):-len(suffix)].strip()
+        ext = os.path.splitext(path)[1].lstrip(".").lower()
+        if ext == (requested_fmt or "").lower():
+            return (path, "already_downloaded")
+        return None
+    return None
+
+
+def _yt_parse_console_path(lines, requested_fmt):
+    """Last valid match in the run wins. A later Destination: beats an earlier [download]."""
+    found = None
+    for line in lines or ():
+        got = _yt_console_candidate_from_line(line, requested_fmt)
+        if got:
+            found = got[0]  # last console match wins
+    return found
+
+
+def _yt_read_print_file_path(print_file):
+    """UTF-8, last non-empty line, CR/LF stripped.
+
+    Returns ('ok', path), ('empty', None), or ('unreadable', None).
+    """
+    try:
+        with open(print_file, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except Exception:
+        return ("unreadable", None)
+    lines = [ln.strip("\r\n").strip() for ln in text.splitlines()]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        return ("empty", None)  # empty print file is unknown, never success
+    return ("ok", lines[-1])  # last non-empty print-file line wins
+
+
+def _yt_validate_output_candidate(candidate, out_dir, requested_fmt, custom_basename=None):
+    """Filesystem checks for a P or C candidate. Reports which check refused."""
+    if not candidate:
+        return False, "empty"
+    try:
+        if not os.path.isfile(candidate):  # existence check
+            return False, "not a file"
+    except Exception:
+        return False, "not a file"
+    try:
+        real_c = os.path.normcase(os.path.realpath(candidate))
+        real_d = os.path.normcase(os.path.realpath(out_dir))
+        common = os.path.commonpath([real_c, real_d])
+        if common != real_d:  # folder containment check
+            return False, "outside output folder"
+    except Exception:
+        return False, "outside output folder"
+    ext = os.path.splitext(candidate)[1].lstrip(".").lower()
+    if ext != (requested_fmt or "").lower():  # extension check
+        return False, "wrong extension"
+    if custom_basename:
+        stem = os.path.splitext(os.path.basename(candidate))[0]
+        if os.path.normcase(stem) != os.path.normcase(custom_basename):  # custom-name check
+            return False, "custom name mismatch"
+    return True, "ok"
+
+
+def _yt_record_output_names(out_dir, requested_fmt):
+    """Basenames in out_dir with the requested extension, each through normcase.
+
+    None means the folder could not be read (uncertain), never an empty record.
+    """
+    try:
+        ext = "." + (requested_fmt or "").lower()
+        names = []
+        for fn in os.listdir(out_dir):
+            if os.path.splitext(fn)[1].lower() == ext:
+                names.append(os.path.normcase(fn))  # record comparison uses normcase
+        return frozenset(names)
+    except Exception:
+        return None  # failed folder read is uncertain, not an empty record
+
+
+def _yt_classify_run(seen_lines, folder_record, resolved_path):
+    """present / uncertain / fresh. A Not-converting line alone never decides this."""
+    not_converting_is_not_present_evidence = True
+    already = _yt_has_already_downloaded_evidence(seen_lines)  # already-downloaded evidence
+    resolved_name = None
+    if resolved_path:
+        resolved_name = os.path.normcase(os.path.basename(resolved_path))
+    if already or (folder_record is not None and resolved_name is not None
+                   and resolved_name in folder_record):
+        return "present"
+    if folder_record is None:
+        return "uncertain"
+    return "fresh"
+
+
+def _yt_audio_picture_state(path, fmt):
+    """'yes' / 'no' / 'unknown' / 'wav'. Unreadable tags are unknown, not no pictures."""
+    fmt_l = (fmt or "").lower()
+    if fmt_l == "wav":
+        return "wav"
+    try:
+        if fmt_l == "flac":
+            from mutagen.flac import FLAC
+            audio = FLAC(path)
+            pics = getattr(audio, "pictures", None) or []
+            if pics:  # existing FLAC picture check
+                return "yes"
+            return "no"
+        if fmt_l == "mp3":
+            from mutagen.id3 import ID3, ID3NoHeaderError
+            try:
+                audio = ID3(path)
+            except ID3NoHeaderError:
+                return "no"
+            frames = audio.getall("APIC") if hasattr(audio, "getall") else []
+            if frames:  # existing MP3 APIC picture check
+                return "yes"
+            return "no"
+        return "no"
+    except Exception:
+        return "unknown"  # unreadable tags skip the embed
+
+
+def _yt_dir_exists(path):
+    """True only for a real directory. Empty values must not be converted first."""
+    return bool(path) and os.path.isdir(path)  # node-dialog isdir check
+
+
+def _yt_abs_norm(path):
+    return os.path.normpath(os.path.abspath(path))  # node dialog absolute conversion
 def _yt_looks_like_path(value):
     value = (value or "").strip()
     if not value:
@@ -544,14 +731,14 @@ def _external_base_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def _external_search_dirs():
+def _external_search_dirs(base_dir=None):
     """Return ordered list of directories to search for sibling files/dirs.
 
     Requirements\\ wins when present so a user with the new clean layout
     gets that path back; the legacy next-to-EXE folder is always also
     searched as a fallback.
     """
-    base = _external_base_dir()
+    base = base_dir or _external_base_dir()
     out = []
     req = os.path.join(base, "Requirements")
     if os.path.isdir(req):
@@ -560,7 +747,7 @@ def _external_search_dirs():
     return out
 
 
-def _external_path(name, *, for_writing=False):
+def _external_path(name, *, for_writing=False, base_dir=None):
     """Resolve a file/dir that ships alongside ParaKit.
 
     Reading (default):
@@ -574,7 +761,7 @@ def _external_path(name, *, for_writing=False):
       installs land in the clean folder while existing installs keep the
       legacy layout untouched.
     """
-    dirs = _external_search_dirs()
+    dirs = _external_search_dirs(base_dir)
     if for_writing:
         return os.path.join(dirs[0], name)
     for d in dirs:
@@ -599,35 +786,767 @@ def _resolve_adb_path(base_dir=None, path_lookup=shutil.which):
     for candidate in _adb_search_candidates(base_dir):
         if os.path.isfile(candidate):
             return candidate
-    return path_lookup("adb")
+    lookup = path_lookup or (lambda _name: None)
+    return lookup("adb")
+
+
+# ---------------------------------------------------------------------------
+# Requirements-bundle detector (module-level, no Tk)
+# ---------------------------------------------------------------------------
+BUNDLE_URL = (
+    "https://github.com/sherifican/ParaKit-Open_Source/releases/download/"
+    "Requirements_Bundle/Requirements.Files.ONLY.bundle.zip"
+)
+BUNDLE_SIZE_BYTES = 182814494
+BUNDLE_LAUNCH_COPY = (
+    "Some features need the Requirements bundle (~174 MB): FFmpeg, yt-dlp + a "
+    "JS runtime (Deno or Node), and ADB. Download Requirements.Files.ONLY.bundle.zip "
+    "from the GitHub link, extract, and put the files in a Requirements folder next "
+    "to ParaKit (recommended: Requirements\\platform-tools\\ for adb.exe + its two "
+    "DLLs). Core charting (Audio → MIDI, MIDI Editor, Song Creator, Song Tester) "
+    "does not need this bundle."
+)
+BUNDLE_MANUAL_NOTE = (
+    "Automatic download and install is not in this build. Use Show me how."
+)
+BUNDLE_HOW_TEXT = (
+    "Download Requirements.Files.ONLY.bundle.zip from the GitHub release "
+    "asset, extract it, then place the files next to ParaKit, or keep them "
+    "in a Requirements folder beside it.\n\n"
+    "Put the files here:"
+)
+BUNDLE_HOW_TREE = (
+    "ParaKit\\                      <- the folder ParaKit.exe is in\n"
+    "├── ParaKit.exe\n"
+    "└── Requirements\\\n"
+    "    ├── ffmpeg.exe\n"
+    "    ├── ffprobe.exe\n"
+    "    ├── yt-dlp.exe\n"
+    "    ├── deno.exe              <- or node.exe\n"
+    "    └── platform-tools\\\n"
+    "        ├── adb.exe\n"
+    "        ├── AdbWinApi.dll\n"
+    "        └── AdbWinUsbApi.dll"
+)
+BUNDLE_HOW_LAYOUTS = (
+    "The same files directly next to ParaKit.exe also work, and adb.exe with "
+    "its two DLLs may sit flat in Requirements\\."
+)
+BUNDLE_HOW_TAIL = (
+    "A JS runtime is Node or Deno; either is accepted.\n"
+    "Core charting (Audio → MIDI, MIDI Editor, Song Creator, Song Tester) "
+    "does not need this bundle."
+)
+_PE_SUPPORTED = {0x8664}
+_PE_UNSUPPORTED = {
+    0x014C: "I386",
+    0xAA64: "ARM64",
+    0x01C0: "ARM",
+    0x0200: "IA64",
+}
+
+
+@dataclass
+class BundleFile:
+    """One detector row. Pure data — no UI dependencies."""
+    name: str
+    group: str
+    path: object
+    reason: str
+
+
+@dataclass
+class BundleStatus:
+    files: list
+    groups: dict
+    searched: list
+    paths: dict
+    ffmpeg_pair: tuple
+
+
+def _pe_machine(path):
+    """Classify a PE image without executing it.
+
+    Returns (kind, machine) where kind is 'supported', 'unsupported', or
+    'unknown'. Unreadable / truncated / non-PE / unlisted Machine / OSError
+    is unknown (presence-only). Known unsupported is I386/ARM64/ARM/IA64.
+    """
+    import struct
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(4096)
+        if data[:2] != b"MZ" or len(data) < 64:
+            return "unknown", None
+        off = struct.unpack_from("<I", data, 0x3C)[0]
+        if off < 0 or off + 6 > len(data) or data[off:off + 4] != b"PE\x00\x00":
+            return "unknown", None
+        machine = struct.unpack_from("<H", data, off + 4)[0]
+        if machine in _PE_SUPPORTED:
+            return "supported", machine
+        if machine in _PE_UNSUPPORTED:
+            return "unsupported", machine
+        return "unknown", machine
+    except (OSError, PermissionError, struct.error, ValueError, TypeError):
+        return "unknown", None
+
+
+def _bundle_reason_for(path):
+    if not path or not os.path.isfile(path):
+        return "not_found"
+    kind, _machine = _pe_machine(path)
+    if kind == "unsupported":
+        return "wrong_arch"
+    if kind == "unknown":
+        return "arch_unknown"
+    return "ok"
+
+
+def _bundle_selectable(path):
+    return bool(path) and os.path.isfile(path) and _bundle_reason_for(path) != "wrong_arch"
+
+
+def _ffmpeg_pair_in_dir(directory):
+    ffmpeg = None
+    ffprobe = None
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        candidate = os.path.join(directory, name)
+        if _bundle_selectable(candidate):
+            ffmpeg = candidate
+            break
+    for name in ("ffprobe.exe", "ffprobe"):
+        candidate = os.path.join(directory, name)
+        if _bundle_selectable(candidate):
+            ffprobe = candidate
+            break
+    if ffmpeg and ffprobe:
+        return ffmpeg, ffprobe
+    return None
+
+
+def _resolve_ffmpeg_paths(base_dir=None, path_lookup=shutil.which):
+    """Return a same-directory (ffmpeg, ffprobe) pair, or (None, None).
+
+    Directory precedence: PATH candidate directory (both tools in that
+    directory, or skip it — never mix a PATH ffmpeg with a local ffprobe),
+    then each `_external_search_dirs(base_dir)` entry (Requirements if it
+    exists, then legacy). First directory that yields a selectable pair wins.
+    Known-unsupported PE is skipped; architecture unknown stays selectable.
+    """
+    lookup = path_lookup or (lambda _name: None)
+    if True:  # bundle ffmpeg pair same directory
+        ff = lookup("ffmpeg")
+        if ff and os.path.isfile(ff):
+            pair = _ffmpeg_pair_in_dir(os.path.dirname(os.path.abspath(ff)))
+            if pair:
+                return pair
+        use_local = True  # bundle local search before PATH
+        if use_local:
+            for directory in _external_search_dirs(base_dir):
+                pair = _ffmpeg_pair_in_dir(directory)
+                if pair:
+                    return pair
+        return None, None
+    ffmpeg = lookup("ffmpeg")
+    if not (ffmpeg and os.path.isfile(ffmpeg)):
+        ffmpeg = _external_path("ffmpeg.exe", base_dir=base_dir)
+        if not os.path.isfile(ffmpeg):
+            ffmpeg = None
+    ffprobe = lookup("ffprobe")
+    if not (ffprobe and os.path.isfile(ffprobe)):
+        ffprobe = _external_path("ffprobe.exe", base_dir=base_dir)
+        if not os.path.isfile(ffprobe):
+            ffprobe = None
+    if ffmpeg and ffprobe:
+        return ffmpeg, ffprobe
+    return None, None
+
+
+def _bundle_report_exe(name, which_name, base_dir, path_lookup):
+    """First existing candidate of `name` for a per-file row (not pair policy).
+
+    The local candidates are spelled as literal names per tool so the
+    shipping-parity scanner can resolve every join (a variable filename
+    joined onto a Requirements/install directory is an unresolved path to
+    it). Same candidates, same order: PATH hit, then `<name>` and its bare
+    stem in each search directory.
+    """
+    lookup = path_lookup or (lambda _n: None)
+    candidates = []
+    found = lookup(which_name)
+    if found:
+        candidates.append(found)
+    if name == "ffprobe.exe":
+        for directory in _external_search_dirs(base_dir):
+            for local_name in ("ffprobe.exe", "ffprobe"):
+                candidates.append(os.path.join(directory, local_name))
+    else:
+        for directory in _external_search_dirs(base_dir):
+            for local_name in ("ffmpeg.exe", "ffmpeg"):
+                candidates.append(os.path.join(directory, local_name))
+    first_wrong = None
+    for candidate in candidates:
+        if not candidate or not os.path.isfile(candidate):
+            continue
+        reason = _bundle_reason_for(candidate)
+        if reason == "wrong_arch":
+            if first_wrong is None:
+                first_wrong = candidate
+            continue
+        return candidate, reason
+    if first_wrong is not None:
+        return first_wrong, "wrong_arch"
+    return None, "not_found"
+
+
+def detect_requirements_bundle(base_dir=None, custom_node_path="",
+                               path_lookup=shutil.which,
+                               extra_node_candidates=None,
+                               extra_deno_candidates=None):
+    """Per-file + per-group status for the requirements bundle.
+
+    `base_dir` and `path_lookup` govern every local and PATH lookup, including
+    JS-runtime resolution and ADB candidates. Production callers omit them.
+    Tests pass `extra_node_candidates=()` / `extra_deno_candidates=()` to hide
+    host Program Files / `~/.deno`. The detector always forwards those lists
+    into `_yt_resolve_js_runtimes` (None → the production extras).
+    """
+    base = base_dir or _external_base_dir()
+    lookup = path_lookup or (lambda _name: None)
+    if extra_node_candidates is None:
+        extra_node_candidates = _yt_default_node_extras()
+    if extra_deno_candidates is None:
+        extra_deno_candidates = _yt_default_deno_extras()
+    searched = list(_external_search_dirs(base))
+    files = []
+    paths = {}
+
+    ffmpeg, ffprobe = _resolve_ffmpeg_paths(base_dir=base, path_lookup=lookup)
+    if ffmpeg:
+        files.append(BundleFile("ffmpeg.exe", "ffmpeg", ffmpeg,
+                                _bundle_reason_for(ffmpeg)))
+        files.append(BundleFile("ffprobe.exe", "ffmpeg", ffprobe,
+                                _bundle_reason_for(ffprobe)))
+        paths["ffmpeg"] = ffmpeg
+        paths["ffprobe"] = ffprobe
+        ffmpeg_group = "ok"
+    else:
+        ff_path, ff_why = _bundle_report_exe(
+            "ffmpeg.exe", "ffmpeg", base, lookup)
+        fp_path, fp_why = _bundle_report_exe(
+            "ffprobe.exe", "ffprobe", base, lookup)
+        files.append(BundleFile("ffmpeg.exe", "ffmpeg", ff_path, ff_why))
+        files.append(BundleFile("ffprobe.exe", "ffmpeg", fp_path, fp_why))
+        if (
+            ff_why == "wrong_arch" and fp_why in ("wrong_arch", "not_found")
+            or fp_why == "wrong_arch" and ff_why in ("wrong_arch", "not_found")
+        ):
+            ffmpeg_group = "wrong_arch"
+        else:
+            ffmpeg_group = "missing"
+        if ff_path:
+            paths["ffmpeg"] = ff_path
+        if fp_path:
+            paths["ffprobe"] = fp_path
+
+    ytdlp_name = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
+    ytdlp = _external_path(ytdlp_name, base_dir=base)
+    if not os.path.isfile(ytdlp):
+        ytdlp = lookup("yt-dlp")
+    ytdlp_reason = _bundle_reason_for(ytdlp) if ytdlp and os.path.isfile(ytdlp) else "not_found"
+    if ytdlp_reason == "wrong_arch":
+        alt = lookup("yt-dlp")
+        if alt and os.path.isfile(alt) and alt != ytdlp:
+            alt_reason = _bundle_reason_for(alt)
+            if alt_reason != "wrong_arch":
+                ytdlp, ytdlp_reason = alt, alt_reason
+    ytdlp_path = ytdlp if ytdlp_reason != "not_found" else None
+    files.append(BundleFile("yt-dlp.exe", "youtube", ytdlp_path, ytdlp_reason))
+    if ytdlp_path:
+        paths["yt-dlp"] = ytdlp_path
+    ytdlp_ok = ytdlp_reason in ("ok", "arch_unknown")
+
+    js = _yt_resolve_js_runtimes(
+        custom_node_path, base_dir=base, path_lookup=lookup,
+        extra_node_candidates=extra_node_candidates,
+        extra_deno_candidates=extra_deno_candidates,
+    )
+    # Either runtime is accepted: take the first selectable one (ok or
+    # architecture unknown); report a wrong-architecture hit only when no
+    # alternative is selectable.
+    js_pick = None
+    for js_cand_name, js_cand_path in js:
+        js_cand_reason = _bundle_reason_for(js_cand_path)
+        if js_pick is None:
+            js_pick = (js_cand_name, js_cand_path, js_cand_reason)
+        if js_cand_reason in ("ok", "arch_unknown"):
+            js_pick = (js_cand_name, js_cand_path, js_cand_reason)
+            break
+    if js_pick:
+        js_name, js_path, js_reason = js_pick
+        files.append(BundleFile("node.exe or deno.exe", "youtube", js_path, js_reason))
+        paths["js_runtime"] = js_path
+        paths["js_runtime_name"] = js_name
+        js_ok = js_reason in ("ok", "arch_unknown")
+    else:
+        files.append(BundleFile("node.exe or deno.exe", "youtube", None, "not_found"))
+        js_reason = "not_found"
+        js_ok = False
+    if ytdlp_ok and js_ok:
+        youtube_group = "ok"
+    elif ytdlp_reason == "wrong_arch" and js_ok:
+        youtube_group = "wrong_arch"
+    elif ytdlp_ok and js_reason == "wrong_arch":
+        youtube_group = "wrong_arch"
+    else:
+        youtube_group = "missing"
+
+    adb_exe = None
+    adb_reason = "not_found"
+    adb_wrong = None
+    for candidate in _adb_search_candidates(base):
+        if not os.path.isfile(candidate):
+            continue
+        why = _bundle_reason_for(candidate)
+        if why == "wrong_arch":
+            if adb_wrong is None:
+                adb_wrong = candidate
+            continue
+        adb_exe, adb_reason = candidate, why
+        break
+    if adb_exe is None:
+        path_adb = lookup("adb")
+        if path_adb and os.path.isfile(path_adb):
+            why = _bundle_reason_for(path_adb)
+            if why == "wrong_arch":
+                if adb_wrong is None:
+                    adb_wrong = path_adb
+            else:
+                adb_exe, adb_reason = path_adb, why
+    if adb_exe is None and adb_wrong is not None:
+        adb_exe, adb_reason = adb_wrong, "wrong_arch"
+    files.append(BundleFile("adb.exe", "adb", adb_exe if adb_reason != "not_found" else None,
+                            adb_reason))
+    if adb_exe and adb_reason != "not_found":
+        paths["adb"] = adb_exe
+    exe_dir = os.path.dirname(adb_exe) if adb_exe and adb_reason != "not_found" else None
+    require_dlls = True  # bundle ADB sibling DLLs required
+    dlls_ok = True
+    for dll_name in ("AdbWinApi.dll", "AdbWinUsbApi.dll"):
+        dll_path = os.path.join(exe_dir, dll_name) if exe_dir else None
+        if require_dlls:
+            if dll_path and os.path.isfile(dll_path):
+                why = _bundle_reason_for(dll_path)
+                files.append(BundleFile(dll_name, "adb", dll_path, why))
+                paths[dll_name] = dll_path
+                if why not in ("ok", "arch_unknown"):
+                    dlls_ok = False
+            else:
+                files.append(BundleFile(
+                    dll_name, "adb", None,
+                    "missing_sibling" if adb_exe and adb_reason in ("ok", "arch_unknown")
+                    else "not_found"))
+                dlls_ok = False
+        else:
+            files.append(BundleFile(dll_name, "adb", dll_path, "ok"))
+    if adb_exe and adb_reason in ("ok", "arch_unknown") and dlls_ok:
+        adb_group = "ok"
+    elif adb_reason == "wrong_arch":
+        adb_group = "wrong_arch"
+    else:
+        adb_group = "missing"
+
+    return BundleStatus(
+        files=files,
+        groups={"ffmpeg": ffmpeg_group, "youtube": youtube_group, "adb": adb_group},
+        searched=searched,
+        paths=paths,
+        ffmpeg_pair=(ffmpeg, ffprobe) if ffmpeg else (None, None),
+    )
+
+
+def youtube_feature_ready(status):
+    """True only if the YouTube group and the FFmpeg group are both ok."""
+    groups = getattr(status, "groups", {}) or {}
+    return groups.get("youtube") == "ok" and groups.get("ffmpeg") == "ok"
+
+
+def _bundle_has_missing(status):
+    groups = getattr(status, "groups", {}) or {}
+    return any(value != "ok" for value in groups.values())
+
+
+def _bundle_widget_alive(dlg):
+    """True when the extra-tools Toplevel still exists."""
+    if dlg is None:
+        return False
+    if getattr(dlg, "destroyed", False):
+        return False
+    exists = getattr(dlg, "winfo_exists", None)
+    if not callable(exists):
+        return True
+    try:
+        return bool(exists())
+    except Exception:
+        return False
+
+
+def _bundle_reason_plain(reason):
+    if reason == "ok":
+        return "found"
+    if reason == "missing_sibling":
+        return "missing a file that has to sit next to it"
+    if reason == "wrong_arch":
+        return "wrong kind of program for this PC"
+    if reason == "arch_unknown":
+        return "found, but this app could not read its type"
+    return "not found"
+
+
+def _bundle_group_plain(key):
+    if key == "ffmpeg":
+        return "FFmpeg"
+    if key == "youtube":
+        return "YouTube tools"
+    if key == "adb":
+        return "ADB (Push to Quest)"
+    return key
+
+
+def _bundle_features_for_missing(status):
+    """Display items for the No thanks page, stable order, deduped.
+
+    Pure helper, no Tk. Input is detector status (re-detected on decline).
+    Empty list means no unavailable-features claim.
+    """
+    groups = dict(getattr(status, "groups", {}) or {})
+    files = list(getattr(status, "files", []) or [])
+    paths = dict(getattr(status, "paths", {}) or {})
+    ffmpeg_row = None
+    ffprobe_row = None
+    for row in files:
+        name = getattr(row, "name", "")
+        if name == "ffmpeg.exe":
+            ffmpeg_row = row
+        elif name == "ffprobe.exe":
+            ffprobe_row = row
+    ffmpeg_path = paths.get("ffmpeg") or getattr(ffmpeg_row, "path", None)
+    ffmpeg_reason = getattr(ffmpeg_row, "reason", "not_found") if ffmpeg_row is not None else "not_found"
+    ffprobe_reason = getattr(ffprobe_row, "reason", "not_found") if ffprobe_row is not None else "not_found"
+    ffmpeg_missing = groups.get("ffmpeg") != "ok"
+    youtube_missing = groups.get("youtube") != "ok"
+    adb_missing = groups.get("adb") != "ok"
+    ffmpeg_exe_absent = (not ffmpeg_path) or ffmpeg_reason == "not_found"
+    items = []
+    seen = set()
+
+    def add(key, text, tag):
+        if key in seen:
+            return
+        seen.add(key)
+        items.append(BundlePayload(key=key, text=text, tag=tag))
+
+    if ffmpeg_missing or youtube_missing:
+        add("youtube", "YouTube → FLAC", "definite")
+    if ffmpeg_missing:
+        add("ogg", "Audio to .ogg Converter", "definite")
+    if ffmpeg_exe_absent:
+        add("stem", "Stem Splitter (.ogg / FLAC exports)", "export")
+        add("asset", "Asset Manager (Trim & Export as .ogg)", "export")
+    elif ffmpeg_missing and (
+        ffprobe_reason in ("not_found", "missing_sibling") or not paths.get("ffprobe")
+    ):
+        add("stem", "Stem Splitter (.ogg / FLAC exports)", "maybe")
+        add("asset", "Asset Manager (Trim & Export as .ogg)", "maybe")
+    if adb_missing:
+        add("adb", "Push to Quest", "definite")
+    order = {"youtube": 0, "ogg": 1, "stem": 2, "asset": 3, "adb": 4}
+    items.sort(key=lambda it: order.get(getattr(it, "key", ""), 99))
+    return items
+
+
+def _bundle_feature_line(item):
+    """Sentence both extra-tools pages show for one missing-feature item."""
+    tag = getattr(item, "tag", "")
+    key = getattr(item, "key", "")
+    if tag == "export":
+        if key == "stem":
+            return ("Stem Splitter and DrumSep will not be able "
+                    "to save .ogg/FLAC")
+        return ("Asset Manager trim will not be able "
+                "to save .ogg")
+    if tag == "maybe":
+        return getattr(item, "text", "") + " may be affected"
+    return getattr(item, "text", "")
+
+
+def _bundle_impact_groups(status):
+    """One BundlePayload per missing group, ffmpeg then youtube then adb.
+
+    Pure helper, no Tk. files are that group's problem rows as
+    "name (plain reason)" in list order. features are the subset of
+    _bundle_features_for_missing(status) the group accounts for, with
+    the same sentences the No thanks page renders.
+    """
+    groups = dict(getattr(status, "groups", {}) or {})
+    files = list(getattr(status, "files", []) or [])
+    items = _bundle_features_for_missing(status)
+    youtube_missing = groups.get("youtube") != "ok"
+    out = []
+    for key in ("ffmpeg", "youtube", "adb"):
+        if groups.get(key) == "ok":
+            continue
+        problem = [
+            row for row in files
+            if getattr(row, "group", "") == key
+            and getattr(row, "reason", "ok") not in ("ok", "arch_unknown")
+        ]
+        file_labels = [
+            "%s (%s)" % (
+                getattr(row, "name", "?"),
+                _bundle_reason_plain(getattr(row, "reason", "")),
+            )
+            for row in problem
+        ]
+        feats = []
+        for it in items:
+            item_key = getattr(it, "key", "")
+            if item_key == "youtube":
+                owner = "youtube" if youtube_missing else "ffmpeg"
+            elif item_key in ("ogg", "stem", "asset"):
+                owner = "ffmpeg"
+            elif item_key == "adb":
+                owner = "adb"
+            else:
+                continue
+            if owner == key:
+                feats.append(_bundle_feature_line(it))
+        if key == "adb":
+            label = "ADB"
+        else:
+            label = _bundle_group_plain(key)
+        out.append(BundlePayload(
+            key=key,
+            label=label,
+            files=file_labels,
+            features=feats,
+        ))
+    return out
+
+
+def _bundle_copy_metrics(widget):
+    """TLabel fg/font plus the copy font's '0' and '  - ' widths in pixels."""
+    copy_fg = "#ffffff"
+    copy_font = ("Segoe UI", 9)
+    try:
+        _st = ttk.Style()
+        _looked_fg = _st.lookup("TLabel", "foreground")
+        _looked_font = _st.lookup("TLabel", "font")
+        if _looked_fg:
+            copy_fg = _looked_fg
+        if _looked_font:
+            copy_font = _looked_font
+    except Exception:
+        pass
+
+    def _measure(sample):
+        try:
+            _call = getattr(getattr(widget, "tk", None), "call", None)
+            if callable(_call):
+                return int(_call(
+                    "font", "measure", copy_font, "-displayof", widget, sample,
+                ) or 0)
+        except Exception:
+            return 0
+        return 0
+
+    em = _measure("0")
+    hang = _measure("  - ")
+    if em > 0:
+        copy_width = max(1, int(round(520.0 / float(em))))
+    else:
+        copy_width = 1
+    return copy_fg, copy_font, em, hang, copy_width
+
+
+def _bundle_fit_copy_text(parent, body, *, copy_fg, copy_font, copy_width,
+                          wrap="word", hang=None, later_spacing1=None,
+                          pady=None):
+    """Read-only Text in a non-propagating holder; ypixels fit on Configure."""
+    holder_kw = {"bg": APP_BG}
+    text_kw = dict(
+        wrap=wrap,
+        spacing2=4,
+        bg=APP_BG,
+        fg=copy_fg,
+        font=copy_font,
+        relief="flat",
+        bd=0,
+        highlightthickness=0,
+        cursor="arrow",
+        width=copy_width,
+        padx=0,
+        pady=0,
+    )
+    if globals().get("TTKBS_AVAILABLE"):
+        holder_kw["autostyle"] = False
+        text_kw["autostyle"] = False
+    holder = tk.Frame(parent, **holder_kw)
+    holder.pack_propagate(False)
+    box = tk.Text(holder, **text_kw)
+    restyle = dict(
+        bg=APP_BG, fg=copy_fg, relief="flat", bd=0,
+        highlightthickness=0, padx=0, pady=0,
+    )
+    try:
+        holder.configure(
+            bg=APP_BG, relief="flat", bd=0,
+            highlightthickness=0, padx=0, pady=0,
+        )
+    except Exception:
+        pass
+    box.configure(**restyle)
+    box.insert("1.0", body)
+    if hang is not None:
+        box.tag_configure("hang", lmargin1=0, lmargin2=int(hang))
+        box.tag_add("hang", "1.0", "end")
+    if later_spacing1 is not None:
+        box.tag_configure("later", spacing1=int(later_spacing1))
+        box.tag_add("later", "2.0", "end")
+    box.configure(state="disabled")
+    box.pack(fill=tk.BOTH, expand=True)
+    pack_kw = {"anchor": "w"}
+    if pady is not None:
+        pack_kw["pady"] = pady
+    holder.pack(**pack_kw)
+    try:
+        req_w = box.winfo_reqwidth()
+        if req_w:
+            holder.configure(width=req_w)
+    except Exception:
+        pass
+
+    def _fit(_event=None):
+        try:
+            width = box.winfo_width()
+        except Exception:
+            return
+        if width is None or int(width) <= 1:
+            return
+        yp = box.count("1.0", "end", "update", "ypixels")
+        if isinstance(yp, (tuple, list)):
+            yp = yp[0] if yp else 0
+        try:
+            yp = int(yp or 0)
+        except (TypeError, ValueError):
+            yp = 0
+        try:
+            req_w = int(box.winfo_reqwidth() or 0)
+        except (TypeError, ValueError):
+            req_w = 0
+        try:
+            cur_h = int(holder.winfo_height() or 0)
+        except (TypeError, ValueError):
+            cur_h = 0
+        try:
+            cur_w = int(holder.winfo_width() or 0)
+        except (TypeError, ValueError):
+            cur_w = 0
+        cfg = {}
+        if cur_h != yp:
+            cfg["height"] = yp
+        if req_w and cur_w != req_w:
+            cfg["width"] = req_w
+        if cfg:
+            holder.configure(**cfg)
+
+    box.bind("<Configure>", _fit)
+    return holder, box
+
+
+class BundlePayload:
+    """Immutable-enough execution inputs (attribute access for C1 rows)."""
+    def __init__(self, **fields):
+        for key, value in fields.items():
+            setattr(self, key, value)
+
+
+class BundleRequest:
+    """Original-press identity. attempt_token stays None until C2 Download."""
+    def __init__(self, kind, payload, compare_baseline):
+        self.kind = kind
+        self.payload = payload
+        self.compare_baseline = compare_baseline
+        self.callback = None
+        self.canceled = False
+        self.ineligible = False
+        self.attempt_token = None
+        self.consumed = False
+
+
+class BundleDialogOwner:
+    """Owner object for one extra-tools Toplevel. Assigned before Toplevel."""
+    _seq = 0
+
+    def __init__(self, host, mode, request):
+        BundleDialogOwner._seq += 1
+        self.dialog_token = BundleDialogOwner._seq
+        self.host = host
+        self.mode = mode
+        self.request = request
+        self.widget = None
+        self.frame = None
+        self.dismiss_var = None
+        self.last_op = None
+        self.attempt_token = None
+        self.canceled = False
+
+    def teardown(self, op="final_close"):
+        return self.host._bundle_teardown_owner(self, op)
+
+    def on_destroy_notify(self, event):
+        return self.host._bundle_on_destroy_notify(self, event)
+
+    def cleanup(self):
+        dlg = self.widget
+        if dlg is None:
+            return
+        try:
+            dlg.destroy()
+        except Exception:
+            pass
+        gone = not _bundle_widget_alive(dlg)
+        host = self.host
+        current = getattr(host, "_bundle_dialog_owner", None)
+        if gone:
+            if current is self:
+                host._bundle_dialog_owner = None
+                host._bundle_dialog_close = None
+                host._bundle_dialog_widget = None
+            return
+        if current is self or current is None:
+            host._bundle_dialog_owner = self
+            host._bundle_dialog_close = self.teardown
+            host._bundle_dialog_widget = dlg
 
 
 # ---------------------------------------------------------------------------
 # FFmpeg path helper — ensures pydub can find ffmpeg in both .py and .exe
 # ---------------------------------------------------------------------------
-def _setup_ffmpeg():
-    """
-    When running as a frozen .exe, ffmpeg won't be on PATH automatically.
-    This checks common locations and tells pydub where to find it.
+def _setup_ffmpeg(base_dir=None, path_lookup=shutil.which):
+    """Point pydub at the selected same-directory FFmpeg pair.
 
-    Both layouts are supported: ffmpeg.exe / ffprobe.exe alongside ParaKit.exe
-    (legacy) or inside a sibling Requirements\\ folder.
+    PATH-directory pair first, then Requirements / legacy, in source and
+    frozen alike. No pair → leave pydub unset. Function-local `import shutil`
+    is gone so a fixture `path_lookup` is not bypassed.
     """
-    import shutil
     from pydub import AudioSegment
-
-    # If ffmpeg is already on PATH, nothing to do
-    if shutil.which("ffmpeg"):
-        return
-
-    # When frozen, look next to the .exe (or in Requirements\)
-    if getattr(sys, 'frozen', False):
-        ffmpeg_path  = _external_path("ffmpeg.exe")
-        ffprobe_path = _external_path("ffprobe.exe")
-        if os.path.exists(ffmpeg_path):
-            AudioSegment.converter = ffmpeg_path
-            AudioSegment.ffmpeg    = ffmpeg_path
-            AudioSegment.ffprobe   = ffprobe_path
+    if True:  # bundle source-mode ffmpeg pair
+        ffmpeg, ffprobe = _resolve_ffmpeg_paths(
+            base_dir=base_dir, path_lookup=path_lookup)
+        if ffmpeg:
+            AudioSegment.converter = ffmpeg
+            AudioSegment.ffmpeg = ffmpeg
+            AudioSegment.ffprobe = ffprobe
 
 # ---------------------------------------------------------------------------
 # Paradiddle MIDI mapping and kit layout
@@ -1954,6 +2873,478 @@ def sanitize_fs_component(name, fallback="Untitled"):
 # run, which is the only placement that keeps the chart sliding as one piece -- see that
 # method for why the obvious placement silently re-picks which notes survive.
 CHART_CONVENTION_OFFSET_SEC = 0.0065
+
+
+CHART_END_MARKER_TEXT = "ParaKit Chart End"
+CHART_END_DETACH_SECS = 0.05
+CHART_END_HANDLE_R = 6
+CHART_END_HIT_R = 8
+CHART_END_FOLLOW_EPS = 0.05
+CHART_END_EVENT_EPS = 1e-4
+CHART_END_HANDLE_Y_OFF = 8  # chart-end b3 knob below playhead oval
+CHART_END_HINT_CLAUSE = "Drag the Chart End handle to set where the song ends in game"  # chart-end b3 hint clause
+ME_HINT_COMPACT = (
+    "Ctrl+scroll=zoom  Ctrl+C/V=copy/paste  Ctrl+Q=quantize\n"
+    + CHART_END_HINT_CLAUSE)
+ME_HINT_ROOMY = (
+    "Ctrl+scroll=zoom  Ctrl+C/V=copy/paste  Ctrl+Q=quantize  |"
+    "  Reclassify: click=picker, drag=lane change  |"
+    "  Vel Filter removes quiet notes  |"
+    "  " + CHART_END_HINT_CLAUSE)
+CHART_END_HANDLE_TIP = (
+    "Drag to set where the song ends in game. "
+    "Right-click to follow the last note again.")  # chart-end b3 handle tooltip
+
+
+def _me_last_note_time(notes):
+    if not notes:
+        return None
+    first = notes[0]
+    if isinstance(first, dict):
+        return max(float(n["time"]) for n in notes)
+    last = None
+    for n in notes:
+        if len(n) > 3:
+            t = float(n[3])
+            if last is None or t > last:
+                last = t
+    return last
+
+
+def _me_chart_end_tick_tol(tpb, bpm):
+    tpb = float(tpb or 480)
+    bpm = float(bpm or 120.0)
+    if tpb <= 0 or bpm <= 0:
+        return 0.001
+    return max(0.001, 60.0 / (bpm * tpb))
+
+
+def _me_draw_chart_end_secs(follow, committed, last_note, drag_t):
+    if drag_t is not None:  # chart-end resolver layer 1: provisional drag
+        return drag_t
+    if follow:
+        return last_note
+    return committed
+
+
+def _me_chart_end_clamp(t, last_note, audio_len):
+    t = float(t)
+    if last_note is None:
+        return max(0.0, t)
+    floored = max(t, float(last_note))  # chart-end last-note floor
+    if audio_len is None or audio_len <= 0:
+        return floored
+    if last_note <= audio_len:
+        return min(floored, float(audio_len))
+    return floored
+
+
+def _me_chart_end_handle_geom(header_h):
+    return (CHART_END_HANDLE_R,
+            int(header_h) // 2 - 4 + CHART_END_HANDLE_Y_OFF)  # chart-end b3 knob below playhead oval
+
+
+def _me_chart_end_at(cx, cy, x_ce, header_h):
+    if cy > header_h:  # chart-end handle miss below the ruler
+        return False
+    _hr, _hy = _me_chart_end_handle_geom(header_h)
+    return ((cx - x_ce) ** 2 + (cy - _hy) ** 2) ** 0.5 <= CHART_END_HIT_R
+
+
+def _me_chart_end_click_order(user_marker_hit, chart_end_hit):
+    if user_marker_hit:
+        return "marker"
+    if chart_end_hit:
+        return "chart_end"
+    return "seek"
+
+
+def _me_rclick_swallowed(drag_note, drag_marker, sel_start, ruler,
+                         drag_chart_end):
+    return (
+        drag_note is not None
+        or drag_marker is not None
+        or sel_start is not None
+        or bool(ruler)
+        or drag_chart_end is not None  # chart-end rclick guard includes _me_drag_chart_end
+    )
+
+
+def _me_canvas_extent_secs(me_duration, draw_end, audio_len, pad_secs):
+    return max(me_duration or 0, draw_end or 0, audio_len or 0) + (pad_secs or 0)
+
+
+def _me_chart_end_follow_menu_state(follow, drag_t):
+    if follow and drag_t is None:
+        return "disabled"  # chart-end b3 Follow last note menu state
+    return "normal"
+
+
+def _me_chart_end_choice(follow, committed):
+    if follow:
+        return ("follow", None)
+    return ("manual", committed)
+
+
+def _me_chart_end_choice_changed(before, after, tol):
+    if before[0] != after[0]:
+        return True
+    if before[0] == "follow":
+        return False
+    a, b = before[1], after[1]
+    if a is None or b is None:
+        return a is not b
+    return abs(float(a) - float(b)) > float(tol)
+
+
+def _me_chart_end_apply_one_way_floor(follow, committed, last_note, dragging):
+    if follow or dragging or last_note is None:
+        return committed
+    if committed is None or last_note > committed:
+        return last_note  # chart-end one-way floor is a committed assignment
+    return committed
+
+
+def _me_chart_end_on_audio_change(follow, committed, last_note, audio_len):
+    if follow or committed is None:
+        return committed, False, None
+    if audio_len is None or audio_len <= 0:
+        return committed, False, None
+    if last_note is not None and last_note <= audio_len:
+        if committed > audio_len:
+            return float(audio_len), True, (
+                "Chart End clamped to audio (%.1fs)" % audio_len)
+        return committed, False, None
+    new_c = committed
+    if last_note is not None:
+        new_c = max(committed, last_note)
+    status = None
+    if audio_len is not None and new_c > audio_len and last_note is not None:
+        status = (
+            "Chart End is past the loaded audio — last note %.1fs, audio %.1fs"
+            % (last_note, audio_len))
+    return new_c, False, status
+
+
+def _me_waveform_cache_key_for(secs_start, secs_end, w, h, style, amps_id,
+                              audio_dur, has_notes, me_duration, draw_end):
+    return (secs_start, secs_end, w, h, style, amps_id,
+            round(float(audio_dur or 0.0), 6),
+            bool(has_notes),
+            me_duration,
+            round(float(draw_end or 0.0), 6))  # chart-end waveform cache includes draw_end
+
+
+def _midi_tempo_map_from_mid(mid):
+    tempo_map = []
+    for track in mid.tracks:
+        abs_tick = 0
+        for msg in track:
+            abs_tick += msg.time
+            if msg.type == "set_tempo":
+                tempo_map.append((abs_tick, msg.tempo))
+    if not tempo_map:
+        tempo_map = [(0, 500000)]
+    tempo_map.sort(key=lambda x: x[0])
+    return tempo_map
+
+
+def _midi_ticks_to_secs(abs_tick, tpb, tempo_map):
+    tpb = float(tpb or 480)
+    time_sec = 0.0
+    prev_tick = 0
+    prev_tempo = 500000
+    for change_tick, tempo in tempo_map:
+        if change_tick >= abs_tick:
+            break
+        time_sec += ((change_tick - prev_tick) * prev_tempo / tpb / 1_000_000)
+        prev_tick = change_tick
+        prev_tempo = tempo
+    time_sec += ((abs_tick - prev_tick) * prev_tempo / tpb / 1_000_000)
+    return time_sec
+
+
+def _midi_unfolder_notes_from_mid(mid):
+    """parse_midi-shape 4-tuples from original note_on numbers. No fold."""
+    if mid is None:
+        return []
+    tpb = getattr(mid, "ticks_per_beat", 480) or 480
+    tempo_map = _midi_tempo_map_from_mid(mid)
+    notes = []
+    for track in mid.tracks:
+        abs_tick = 0
+        for msg in track:
+            abs_tick += msg.time
+            # chart-end unfolder: original note_on numbers, skip _ME_FOLD_TO_LANE
+            if msg.type == "note_on" and msg.velocity > 0:
+                notes.append((
+                    abs_tick, msg.note, msg.velocity,
+                    _midi_ticks_to_secs(abs_tick, tpb, tempo_map),
+                ))
+    notes.sort(key=lambda x: x[0])
+    return notes
+
+
+def _midi_conversion_mapped_last_secs(notes_4tuples):
+    last = None
+    for n in notes_4tuples or ():
+        if len(n) > 3 and n[1] in MIDI_MAP:
+            t = n[3]
+            if last is None or t > last:
+                last = t
+    return last
+
+
+def _midi_chart_end_restore(marker_secs, last_note, tpb, bpm):
+    if marker_secs is None:
+        return True, last_note, None
+    try:
+        ms = float(marker_secs)
+    except (TypeError, ValueError):
+        return True, last_note, "invalid"
+    if ms != ms or ms in (float("inf"), float("-inf")) or ms < 0:
+        return True, last_note, "invalid"
+    tol = _me_chart_end_tick_tol(tpb, bpm)
+    if last_note is not None and ms < float(last_note) - tol:
+        return False, float(last_note), "clamped"
+    return False, ms, None  # chart-end presence: equal to last is still manual
+
+
+def _midi_chart_end_from_mid(mid, tpb, last_midi_note_secs):
+    if mid is None:
+        return None
+    tpb = tpb or getattr(mid, "ticks_per_beat", 480) or 480
+    tempo_map = _midi_tempo_map_from_mid(mid)
+    best_tick = None
+    for track in mid.tracks:
+        abs_tick = 0
+        for msg in track:
+            abs_tick += msg.time
+            if (getattr(msg, "type", None) == "marker"
+                    and getattr(msg, "text", None) == CHART_END_MARKER_TEXT):
+                if best_tick is None or abs_tick > best_tick:
+                    best_tick = abs_tick
+    if best_tick is None:
+        return None
+    marker_secs = _midi_ticks_to_secs(best_tick, tpb, tempo_map)
+    bpm = 60_000_000 / float(tempo_map[0][1]) if tempo_map else 120.0
+    follow, end, _repair = _midi_chart_end_restore(
+        marker_secs, last_midi_note_secs, tpb, bpm)
+    if follow:
+        return None
+    return end
+
+
+def _midi_file_has_chart_end_marker(path):
+    if not path or not os.path.isfile(path):
+        return False
+    try:
+        import mido as _mido
+        mid = _mido.MidiFile(path)
+    except Exception:
+        return False
+    for track in mid.tracks:
+        for msg in track:
+            if (getattr(msg, "type", None) == "marker"
+                    and getattr(msg, "text", None) == CHART_END_MARKER_TEXT):
+                return True
+    return False
+
+
+def _me_chart_end_overwrite_drops_marker(follow, file_has_marker):
+    return bool(follow) and bool(file_has_marker)  # chart-end b3 overwrite drops marker
+
+
+def _me_chart_end_load_apply(marker_secs, conversion_last, displayed_last,
+                             tpb, midi_bpm):
+    follow, end, _repair = _midi_chart_end_restore(
+        marker_secs, displayed_last, tpb, midi_bpm)
+    _ff, file_end, _ = _midi_chart_end_restore(
+        marker_secs, conversion_last, tpb, midi_bpm)
+    tol = _me_chart_end_tick_tol(tpb, midi_bpm)
+    dirty = False
+    status = None
+    if (not follow) and (
+            file_end is None
+            or abs(float(end) - float(file_end)) > tol):  # chart-end dirty when displayed vs conversion resolved ends differ
+        dirty = True
+        status = "Chart End marker was before the last note; clamped."
+    return follow, end, dirty, status
+
+
+def _me_draw_chart_end(canvas, x_ce, total_h, header_h):
+    hr, hy = _me_chart_end_handle_geom(header_h)
+    canvas.create_line(
+        x_ce, 0, x_ce, total_h,
+        fill="#cc7733", width=1, dash=(4, 3), tags="chart_end")
+    if True:  # chart-end oval pair (playhead geometry, Chart End colors)
+        canvas.create_oval(
+            x_ce - hr, hy - hr, x_ce + hr, hy + hr,
+            fill="#cc7733", outline="#3d1f0a", width=2,
+            tags=("chart_end", "chart_end_handle"))
+        canvas.create_oval(
+            x_ce - 2, hy - 2, x_ce + 2, hy + 2,
+            fill="#0d0d1a", outline="",
+            tags=("chart_end", "chart_end_handle"))
+    canvas.create_text(
+        x_ce + hr + 4, header_h // 2,
+        text="Chart End", fill="#cc7733",
+        font=("Consolas", 7), anchor="w", tags="chart_end")
+
+
+def _apply_chart_end(rlrr, end_secs):
+    """If end_secs is None, leave length as build_rlrr wrote it (last+5).
+    Otherwise set recordingMetadata.length to float(end_secs).
+    Does not mutate events."""
+    if end_secs is None:
+        return rlrr
+    meta = rlrr.get("recordingMetadata")
+    if meta is None:
+        rlrr["recordingMetadata"] = meta = {}
+    meta["length"] = float(end_secs)  # chart-end length only; events unchanged
+    return rlrr
+
+
+def _chart_end_events_past_marker(rlrr, end_secs, eps=CHART_END_EVENT_EPS):
+    """True if any event time is strictly greater than end_secs + eps."""
+    if end_secs is None or not rlrr:
+        return False
+    try:
+        end = float(end_secs)
+    except (TypeError, ValueError):
+        return False
+    for e in rlrr.get("events") or ():
+        try:
+            t = float(e.get("time"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if t > end + eps:
+            return True
+    return False
+
+
+def finalize_exported_rlrr(rlrr, mid, tpb, last_midi_note_secs):
+    """Post-reduction, post-timing-shift. Returns
+    (rlrr, err_str|None, resolved_end: float|None).
+    err_str set => caller must not write files. Does not mutate events
+    on the error path either. Does not raise the marker to a post-offset
+    last event. last_midi_note_secs is the unshifted MIDI mapped last."""
+    end = _midi_chart_end_from_mid(mid, tpb, last_midi_note_secs)  # chart-end repair basis is unshifted MIDI last
+    if end is None:
+        # chart-end follow: do not override length
+        return rlrr, None, None  # chart-end follow: keep pre-reduction last+5
+    if _chart_end_events_past_marker(rlrr, end):
+        last = 0.0
+        for e in rlrr.get("events") or ():
+            try:
+                t = float(e.get("time"))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if t > last:
+                last = t
+        err = (
+            "ERROR: Chart End is at %.3fs but the last note is at %.3fs after "
+            "the offset. Convert refused — drag Chart End later in the MIDI "
+            "Editor, convert with the offset at 0, or right-click the Chart End "
+            "knob and choose Follow last note. Notes were not changed." % (end, last)
+        )
+        return rlrr, err, end  # chart-end conflict: chosen end preserved
+    _apply_chart_end(rlrr, end)  # chart-end apply marker length
+    return rlrr, None, end
+
+
+def _rlrr_recording_length_and_last(path_or_data):
+    """(length: float|None, last_event: float) from a .rlrr path or dict."""
+    data = path_or_data
+    if not isinstance(data, dict):
+        text = None
+        for enc in ("utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1"):
+            try:
+                with open(path_or_data, "r", encoding=enc) as f:
+                    text = f.read()
+                break
+            except (UnicodeDecodeError, LookupError, OSError, TypeError):
+                continue
+        if text is None:
+            return None, 0.0
+        try:
+            data = json.loads(text)
+        except (TypeError, ValueError):
+            return None, 0.0
+    last_event = 0.0
+    for e in (data.get("events") or ()):
+        try:
+            t = float(e.get("time"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if t > last_event:
+            last_event = t
+    length = None
+    meta = data.get("recordingMetadata") or {}
+    raw = meta.get("length") if isinstance(meta, dict) else None
+    try:
+        length = float(raw)
+        if length != length or length in (float("inf"), float("-inf")):
+            length = None
+    except (TypeError, ValueError):
+        length = None
+    return length, last_event
+
+
+def _pd_to_ch_song_len_ms(events_by_difficulty, length_by_diff,
+                          last_event_by_diff, bpm_used):
+    """Paradiddle→CH song_length. Returns (ms: int, err_str|None).
+    Expert, Hard, Medium, Easy — first difficulty that has CH events.
+    Exactly last_event+5 (within CHART_END_FOLLOW_EPS) is the legacy
+    last-tick+5 path; anything else finite > 0 is the manual end."""
+    chosen = None
+    for diff_key in ("Expert", "Hard", "Medium", "Easy"):
+        ev = (events_by_difficulty or {}).get(diff_key) or []
+        if ev:
+            chosen = diff_key
+            break
+    if chosen is None:
+        return 0, None
+    ev = events_by_difficulty[chosen]
+    last_tick = ev[-1][0]
+    bpm = float(bpm_used or 120.0)
+    legacy_sec = last_tick / (bpm / 60.0 * 192) + 5.0
+    length = (length_by_diff or {}).get(chosen)
+    last_event = float((last_event_by_diff or {}).get(chosen) or 0.0)
+    try:
+        length_f = float(length) if length is not None else None
+        if length_f is not None and (
+                length_f != length_f
+                or length_f in (float("inf"), float("-inf"))):
+            length_f = None
+    except (TypeError, ValueError):
+        length_f = None
+    if length_f is None or length_f <= 0:
+        return int(legacy_sec * 1000), None  # chart-end pd→CH length 0/missing is legacy
+    if abs(length_f - (last_event + 5.0)) <= CHART_END_FOLLOW_EPS:
+        return int(legacy_sec * 1000), None  # chart-end pd→CH last+5 heuristic is legacy
+    if length_f + CHART_END_EVENT_EPS < last_event:
+        err = (
+            "ERROR: the %s .rlrr's recordingMetadata.length (%.3fs) is earlier "
+            "than its last event (%.3fs). Convert refused — open the chart in "
+            "the MIDI Editor and drag Chart End past the last note, or fix the "
+            "length in the .rlrr. Nothing was written."
+            % (chosen, length_f, last_event)
+        )  # chart-end pd→CH refusal names the .rlrr length
+        return 0, err
+    return int(length_f * 1000), None  # chart-end pd→CH manual length
+
+
+def _midi_to_ch_song_len_ms(ch_events, bpm, resolved_end):
+    """MIDI→CH song_length. Follow (resolved_end is None) keeps last-tick+5.
+    Manual uses the unshifted marker seconds. Do not read length back."""
+    if resolved_end is not None:  # chart-end MIDI→CH uses the resolved marker
+        return int(float(resolved_end) * 1000)
+    if not ch_events:
+        return 0
+    last_tick = ch_events[-1][0]
+    last_sec = last_tick / (bpm / 60.0 * 192) + 5.0
+    return int(last_sec * 1000)
 
 
 def build_rlrr(midi_notes, ticks_per_beat, bpm, offset, title, artist, creator,
@@ -6556,7 +7947,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.13.4"
+    VERSION = "4.14.0"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -6601,6 +7992,8 @@ class MidiToRlrrApp:
 
     def __init__(self, root):
         self.root = root
+        self._integrity_scan_done = False
+        self._integrity_ui = None  # None | "prompt" | "progress"
         self._pin_glyph_fallbacks()
         self.root.title(f"ParaKit  v{self.VERSION}")
         self.root.resizable(True, True)
@@ -7540,8 +8933,7 @@ class MidiToRlrrApp:
         add(file_menu, "Save MIDI Editor File",
             lambda: self._menu_safe_call("midi", self._menu_me_has_notes, self._me_save,
                                          "Load a MIDI in the MIDI Editor before saving."),
-            guard=lambda: self._menu_is_tab("midi") and self._menu_me_has_notes(),
-            accelerator="Ctrl+S")
+            guard=lambda: self._menu_is_tab("midi") and self._menu_me_has_notes())
         file_menu.add_separator()
         add(file_menu, "Save Song Creator Project",
             lambda: self._menu_go("single", self._project_save))
@@ -7698,10 +9090,12 @@ class MidiToRlrrApp:
             then()
 
     def _send_to_spectral(self, drums="", chart="", mix=""):
-        """Prefill the Spectral Comparison tab's fields (Drums stem / Chart /
-        Full mix) and switch to it (owner 2026-07-20). Prefill only -- the user
-        presses Compare (matches the tab's manual-Compare design). Degrades
-        quietly if the sidecar failed to import."""
+        """Replace all three Spectral source fields, clearing absent or
+        invalid inputs, and attempt to open the tab. Request Compare only
+        after switching succeeds, this call supplies a chart and audio,
+        the tab is idle, and neither undo nor redo history exists.
+        Otherwise explain the next manual step. Show an availability
+        dialog if the Spectral tab is unavailable."""
         st = getattr(self, "_spectral_tab", None)
         if st is None:
             messagebox.showinfo(
@@ -7710,24 +9104,101 @@ class MidiToRlrrApp:
                 "(its module failed to load).")
             return
         sent = False
+        got_drums = got_chart = got_mix = False
+        assigned = False
         try:
-            if drums and os.path.isfile(drums):
-                st.reference_field.set(drums); sent = True
-            if chart and os.path.isfile(chart):
-                st.candidate_field.set(chart); sent = True
-            if mix and os.path.isfile(mix):
-                st.stem_field.set(mix)
+            got_drums = bool(drums and os.path.isfile(drums))
+            got_chart = bool(chart and os.path.isfile(chart))
+            got_mix = bool(mix and os.path.isfile(mix))
+            st.reference_field.set(drums if got_drums else "")
+            st.candidate_field.set(chart if got_chart else "")
+            st.stem_field.set(mix if got_mix else "")
+            sent = got_drums or got_chart or got_mix
+            assigned = True
         except Exception:
-            pass
+            got_drums = got_chart = got_mix = False
+            sent = False
+        if assigned:
+            # Reveal or hide the Analyze Drums|Full Mix row, exactly as the
+            # tab's own Auto Fetch Audio / mix-clear paths do after changing
+            # this field -- a sent mix used to load with its toggle still
+            # hidden, and a cleared mix must hide it again.
+            try:
+                _sync = getattr(st, "_sync_analyze_toggle", None)
+                if callable(_sync):
+                    _sync()
+            except Exception:
+                pass
+        switched = False
         try:
             self.notebook.select(self._tab_indexes["spectral"])
+            switched = True
         except Exception:
             pass
         self._update_menu_state()
+        # Auto-Compare gate. Each clause closes a specific harm. switched:
+        # never start a decode behind a tab the user was not actually taken
+        # to, since the select above is guarded. ready: THIS call supplied a
+        # chart and audio (drums stem or full mix); fields are replaced on
+        # every send, so a partial send cannot be scored against the previous
+        # song. busy: _on_compare returns silently mid-run, which reads as
+        # the button doing nothing. dirty: _finish_real_compare clears both
+        # history stacks, and _write_midi saves without clearing them, so
+        # undo/redo history is what we can actually see -- not "unsaved
+        # edits."
+        ready = busy = dirty = False
+        press = getattr(st, "_on_compare_pressed", None)
         try:
-            self._set_global_status(
-                "Sent to Spectral Comparison — press Compare." if sent else
-                "Opened Spectral Comparison — load a drums stem + chart.", 4000)
+            ready = bool(assigned and got_chart and (got_drums or got_mix))
+            busy = bool(getattr(st, "_comparing", False))
+            dirty = bool(getattr(st, "_undo_stack", None)
+                         or getattr(st, "_redo_stack", None))
+        except Exception:
+            ready = False
+        press_called = False
+        press_started = False
+        if switched and ready and not busy and not dirty and callable(press):
+            # The Compare BUTTON's own entry point, never _on_compare: only
+            # _on_compare_pressed applies the owner's 2026-07-20 Analyze-source
+            # default, and skipping it would analyze a stale full mix.
+            try:
+                press()
+                press_called = True
+                press_started = bool(getattr(st, "_comparing", False))
+            except Exception:
+                press_called = False
+                press_started = False
+        try:
+            if press_started:
+                _msg = "Sent to Spectral Comparison — comparing now."
+            elif not switched:
+                _msg = ("Could not switch to Spectral Comparison — open that "
+                        "tab, check the loaded files, then press Compare.")
+            elif press_called:
+                _msg = ("Compare requested — check the Spectral status "
+                        "for progress or errors.")
+            elif busy and sent:
+                _msg = ("Sent to Spectral Comparison — it is still comparing; "
+                        "press Compare when that finishes.")
+                if dirty:
+                    _msg += (" A new comparison replaces the current "
+                             "comparison and clears its edit history.")
+            elif sent and not got_chart:
+                _msg = ("Sent to Spectral Comparison — load a chart, then "
+                        "press Compare.")
+            elif sent and not ready:
+                _msg = ("Sent to Spectral Comparison — load a chart and "
+                        "either a drums stem or full mix, then press Compare.")
+            elif dirty and sent:
+                _msg = ("Sent to Spectral Comparison — press Compare when "
+                        "ready; it replaces the current comparison and "
+                        "clears its edit history.")
+            elif sent:
+                _msg = "Sent to Spectral Comparison — press Compare."
+            else:
+                _msg = ("Opened Spectral Comparison — load a drums stem + "
+                        "chart.")
+            self._set_global_status(_msg, 4000)
         except Exception:
             pass
 
@@ -7941,6 +9412,8 @@ class MidiToRlrrApp:
                 charter_str = f"{original_charter}, {additional_creator}"
 
             events_by_difficulty = {}
+            length_by_diff = {}
+            last_event_by_diff = {}
             expert_notes_for_2x = None
             highest_rating = 0
             # Audit E8 (2026-07-10): ONE reference BPM (the first usable
@@ -7981,6 +9454,9 @@ class MidiToRlrrApp:
                          f"events (no mappable MIDI notes).")
                     continue
                 events_by_difficulty[diff] = ev_list
+                _ce_len, _ce_last = _rlrr_recording_length_and_last(rp)
+                length_by_diff[diff] = _ce_len
+                last_event_by_diff[diff] = _ce_last
                 if diff == "Expert":
                     # 2x promotion only runs on Expert, and it must be decided
                     # from these SECONDS rather than the rounded ticks above.
@@ -8045,14 +9521,29 @@ class MidiToRlrrApp:
                     expert_notes_for_2x, bpm_used),
             )
 
-            song_len_ms = 0
-            for diff_key in ("Expert", "Hard", "Medium", "Easy"):
-                ev = events_by_difficulty.get(diff_key) or []
-                if ev:
-                    last_tick = ev[-1][0]
-                    last_sec = last_tick / (bpm_used / 60.0 * 192) + 5.0
-                    song_len_ms = int(last_sec * 1000)
+            song_len_ms, _ce_err = _pd_to_ch_song_len_ms(
+                events_by_difficulty, length_by_diff, last_event_by_diff,
+                bpm_used)  # chart-end pd→CH reads .rlrr length
+            if _ce_err:
+                _log(_ce_err)
+                return False
+            _chosen_len = None
+            for _dk in ("Expert", "Hard", "Medium", "Easy"):
+                if events_by_difficulty.get(_dk):
+                    _chosen_len = length_by_diff.get(_dk)
                     break
+            if _chosen_len is not None:
+                for _d, _ln in length_by_diff.items():
+                    try:
+                        if (_ln is not None
+                                and abs(float(_ln) - float(_chosen_len))
+                                > CHART_END_FOLLOW_EPS):
+                            _log(
+                                "  NOTE: difficulty %s recordingMetadata.length "
+                                "disagrees with the Expert-first chosen value; "
+                                "using the chosen length." % _d)
+                    except (TypeError, ValueError):
+                        pass
             ini_str = write_song_ini(
                 title=title, artist=artist,
                 album=album, year=year,
@@ -9564,18 +11055,24 @@ class MidiToRlrrApp:
         never raises. The hashing runs off the UI thread so launch stays snappy."""
         try:
             if bool(getattr(sys, "frozen", False)):
+                self.root.after(0, self._after_integrity_scan)
                 return   # frozen .exe bundles everything — no loose deps
             target = self._locate_app_py()
             if not target:
+                self.root.after(0, self._after_integrity_scan)
                 return
             app_dir = os.path.dirname(target)
             man_path = os.path.join(app_dir, "update_manifest.json")
             if not os.path.isfile(man_path):
+                self.root.after(0, self._after_integrity_scan)
                 return   # no local manifest -> nothing to check against
             threading.Thread(target=self._scan_deps_worker,
                              args=(app_dir, man_path), daemon=True).start()
         except Exception:
-            pass
+            try:
+                self.root.after(0, self._after_integrity_scan)
+            except Exception:
+                pass
 
     def _refresh_local_manifest(self, app_dir, man_path):
         """Fetch the current release manifest and install it (atomic, .prev) IF
@@ -9631,6 +11128,7 @@ class MidiToRlrrApp:
                 man = json.load(f)
             files = man.get("files") if isinstance(man, dict) else None
             if not isinstance(files, list):
+                self.root.after(0, lambda a=app_dir: self._after_integrity_scan(a))
                 return   # a non-list "files" (string/None/dict) = corrupt manifest;
                          # iterating a STRING would treat each char as a "file"
             missing, corrupt = [], []
@@ -9667,11 +11165,14 @@ class MidiToRlrrApp:
                             corrupt.append(rel)
                 except (OSError, ValueError, TypeError):
                     continue
-            if missing or corrupt:
-                self.root.after(
-                    0, lambda: self._offer_missing_dep_fetch(app_dir, missing, corrupt))
+            self.root.after(
+                0, lambda a=app_dir, m=list(missing), c=list(corrupt):
+                    self._after_integrity_scan(a, m, c))
         except Exception:
-            pass
+            try:
+                self.root.after(0, self._after_integrity_scan)
+            except Exception:
+                pass
 
     def _offer_missing_dep_fetch(self, app_dir, missing, corrupt=None):
         """Rich restore prompt for the files _check_missing_deps found MISSING or
@@ -9685,6 +11186,7 @@ class MidiToRlrrApp:
                     + [("damaged", c) for c in corrupt])
         if not problems:
             return
+        self._integrity_ui = "prompt"
         try:
             dlg = tk.Toplevel(self.root)
             dlg.title("ParaKit — some files need restoring")
@@ -9754,11 +11256,19 @@ class MidiToRlrrApp:
                     pass
 
             def _fix():
+                self._integrity_ui = "progress"
+                self._run_restore_with_progress(app_dir)
                 try:
                     dlg.destroy()
                 except Exception:
                     pass
-                self._run_restore_with_progress(app_dir)
+
+            def _on_prompt_destroy(event):
+                if event.widget is not dlg:
+                    return
+                if getattr(self, "_integrity_ui", None) == "prompt":
+                    self._integrity_ui = None
+                    self._maybe_offer_bundle()
 
             ttk.Button(btn_row, text="Not now",
                        command=dlg.destroy).pack(side=tk.LEFT)
@@ -9767,8 +11277,11 @@ class MidiToRlrrApp:
             ttk.Button(btn_row, text="Download & fix now",
                        style="Convert.TButton",
                        command=_fix).pack(side=tk.RIGHT)
+            dlg.bind("<Destroy>", _on_prompt_destroy)
             dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
         except Exception:
+            if getattr(self, "_integrity_ui", None) == "prompt":
+                self._integrity_ui = None
             return
 
     def _run_restore_with_progress(self, app_dir):
@@ -9823,9 +11336,17 @@ class MidiToRlrrApp:
 
         btn_row = ttk.Frame(pframe)
         btn_row.pack(anchor="e", pady=(12, 0))
+        def _on_prog_destroy(event):
+            if event.widget is not prog:
+                return
+            if getattr(self, "_integrity_ui", None) == "progress":
+                self._integrity_ui = None
+                self._maybe_offer_bundle()
+
         close_btn = ttk.Button(btn_row, text="Close", state=tk.DISABLED,
                                command=prog.destroy)
         close_btn.pack(side=tk.RIGHT)
+        prog.bind("<Destroy>", _on_prog_destroy)
         prog.protocol("WM_DELETE_WINDOW", lambda: None)   # blocked mid-restore
 
         def _ui(fn):
@@ -9904,6 +11425,659 @@ class MidiToRlrrApp:
             _finish(summary, "err" if failed else "ok")
 
         threading.Thread(target=_work, daemon=True).start()
+
+    def _after_integrity_scan(self, app_dir=None, missing=None, corrupt=None):
+        """Tk-thread owner of 'integrity finished'. Offers the bundle notice
+        only after any restore prompt / progress interaction has ended."""
+        self._integrity_scan_done = True
+        missing = missing or []
+        corrupt = corrupt or []
+        if missing or corrupt:
+            if app_dir:
+                self._offer_missing_dep_fetch(app_dir, missing, corrupt)
+            else:
+                self._maybe_offer_bundle()
+            return
+        self._maybe_offer_bundle()
+
+    def _maybe_offer_bundle(self, *, frozen=None, status=None):
+        if not getattr(self, "_integrity_scan_done", False):
+            return
+        if getattr(self, "_integrity_ui", None) is not None:
+            return
+        if frozen is None:
+            frozen = bool(getattr(sys, "frozen", False))
+        if frozen:
+            return
+        try:
+            cfg = load_config()
+        except Exception:
+            cfg = {}
+        if cfg.get("bundle_notice_dismissed"):
+            return
+        if status is None:
+            node = ""
+            custom = getattr(self, "yt_node_path_var", None)
+            if custom is not None:
+                try:
+                    node = custom.get() or ""
+                except Exception:
+                    node = ""
+            if not node:
+                try:
+                    node = load_config().get("yt_node_path", "") or ""
+                except Exception:
+                    node = ""
+            status = detect_requirements_bundle(custom_node_path=node)
+        if not _bundle_has_missing(status):
+            return
+        self._offer_bundle_dialog(missing=status, mode="launch", frozen=frozen)
+
+    def _bundle_detect(self):
+        """Detector status using this window's Node path, if set."""
+        node = ""
+        custom = getattr(self, "yt_node_path_var", None)
+        if custom is not None:
+            try:
+                node = custom.get() or ""
+            except Exception:
+                node = ""
+        if not node:
+            try:
+                node = load_config().get("yt_node_path", "") or ""
+            except Exception:
+                node = ""
+        return detect_requirements_bundle(custom_node_path=node)
+
+    def _bundle_fire_on_installed(self, cb=None):
+        """Resume the feature once after a verified install.
+
+        No-argument form (B): consume the slot, then invoke. After the
+        slot is None, a second no-arg call is a no-op.
+        One-argument form (C2, after C1 teardown may have cleared the
+        slot): invoke the captured continuation even when the slot is
+        already None. C1 production never calls the one-argument form.
+        The callback is the captured-request continuation, not a kickoff.
+        """
+        if cb is None:
+            cb = getattr(self, "_bundle_on_installed", None)
+            self._bundle_on_installed = None
+        else:
+            stored = getattr(self, "_bundle_on_installed", None)
+            if stored is cb:
+                self._bundle_on_installed = None
+        if cb is None:
+            return
+        cb()
+
+    def _bundle_capture_request(self, kind, **fields):
+        """Build the original-press request before preflight / yield."""
+        if kind == "youtube":
+            art_var = getattr(self, "yt_embed_art_var", None)
+            embed_art = bool(art_var.get()) if art_var is not None else False
+            en_var = getattr(self, "yt_custom_name_enabled_var", None)
+            custom_enabled = bool(en_var.get()) if en_var is not None else False
+            name_var = getattr(self, "yt_custom_name_var", None)
+            raw_name = name_var.get() if name_var is not None else ""
+            custom_basename = None
+            custom_name_notice = None
+            if custom_enabled:
+                custom_basename = self._youtube_sanitize_filename(raw_name)
+                if custom_basename is None and raw_name and raw_name.strip():
+                    # Typed something that cleaned to empty: the notice is said at
+                    # dispatch, after the log clear, as the inline kickoff said it.
+                    custom_name_notice = (
+                        "ℹ  Custom filename was empty after cleanup; saving as "
+                        "the YouTube video title instead.")
+            auto_var = getattr(self, "yt_autoupdate_var", None)
+            autoupdate = bool(auto_var.get()) if auto_var is not None else False
+            node_var = getattr(self, "yt_node_path_var", None)
+            node_path = node_var.get() if node_var is not None else ""
+            payload = BundlePayload(
+                url=fields.get("url", ""),
+                out_dir=fields.get("out_dir", ""),
+                fmt=fields.get("fmt", "flac"),
+                cookie_args=fields.get("cookie_args"),
+                cookie_desc=fields.get("cookie_desc", "Cookie source: none"),
+                cookie_mode=fields.get("cookie_mode", "none"),
+                cookie_browser=fields.get("cookie_browser", ""),
+                cookie_profile=fields.get("cookie_profile", ""),
+                cookie_file=fields.get("cookie_file", ""),
+                embed_art=embed_art,
+                custom_enabled=custom_enabled,
+                custom_basename=custom_basename,
+                custom_name_notice=custom_name_notice,
+                custom_raw=raw_name,
+                autoupdate=autoupdate,
+                node_path=node_path or "",
+            )
+            baseline = {
+                "url": payload.url,
+                "out_dir": payload.out_dir,
+                "fmt": payload.fmt,
+                "cookie_mode": payload.cookie_mode,
+                "cookie_browser": payload.cookie_browser,
+                "cookie_profile": payload.cookie_profile,
+                "cookie_file": payload.cookie_file,
+                "embed_art": payload.embed_art,
+                "custom_enabled": payload.custom_enabled,
+                "custom_name": raw_name if custom_enabled else "",
+                "autoupdate": payload.autoupdate,
+                "node_path": payload.node_path,
+            }
+        elif kind == "ogg":
+            files = tuple(fields.get("files") or ())
+            output_base = fields.get("output_base", "")
+            payload = BundlePayload(files=files, output_base=output_base)
+            baseline = {"files": files, "output_base": output_base}
+        elif kind == "adb":
+            folder = fields.get("folder", "")
+            payload = BundlePayload(folder=folder)
+            baseline = {"folder": folder}
+        else:
+            payload = BundlePayload()
+            baseline = {}
+        req = BundleRequest(kind, payload, baseline)
+        req.callback = (
+            lambda request=req: self._bundle_continue_captured_request(request)
+        )
+        return req
+
+    def _bundle_prepare_feature_execution(self, request):
+        """Input-independent Tk-thread setup. Does not read widgets for args."""
+        if request is None:
+            return
+        kind = request.kind
+        if kind == "youtube":
+            try:
+                self._yt_cancel_event.clear()
+            except Exception:
+                pass
+            try:
+                self.yt_dl_btn.configure(state="disabled")
+            except Exception:
+                pass
+            try:
+                self.yt_log.configure(state="normal")
+                self.yt_log.delete("1.0", tk.END)
+                self.yt_log.configure(state="disabled")
+            except Exception:
+                pass
+            import time as _t
+            self._yt_start_time = _t.time()
+            self._yt_last_dl_started = self._yt_start_time
+            try:
+                self.yt_progress_bar.start(12)
+            except Exception:
+                pass
+            try:
+                self.yt_timer_lbl.configure(text="⏱  00:00")
+            except Exception:
+                pass
+            try:
+                self._timer_start(self.yt_timer_lbl)
+            except Exception:
+                pass
+        elif kind == "ogg":
+            try:
+                self.ogg_convert_btn.configure(state="disabled", text="Converting...")
+            except Exception:
+                pass
+            try:
+                self.ogg_progress.start(12)
+            except Exception:
+                pass
+            try:
+                self.ogg_log_text.configure(state="normal")
+                self.ogg_log_text.delete("1.0", tk.END)
+                self.ogg_log_text.configure(state="disabled")
+            except Exception:
+                pass
+
+    def _bundle_dispatch_captured_request(self, request):
+        """Prepare, then start exactly one payload worker. No shared slot."""
+        if request is None:
+            return
+        if getattr(request, "canceled", False) or getattr(request, "ineligible", False):
+            return
+        kind = request.kind
+        if kind == "youtube":
+            self._bundle_prepare_feature_execution(request)
+            p = request.payload
+            notice = getattr(p, "custom_name_notice", None)
+            if notice:
+                self._yt_log(notice)  # said after the log clear, as the inline kickoff did
+            threading.Thread(
+                target=self._yt_download_worker,
+                args=(p.url, p.out_dir, p.fmt, p.cookie_args,
+                      p.cookie_desc, p.embed_art, p.custom_basename),
+                kwargs={"autoupdate": p.autoupdate, "node_path": p.node_path,
+                        "request": request},
+                daemon=True,
+            ).start()
+            try:
+                self.yt_custom_name_var.set("")
+            except Exception:
+                pass
+            try:
+                request.compare_baseline["custom_name"] = ""
+            except Exception:
+                pass
+            return
+        if kind == "ogg":
+            self._bundle_prepare_feature_execution(request)
+            p = request.payload
+            threading.Thread(
+                target=self._ogg_do_convert,
+                args=(list(p.files), p.output_base),
+                kwargs={"request": request},
+                daemon=True,
+            ).start()
+            return
+        if kind == "adb":
+            folder = request.payload.folder
+            status = self._bundle_detect()
+            adb = (getattr(status, "paths", {}) or {}).get("adb") or _resolve_adb_path()
+            if not adb:
+                return
+            out_folder = folder
+
+            def _push():
+                import subprocess
+                quest_path = "/sdcard/Android/data/com.emuvr.paradiddle/files/Songs/"
+                folder_name = os.path.basename(out_folder.rstrip("/\\"))
+                dest = quest_path + folder_name
+
+                def _log(msg):
+                    self.root.after(0, lambda m=msg: self.log(m))
+
+                try:
+                    result = subprocess.run(
+                        [adb, "devices"], capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=8,
+                        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+                    lines = [l for l in result.stdout.splitlines() if "\tdevice" in l]
+                    if not lines:
+                        self.root.after(0, lambda: messagebox.showerror(
+                            "No Quest Found",
+                            "No Meta Quest detected via ADB.\n\n"
+                            "Make sure:\n"
+                            "  • The Quest is plugged in via USB\n"
+                            "  • Developer mode is enabled on the Quest\n"
+                            "  • You accepted the USB debugging prompt in the headset"))
+                        return
+                    _log("📲  Quest found: %s" % lines[0].split()[0])
+                    _log("  Pushing: %s → %s" % (folder_name, dest))
+                    result = subprocess.run(
+                        [adb, "push", out_folder, dest],
+                        capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=120)
+                    if result.returncode == 0:
+                        _log("  ✓  Push complete! Song is ready in Paradiddle.")
+                        self.root.after(0, lambda: messagebox.showinfo(
+                            "Push Complete",
+                            "'%s' has been pushed to your Quest.\n\n"
+                            "Open Paradiddle and check Custom Songs." % folder_name))
+                    else:
+                        _log("  ✗  ADB error: %s" % result.stderr)
+                        self.root.after(0, lambda: messagebox.showerror(
+                            "Push Failed", "ADB push failed:\n%s" % result.stderr))
+                except subprocess.TimeoutExpired:
+                    _log("  ✗  ADB timed out — check USB connection")
+                except Exception as e:
+                    _log("  ✗  Error: %s" % e)
+
+            threading.Thread(target=_push, daemon=True).start()
+
+    def _bundle_continue_captured_request(self, request=None):
+        """Stored continuation. Never a kickoff. request=None is a no-op."""
+        if request is None:
+            return
+        if getattr(request, "canceled", False) or getattr(request, "ineligible", False):
+            return
+        kind = request.kind
+        status = self._bundle_detect()
+        if kind == "youtube":
+            if not youtube_feature_ready(status):
+                self._offer_bundle_dialog(
+                    missing=status, mode="feature", request=request)
+                return
+        elif kind == "ogg":
+            if status.groups.get("ffmpeg") != "ok":
+                self._offer_bundle_dialog(
+                    missing=status, mode="feature", request=request)
+                return
+        elif kind == "adb":
+            if status.groups.get("adb") != "ok":
+                self._offer_bundle_dialog(
+                    missing=status, mode="feature", request=request)
+                return
+        self._bundle_dispatch_captured_request(request)
+
+    def _bundle_teardown_owner(self, owner, op="final_close"):
+        if owner is None:
+            return True
+        dlg = owner.widget
+        owner.last_op = op
+        if owner.request is not None and op in ("decline", "replace", "final_close"):
+            owner.request.canceled = True
+            owner.request.ineligible = True
+        if op in ("decline", "final_close") and owner is self._bundle_dialog_owner:
+            self._bundle_on_installed = None  # no stored resume after No thanks/close; a stale close leaves a newer dialog's resume alone
+        if op == "decline":
+            if owner.mode == "launch" and getattr(owner, "dismiss_var", None) is not None:
+                try:
+                    if owner.dismiss_var.get():
+                        save_config({"bundle_notice_dismissed": True})
+                except Exception:
+                    pass
+            if owner is getattr(self, "_bundle_dialog_owner", None):
+                status = self._bundle_detect()  # C1: No thanks re-detects now
+                self._bundle_paint_refusal_page(owner, status)
+            return False
+        try:
+            if dlg is not None:
+                dlg.destroy()
+        except Exception:
+            pass
+        gone = not _bundle_widget_alive(dlg)  # teardown gone-check
+        if gone:
+            if owner is getattr(self, "_bundle_dialog_owner", None):
+                self._bundle_dialog_owner = None
+                self._bundle_dialog_close = None
+                self._bundle_dialog_widget = None
+            return True
+        if owner is getattr(self, "_bundle_dialog_owner", None):
+            return False
+        return False
+
+    def _bundle_on_destroy_notify(self, owner, event):
+        dlg = owner.widget
+        widget = getattr(event, "widget", None)
+        is_self = (
+            widget is dlg
+            or str(widget) == str(dlg)
+            or str(getattr(widget, "_w", widget)) == str(getattr(dlg, "_w", dlg))
+        )
+        if not is_self:
+            return
+        if owner.last_op is None:
+            if owner.request is not None:
+                owner.request.canceled = True
+                owner.request.ineligible = True
+            if owner is getattr(self, "_bundle_dialog_owner", None):
+                self._bundle_on_installed = None
+        gone = not _bundle_widget_alive(dlg)
+        if gone and owner is getattr(self, "_bundle_dialog_owner", None):
+            self._bundle_dialog_owner = None
+            self._bundle_dialog_close = None
+            self._bundle_dialog_widget = None
+
+    def _bundle_paint_refusal_page(self, owner, status):
+        """Second page of the same extra-tools dialog. No second Toplevel."""
+        dlg = owner.widget
+        frame = owner.frame
+        if dlg is None or frame is None:
+            return
+        if getattr(owner, "refusal_painted", False):
+            return  # one refusal page per dialog: a repeated decline stacks no second list
+        owner.refusal_painted = True
+        for child in list(frame.winfo_children() or []):  # page 2 replaces page 1: the file list and the Show me how / No thanks row go
+            try:
+                child.destroy()
+            except Exception:
+                pass
+        ttk.Label(frame, text="Some extra tools are not on this machine",
+                  font=("Segoe UI", 12, "bold"),
+                  foreground="#b388ff").pack(anchor="w")
+        items = _bundle_features_for_missing(status)
+        definite = [it for it in items if getattr(it, "tag", "") == "definite"]
+        extra = [it for it in items if getattr(it, "tag", "") in ("export", "maybe")]
+        if items:
+            lead = "Okay. Since you said no, these features are not going to work:"
+            ttk.Label(frame, style="TLabel", wraplength=520, justify=tk.LEFT,
+                      text=lead).pack(anchor="w", pady=(10, 4))
+            for it in definite:
+                ttk.Label(frame, style="TLabel", wraplength=520, justify=tk.LEFT,
+                          text="  - " + _bundle_feature_line(it)).pack(anchor="w")
+            if extra:
+                ttk.Label(frame, style="TLabel", wraplength=520, justify=tk.LEFT,
+                          text="Also:").pack(anchor="w", pady=(8, 2))
+                for it in extra:
+                    ttk.Label(frame, style="TLabel", wraplength=520, justify=tk.LEFT,
+                              text="  - " + _bundle_feature_line(it)).pack(anchor="w")
+        else:
+            ttk.Label(
+                frame, style="TLabel", wraplength=520, justify=tk.LEFT,
+                text="Okay. Close this window when you are done.",
+            ).pack(anchor="w", pady=(10, 4))
+        ttk.Button(
+            frame, text="Close",
+            command=lambda: owner.teardown("final_close"),
+        ).pack(anchor="e", pady=(12, 0))
+        try:
+            dlg.protocol("WM_DELETE_WINDOW",
+                         lambda: owner.teardown("final_close"))
+        except Exception:
+            pass
+
+    def _offer_bundle_dialog(self, *, missing, mode, on_installed=None,
+                             frozen=None, request=None):
+        """Requirements dialog. C1 does not pack Download. on_installed is ignored."""
+        if frozen is None:
+            frozen = bool(getattr(sys, "frozen", False))
+        open_owner = getattr(self, "_bundle_dialog_owner", None)
+        open_close = getattr(self, "_bundle_dialog_close", None)
+        open_widget = getattr(self, "_bundle_dialog_widget", None)
+        if open_owner is not None or open_close is not None:
+            live = _bundle_widget_alive(open_widget)
+            if not live:
+                if open_owner is not None and getattr(open_owner, "request", None) is not None:
+                    open_owner.request.canceled = True
+                    open_owner.request.ineligible = True
+                self._bundle_dialog_owner = None
+                self._bundle_dialog_close = None
+                self._bundle_dialog_widget = None
+                self._bundle_on_installed = None
+            elif mode == "launch":
+                return  # an extra-tools dialog is already up; the launch notice does not stack over it
+        if mode == "feature":
+            prior = getattr(self, "_bundle_dialog_owner", None)
+            if prior is not None:
+                try:
+                    gone = prior.teardown("replace")  # one extra-tools dialog at a time: replace does not paint the refusal page
+                except Exception:
+                    gone = False
+                if not gone:
+                    return
+            self._bundle_on_installed = None
+        status = missing
+        files = list(getattr(status, "files", []) or [])
+        groups = dict(getattr(status, "groups", {}) or {})
+        searched = list(getattr(status, "searched", []) or [])
+        problem_files = [
+            row for row in files
+            if getattr(row, "reason", "ok") not in ("ok", "arch_unknown")
+        ]
+        owner = BundleDialogOwner(self, mode=mode, request=request)
+        dlg = None
+        try:
+            dlg = tk.Toplevel(self.root)
+            owner.widget = dlg
+            dlg.title("ParaKit — extra tools")
+            dlg.configure(bg=APP_BG)
+            dlg.transient(self.root)
+            dlg.resizable(False, True)
+            try:
+                dlg.grab_set()
+            except Exception:
+                pass
+            try:
+                self._center_popup(dlg)
+            except Exception:
+                pass
+
+            frame = ttk.Frame(dlg, padding=18)
+            frame.pack(fill=tk.BOTH, expand=True)
+            owner.frame = frame
+            ttk.Label(frame, text="Some extra tools are not on this machine",
+                      font=("Segoe UI", 12, "bold"),
+                      foreground="#b388ff").pack(anchor="w")
+            copy_fg, copy_font, _copy_em, copy_hang, copy_width = (
+                _bundle_copy_metrics(frame)
+            )
+            _bundle_fit_copy_text(
+                frame, BUNDLE_LAUNCH_COPY,
+                copy_fg=copy_fg, copy_font=copy_font, copy_width=copy_width,
+                pady=(6, 4),
+            )
+            if mode == "launch":
+                ttk.Label(
+                    frame, style="TLabel", wraplength=520, justify=tk.LEFT,
+                    text=BUNDLE_MANUAL_NOTE,
+                ).pack(anchor="w", pady=(14, 6))
+            size_line = (
+                "Bundle size: about 174 MB (%s bytes)."
+                % format(BUNDLE_SIZE_BYTES, ",")
+            )
+            ttk.Label(frame, style="Sub.TLabel", text=size_line).pack(
+                anchor="w", pady=(10, 0))
+
+            group_bits = []
+            for key in ("ffmpeg", "youtube", "adb"):
+                state = "found" if groups.get(key) == "ok" else "missing"
+                group_bits.append("%s: %s" % (_bundle_group_plain(key), state))
+            ttk.Label(frame, style="Sub.TLabel",
+                      text="; ".join(group_bits)).pack(
+                          anchor="w", pady=(10, 0))
+            if searched:
+                ttk.Label(
+                    frame, style="Sub.TLabel", wraplength=520, justify=tk.LEFT,
+                    text="Searched: " + " | ".join(str(p) for p in searched),
+                ).pack(anchor="w", pady=(10, 6))
+
+            list_row = ttk.Frame(frame)
+            list_row.pack(fill=tk.BOTH, expand=True)
+            lst = tk.Text(list_row, height=8, wrap="none", bg=LOG_BG,
+                          fg="#c9d1d9", relief="flat", bd=0, padx=8, pady=6,
+                          font=("Consolas", 9), highlightthickness=1,
+                          highlightbackground="#2a2440")
+            lsb = ttk.Scrollbar(list_row, orient="vertical", command=lst.yview)
+            lst.configure(yscrollcommand=lsb.set)
+            lsb.pack(side=tk.RIGHT, fill=tk.Y)
+            lst.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            for row in problem_files or files:
+                lst.insert(
+                    "end",
+                    "  %-22s %s\n" % (
+                        getattr(row, "name", "?"),
+                        _bundle_reason_plain(getattr(row, "reason", "")),
+                    ),
+                )
+            lst.configure(state="disabled")
+
+            impact_groups = _bundle_impact_groups(status)
+            if impact_groups:
+                ttk.Label(
+                    frame, style="TLabel", wraplength=520, justify=tk.LEFT,
+                    text="Without these files:",
+                ).pack(anchor="w")  # C3: impact lead is page 1 only
+                impact_body = "\n".join(
+                    "  - %s: %s" % (
+                        payload.label, "; ".join(payload.features),
+                    )
+                    for payload in impact_groups
+                )
+                _bundle_fit_copy_text(
+                    frame, impact_body,
+                    copy_fg=copy_fg, copy_font=copy_font, copy_width=copy_width,
+                    hang=copy_hang, later_spacing1=4,
+                )
+
+            dismiss_var = tk.BooleanVar(value=False)
+            owner.dismiss_var = dismiss_var
+            if mode == "launch":
+                ttk.Checkbutton(
+                    frame, text="Don't show this again",
+                    variable=dismiss_var).pack(anchor="w", pady=(8, 0))
+
+            def _show_how():
+                how = tk.Toplevel(dlg)
+                how.title("How to add the Requirements files")
+                how.configure(bg=APP_BG)
+                how.transient(dlg)
+                try:
+                    how.grab_set()
+                except Exception:
+                    pass
+                try:
+                    self._center_popup(how)
+                except Exception:
+                    pass
+                body = ttk.Frame(how, padding=18)
+                body.pack(fill=tk.BOTH, expand=True)
+                ttk.Label(body, text="Show me how",
+                          font=("Segoe UI", 12, "bold"),
+                          foreground="#b388ff").pack(anchor="w")
+                ttk.Label(body, style="TLabel", wraplength=520, justify=tk.LEFT,
+                          text=BUNDLE_HOW_TEXT).pack(anchor="w", pady=(6, 8))
+                how_tree = tk.Text(
+                    body, wrap="none", bg=LOG_BG, fg="#c9d1d9",
+                    relief="flat", bd=0, padx=8, pady=6,
+                    font=("Consolas", 9), highlightthickness=1,
+                    highlightbackground="#2a2440",
+                    height=len(BUNDLE_HOW_TREE.splitlines()),
+                )
+                how_tree.insert("1.0", BUNDLE_HOW_TREE)
+                how_tree.configure(state="disabled")
+                how_tree.pack(anchor="w")  # C3: tree sits between the lead and the layouts sentence
+                ttk.Label(body, style="TLabel", wraplength=520, justify=tk.LEFT,
+                          text=BUNDLE_HOW_LAYOUTS).pack(anchor="w", pady=(8, 4))
+                ttk.Label(body, style="TLabel", wraplength=520, justify=tk.LEFT,
+                          text=BUNDLE_HOW_TAIL).pack(anchor="w", pady=(0, 8))
+                link = tk.Label(
+                    body, text=BUNDLE_URL, bg=APP_BG, fg="#58a6ff",
+                    cursor="hand2", font=("Segoe UI", 9, "underline"),
+                    wraplength=520, justify=tk.LEFT, anchor="w")
+                link.pack(anchor="w")
+                link.bind(
+                    "<Button-1>",
+                    lambda _e: __import__("webbrowser").open(BUNDLE_URL))
+
+                def _how_close():
+                    try:
+                        how.destroy()
+                    except Exception:
+                        pass
+                    try:
+                        dlg.grab_set()  # the extra-tools dialog takes its grab back from Show me how
+                    except Exception:
+                        pass
+
+                how.protocol("WM_DELETE_WINDOW", _how_close)
+                ttk.Button(body, text="Close", command=_how_close).pack(
+                    anchor="e", pady=(12, 0))
+
+            btn_row = ttk.Frame(frame)
+            btn_row.pack(anchor="e", pady=(12, 0), fill=tk.X)
+            ttk.Button(btn_row, text="Show me how",
+                       command=_show_how).pack(side=tk.LEFT)  # bundle dialog: no Download control
+            close_label = "Not now" if mode == "launch" else "No thanks"
+            def _decline():
+                owner.teardown("decline")
+
+            ttk.Button(btn_row, text=close_label,
+                       command=_decline).pack(side=tk.RIGHT)
+            dlg.protocol("WM_DELETE_WINDOW", _decline)
+            dlg.bind("<Destroy>", owner.on_destroy_notify)
+            self._bundle_dialog_owner = owner
+            self._bundle_dialog_close = owner.teardown
+            self._bundle_dialog_widget = dlg
+            if mode == "feature" and request is not None:
+                self._bundle_on_installed = request.callback
+        except Exception:
+            owner.cleanup()
+            return
 
     def _current_monitor_work_area(self):
         """Return the nearest monitor work-area size in pixels."""
@@ -12560,65 +14734,15 @@ class MidiToRlrrApp:
         #   2. Requirements\adb.exe                  (flat Requirements layout)
         #   3. <next-to-EXE>\adb.exe                 (legacy)
         #   4. system PATH
-        adb = _resolve_adb_path()
-        if not adb:
-            messagebox.showerror("ADB Not Found",
-                                  "adb.exe not found.\n\n"
-                                  "Download the Android SDK Platform Tools from:\n"
-                                  "https://developer.android.com/tools/releases/platform-tools\n\n"
-                                  "Keep adb.exe with AdbWinApi.dll and AdbWinUsbApi.dll "
-                                  "in one of these locations:\n"
-                                  "  - Requirements\\platform-tools\\adb.exe (recommended)\n"
-                                  "  - Requirements\\adb.exe (flat)\n"
-                                  "  - next to ParaKit.exe (legacy)")
+        req = self._bundle_capture_request("adb", folder=out_folder)
+        adb_status = self._bundle_detect()  # bundle feature ADB group (exe+DLLs)
+        if adb_status.groups.get("adb") != "ok":
+            self._offer_bundle_dialog(
+                missing=adb_status, mode="feature",
+                request=req)
             return
-
-        def _push():
-            import subprocess
-            quest_path = "/sdcard/Android/data/com.emuvr.paradiddle/files/Songs/"
-            folder_name = os.path.basename(out_folder.rstrip("/\\"))
-            dest = quest_path + folder_name
-
-            def _log(msg):
-                self.root.after(0, lambda m=msg: self.log(m))
-
-            try:
-                # Check device connected
-                result = subprocess.run([adb, "devices"], capture_output=True, text=True,
-                                   encoding="utf-8", errors="replace", timeout=8,
-                                   creationflags=subprocess.CREATE_NO_WINDOW if sys.platform=="win32" else 0)
-                lines = [l for l in result.stdout.splitlines() if "\tdevice" in l]
-                if not lines:
-                    self.root.after(0, lambda: messagebox.showerror(
-                        "No Quest Found",
-                        "No Meta Quest detected via ADB.\n\n"
-                        "Make sure:\n"
-                        "  • The Quest is plugged in via USB\n"
-                        "  • Developer mode is enabled on the Quest\n"
-                        "  • You accepted the USB debugging prompt in the headset"))
-                    return
-                _log(f"📲  Quest found: {lines[0].split()[0]}")
-                _log(f"  Pushing: {folder_name} → {dest}")
-                result = subprocess.run(
-                    [adb, "push", out_folder, dest],
-                    capture_output=True, text=True,
-                    encoding="utf-8", errors="replace", timeout=120)
-                if result.returncode == 0:
-                    _log(f"  ✓  Push complete! Song is ready in Paradiddle.")
-                    self.root.after(0, lambda: messagebox.showinfo(
-                        "Push Complete",
-                        f"'{folder_name}' has been pushed to your Quest.\n\n"
-                        f"Open Paradiddle and check Custom Songs."))
-                else:
-                    _log(f"  ✗  ADB error: {result.stderr}")
-                    self.root.after(0, lambda: messagebox.showerror(
-                        "Push Failed", f"ADB push failed:\n{result.stderr}"))
-            except subprocess.TimeoutExpired:
-                _log("  ✗  ADB timed out — check USB connection")
-            except Exception as e:
-                _log(f"  ✗  Error: {e}")
-
-        threading.Thread(target=_push, daemon=True).start()
+        self._bundle_dispatch_captured_request(req)
+        return
 
     def _on_cover_manual_change(self):
         """User manually changed the cover art field — clear auto-art indicator."""
@@ -13208,6 +15332,23 @@ class MidiToRlrrApp:
                                    style="Convert.TButton",
                                    command=self._stem_start)
         self.stem_btn.pack(fill=tk.X, pady=(5, 10), ipady=8)
+        if True:  # depcheck stem probe
+            try:
+                import demucs  # noqa: F401
+                self._stem_demucs_available = True
+            except ImportError:
+                self._stem_demucs_available = False
+                self.stem_btn.configure(state="disabled")
+                ttk.Label(
+                    card_act,
+                    text="Stem Splitter needs demucs. Install it with:\n"
+                         "  pip install demucs",
+                    style="Sub.TLabel",
+                    foreground="#e09a3a",
+                    justify=tk.LEFT,
+                ).pack(anchor="w", pady=(0, 8))
+        else:
+            self._stem_demucs_available = True
         self.stem_progress = _G85AltSnareProgressBar(card_act, mode="indeterminate", width=400, height=30)
         self.stem_progress.pack(fill=tk.X, pady=(0, 2))
         self.stem_timer_lbl = ttk.Label(card_act, text="", style="Sub.TLabel")
@@ -15833,6 +17974,15 @@ demucs.separate.main()
                 "Device: %s (%s)." % (cuda_ver, cu_tag, _name, _sm_str), "info")
 
     def _stem_start(self):
+        if True:  # depcheck stem refusal
+            if not getattr(self, "_stem_demucs_available", True):
+                messagebox.showerror(
+                    "Missing Dependencies",
+                    "Stem Splitter needs demucs. Install it with:\n\n"
+                    "  pip install demucs\n\n"
+                    "Then run this script again.",
+                )
+                return
         input_path = self.stem_input_var.get().strip()
         output_base = self.stem_output_var.get().strip()
 
@@ -17010,10 +19160,11 @@ demucs.separate.main()
             justify=tk.LEFT, wraplength=430).pack(anchor="w", fill=tk.X)
 
         # ── F-INT-001 v4.4.4: Neural Stem Isolation ───────────────────────────
-        # Separator-slot opt-in. Default OFF; opt-in routes A→MIDI through the
-        # active separator → composite → existing hybrid detector. Adds ~30-60s
-        # CPU time per song. License-NOASSERTION model is user-downloaded only;
-        # no weights ship with ParaKit.
+        # Separator-slot. Saved a2m_separator_slot (including off) wins; with no
+        # saved preference, ON only if the Jarredou model is on disk, else Off. Routes
+        # A→MIDI through the active separator → composite → existing hybrid
+        # detector. Adds ~30-60s CPU time per song. License-NOASSERTION model is
+        # user-downloaded only; no weights ship with ParaKit.
         sep_cfg = load_config()
         sep_default = sep_cfg.get("a2m_separator_slot")
         if sep_default is None:
@@ -17037,8 +19188,9 @@ demucs.separate.main()
 
         sep_frame = ttk.LabelFrame(
             mid_body,
-            # Not "(experimental)" any more: it is default-ON once the model is
-            # installed, the sibling radio is marked "(recommended)", and the 4.9.6
+            # Not "(experimental)" any more: saved a2m_separator_slot (including
+            # off) wins; with no saved preference it is ON only if the model is
+            # installed. The sibling radio is marked "(recommended)", and the 4.9.6
             # full-mix fix runs inside this branch. A shipped default should not be
             # labelled as an experiment.
             text=" Neural Stem Isolation ", padding=8,
@@ -17050,8 +19202,9 @@ demucs.separate.main()
             sep_frame,
             text=("Pre-clean drum audio with an AI splitter before detection. "
                   "Helpful on tricky tracks where kick / snare / cymbal bleed "
-                  "into each other. Adds ~30-60s per song on CPU. Recommended; "
-                  "turns on automatically once the model is installed."),
+                  "into each other. Adds ~30-60s per song on CPU. Recommended. "
+                  "A saved Off stays Off. With no saved choice, it is on only "
+                  "if the model is already on disk."),
             style="Sub.TLabel", foreground="#c9d1d9",
             justify=tk.LEFT, wraplength=430)
         sep_intro.pack(anchor="w", fill=tk.X, pady=(0, 4))
@@ -17062,15 +19215,16 @@ demucs.separate.main()
             sep_radio_row, text="Off (no pre-cleaning)",
             value="off", variable=self.a2m_separator_slot_var)
         rb_off.pack(anchor="w", pady=1)
-        # Label and tooltip both used to call this "the default". It is not, whenever
-        # the Jarredou model is on disk -- sep_default above selects the separator in
-        # that case, and the sibling radio is marked "(recommended)". Saying "default"
-        # here contradicted the control 30 lines below it.
+        # Label and tooltip both used to call this "the default". It is not: saved
+        # a2m_separator_slot (including off) wins; with no saved preference, ON only
+        # if the Jarredou model is on disk. The sibling radio is marked "(recommended)".
+        # Saying "default" here contradicted the control 30 lines below it.
         self._add_tooltip(
             rb_off,
-            "Detection runs on the audio you provide, with no pre-cleaning step.\n"
+            "Detection runs on the provided audio, with no pre-cleaning step.\n"
             "Fastest, and matches how every ParaKit version before 4.5 behaved.\n"
-            "Chosen automatically only when the separator model is not installed.")
+            "A saved Off stays Off. With no saved choice, it is on only if "
+            "the model is already on disk.")
 
         rb_jarredou = ttk.Radiobutton(
             sep_radio_row,
@@ -17127,7 +19281,7 @@ demucs.separate.main()
                 sep = None
             if mode == "off":
                 self.a2m_sep_status_var.set(
-                    "Off — detection runs on your audio as-is (default behavior).")
+                    "Off — detection runs on the provided audio as-is.")
                 self._a2m_sep_download_btn.configure(state="disabled")
                 return
             if sep is None:
@@ -19579,8 +21733,8 @@ demucs.separate.main()
 
     # ── F-INT-001 v4.4.4: separator-slot helpers ──────────────────────────────
     # _a2m_active_separator_for_run() returns the live separator instance that
-    # _a2m_do_convert should route the input audio through, or None when the
-    # default-OFF behavior should run. Placement here (immediately above
+    # _a2m_do_convert should route the input audio through, or None when
+    # unseparated detection should run. Placement here (immediately above
     # _a2m_do_convert) keeps the wrap site and its enabling helper in
     # adjacent source. The instance is cached on self so multi-song batches
     # don't re-instantiate on every track.
@@ -22295,19 +24449,13 @@ demucs.separate.main()
                      "it with Ctrl+Z.", icon="clock")
 
         hint_lbl = ttk.Label(edit_col,
-                             text=("Ctrl+scroll=zoom  Ctrl+C/V=copy/paste  Ctrl+Q=quantize"
-                                   if compact else
-                                   "Ctrl+scroll=zoom  Ctrl+C/V=copy/paste  Ctrl+Q=quantize  |"
-                                   "  Reclassify: click=picker, drag=lane change  |"
-                                   "  Vel Filter removes quiet notes"),
+                             text=(ME_HINT_COMPACT if compact else ME_HINT_ROOMY),
                              style="Sub.TLabel", foreground="#555")
         hint_lbl.pack(anchor="w", pady=(0 if compact else 1, 0))
         self._me_mode_bound.append((
             hint_lbl, "text",
-            "Ctrl+scroll=zoom  Ctrl+C/V=copy/paste  Ctrl+Q=quantize",
-            "Ctrl+scroll=zoom  Ctrl+C/V=copy/paste  Ctrl+Q=quantize  |"
-            "  Reclassify: click=picker, drag=lane change  |"
-            "  Vel Filter removes quiet notes"))
+            ME_HINT_COMPACT,  # chart-end b3 mode-bound pair uses live hint strings
+            ME_HINT_ROOMY))
         self._me_mode_bound.append((hint_lbl, "pack_pady", (0, 0), (1, 0)))
 
         self.me_flag_count_var = tk.StringVar(value="")
@@ -22421,18 +24569,15 @@ demucs.separate.main()
         af_col.pack(side=tk.LEFT)
         self.me_spectral_btn = ttk.Button(
             af_col, text="Spectral", image=fluent_icon("device_eq") or "", compound="left",
-            command=lambda: self._send_to_spectral(
-                drums=self.me_audio_var.get().strip(),
-                chart=(getattr(self, "_me_last_midi", None)
-                       or self.me_midi_var.get() or "").strip(),
-                mix=self.me_audio_mix_var.get().strip()),
+            command=lambda: self._send_to_spectral(*self._me_spectral_args()),
             width=21)
         self.me_spectral_btn.pack(side=tk.TOP, fill=tk.X, pady=(0, 3))
         self._add_tooltip(
             self.me_spectral_btn,
             "Open the loaded chart in the Spectral Comparison tab to check the\n"
             "detection against the audio -- sends the chart plus its Drums stem /\n"
-            "Full Mix so MISS / PHANTOM disagreements show on the graph.")
+            "Full Mix so MISS / PHANTOM disagreements show on the graph.\n"
+            "Note: the source may be a full mix, so the graph can look busier than an isolated stem.")
         af_border = tk.Frame(af_col, bg="#00d4d4")
         af_border.pack(side=tk.TOP)
         self.me_auto_fetch_btn = ttk.Button(
@@ -23001,8 +25146,13 @@ demucs.separate.main()
         snap_row = ttk.Frame(snap_outer)
         snap_row.pack(fill=tk.X, pady=(0, 2))
         self.me_note_snap_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(snap_row, text="Snap to notes",
-                        variable=self.me_note_snap_var).pack(side=tk.LEFT, padx=(0, 4))
+        _note_snap_cb = ttk.Checkbutton(snap_row, text="Snap to notes",
+                        variable=self.me_note_snap_var)
+        _note_snap_cb.pack(side=tk.LEFT, padx=(0, 4))
+        self._add_tooltip(_note_snap_cb,
+            "Lines a dragged or placed note up with the nearest other note within the distance set on "
+            "the slider. When no note is that close, Snap to grid applies if it is on. Ctrl+S turns this on and "
+            "off.")
         self.me_snap_thresh_var = tk.IntVar(value=10)
         self.me_snap_thresh_lbl = ttk.Label(snap_row, text="10px", width=4,
                                              style="Sub.TLabel")
@@ -23613,6 +25763,12 @@ demucs.separate.main()
         # ── Internal state — must be set before any callbacks fire ───────────
         self.me_notes       = []
         self.me_markers     = []          # list of {"time": float}
+        self._me_chart_end = None
+        self._me_chart_end_follow = True
+        self._me_drag_chart_end = None
+        self._me_chart_end_press_t = None
+        self._me_chart_end_drag_t = None
+        self._me_last_total_w = None
         self.me_marker_items = {}         # tag -> marker index for hit testing
         self.me_ghost_notes = []          # reference MIDI notes (faded background)
         self.me_ghost_var = tk.StringVar()
@@ -23664,6 +25820,7 @@ demucs.separate.main()
             xscrollcommand=self.me_hscroll.set,
             highlightthickness=0, cursor="crosshair")
         self.me_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self._me_bind_chart_end_tooltip()  # chart-end b3 handle tooltip bind
 
         self.me_hscroll.config(command=self._me_hscroll_both)
 
@@ -23717,14 +25874,42 @@ demucs.separate.main()
             # If ANY left-button drag is in progress, swallow the right-click
             # so accidental rclicks during rubber-band / ruler-drag don't fire
             # the delete-note menu or loop-point logic.
-            if (self.me_drag_note is not None
-                    or getattr(self, '_me_drag_marker', None) is not None
-                    or getattr(self, '_me_sel_start', None) is not None
-                    or getattr(self, '_me_ruler_dragging', False)):
+            if _me_rclick_swallowed(
+                    self.me_drag_note,
+                    getattr(self, '_me_drag_marker', None),
+                    getattr(self, '_me_sel_start', None),
+                    getattr(self, '_me_ruler_dragging', False),
+                    getattr(self, '_me_drag_chart_end', None)):
                 return "break"
             cy = self.me_canvas.canvasy(e.y)
             if cy <= self.ME_HEADER_H:
                 cx  = self.me_canvas.canvasx(e.x)
+                _ce_draw = _me_draw_chart_end_secs(
+                    getattr(self, '_me_chart_end_follow', True),
+                    getattr(self, '_me_chart_end', None),
+                    _me_last_note_time(getattr(self, 'me_notes', None)),
+                    getattr(self, '_me_chart_end_drag_t', None),
+                )
+                if _ce_draw is not None:
+                    _x_ce = self._me_secs_to_x(_ce_draw)
+                    if _me_chart_end_at(cx, cy, _x_ce, self.ME_HEADER_H):
+                        menu = tk.Menu(self.root, tearoff=0,
+                                       bg=APP_BG, fg="#e0e0e0",
+                                       activebackground="#cc7733",
+                                       activeforeground="#ffffff",
+                                       font=("Segoe UI", 9))
+                        menu.add_command(
+                            label="Follow last note",
+                            command=self._me_chart_end_follow_last,
+                            state=_me_chart_end_follow_menu_state(
+                                getattr(self, '_me_chart_end_follow', True),
+                                getattr(self, '_me_chart_end_drag_t', None)))
+                        try:
+                            menu.tk_popup(e.x_root, e.y_root)
+                        finally:
+                            menu.grab_release()
+                            self.root.after(300, menu.destroy)
+                        return "break"
                 pos = max(0.0, self._me_x_to_secs(cx))
                 if self._me_loop_in == 0.0 or pos <= self._me_loop_in:
                     self._me_loop_in = pos
@@ -23749,7 +25934,10 @@ demucs.separate.main()
             if k == 'p':
                 self._me_play()
                 return "break"
-            elif k == 's':
+            elif k == 's' and (e.state & 0x4):
+                self._me_toggle_note_snap()
+                return "break"
+            elif k == 's' and not (e.state & 0x4):
                 self._me_stop()
                 return "break"
             elif k in ('delete', 'backspace'):
@@ -23836,6 +26024,7 @@ demucs.separate.main()
             elif k == 'c': self._me_copy()
             elif k == 'v': self._me_paste()
             elif k == 'q': self._me_quantize()
+            elif k == 's': self._me_toggle_note_snap()
         self.root.bind("<Control-z>", _me_root_ctrl)
         self.root.bind("<Control-Z>", _me_root_ctrl)
         self.root.bind("<Control-y>", _me_root_ctrl)
@@ -23846,6 +26035,8 @@ demucs.separate.main()
         self.root.bind("<Control-V>", _me_root_ctrl)
         self.root.bind("<Control-q>", _me_root_ctrl)
         self.root.bind("<Control-Q>", _me_root_ctrl)
+        self.root.bind("<Control-s>", _me_root_ctrl)
+        self.root.bind("<Control-S>", _me_root_ctrl)
 
         def _me_suppress_space(e):
             if self.notebook.index(self.notebook.select()) != 5:
@@ -24490,7 +26681,11 @@ demucs.separate.main()
                 pass
 
     def _me_apply_auto_zoom(self, redraw=True):
-        """Pick a zoom level so the full song fits in the visible canvas width."""
+        """Pick a zoom level so the chart duration fits in the visible canvas width.
+
+        With audio loaded the scroll region can still extend past that
+        (canvas extent includes the audio length even in follow mode).
+        """
         try:
             canvas_w = self.me_canvas.winfo_width()
             if canvas_w < 50:
@@ -24522,6 +26717,13 @@ demucs.separate.main()
         self._me_stop()
         self.me_notes           = []
         self.me_markers         = []
+        self._me_chart_end = None
+        self._me_chart_end_follow = True
+        self._me_chart_end_drag_t = None
+        self._me_drag_chart_end = None
+        self._me_chart_end_press_t = None
+        self._me_last_total_w = None
+        self._me_waveform_cache_key = None
         self._me_selected_markers = set()
         self._me_drag_marker    = None
         self.me_marker_items    = {}
@@ -24983,7 +27185,7 @@ demucs.separate.main()
         try:
             import mutagen as _mutagen
             af = _mutagen.File(audio_path)
-            if af and af.info and getattr(af.info, "length", None):
+            if af is not None and getattr(af, "info", None) is not None and getattr(af.info, "length", None):  # audio length: a tagless stem is falsy
                 return float(af.info.length)
         except Exception:
             pass
@@ -25816,10 +28018,17 @@ demucs.separate.main()
 
             midi_notes = []
             dropped_notes = 0
+            _ce_marker_tick = None
+            _ce_marker_n = 0
             for track in mid.tracks:
                 abs_tick = 0
                 for msg in track:
                     abs_tick += msg.time
+                    if (msg.type == 'marker'
+                            and getattr(msg, 'text', None) == CHART_END_MARKER_TEXT):
+                        _ce_marker_n += 1
+                        if _ce_marker_tick is None or abs_tick > _ce_marker_tick:
+                            _ce_marker_tick = abs_tick
                     if msg.type == 'note_on' and msg.velocity > 0:
                         lane_idx = note_to_lane.get(msg.note)
                         out_note = msg.note
@@ -25928,6 +28137,37 @@ demucs.separate.main()
                 self.me_mode_lock_lbl.pack_forget()
             except Exception:
                 pass
+            self._me_chart_end_drag_t = None
+            self._me_drag_chart_end = None
+            self._me_chart_end_press_t = None
+            _ce_marker_secs = None
+            if _ce_marker_tick is not None:
+                _ce_marker_secs = ticks_to_secs(_ce_marker_tick)  # chart-end marker secs from MIDI tempo map, not chosen_bpm
+            raw_4tuples = _midi_unfolder_notes_from_mid(mid)
+            try:
+                raw_4tuples = self._apply_manual_note_overrides(raw_4tuples, fpath)
+            except Exception:
+                pass
+            conversion_last = _midi_conversion_mapped_last_secs(raw_4tuples)  # chart-end conversion last is MIDI_MAP of original note_on, not folded midi_notes
+            displayed_last = _me_last_note_time(notes)
+            _ce_follow, _ce_end, _ce_dirty, _ce_status = _me_chart_end_load_apply(
+                _ce_marker_secs, conversion_last, displayed_last, tpb, midi_bpm)
+            self._me_chart_end_follow = _ce_follow
+            self._me_chart_end = _ce_end
+            if _ce_dirty:
+                self._me_mark_edit_started()
+            if _ce_status:
+                try:
+                    self.me_status_var.set(_ce_status)
+                except Exception:
+                    pass
+            elif _ce_marker_n > 1:
+                try:
+                    self.me_status_var.set(
+                        "Chart End: extra markers ignored, using latest")
+                except Exception:
+                    pass
+            self._me_waveform_cache_key = None
             # R2-5: what this load could NOT carry — consulted by _me_save's
             # overwrite-with-loss warning. Unfolded GM notes, a multi-tempo
             # map (the editor is single-tempo), or an .rlrr-sourced chart
@@ -26268,6 +28508,17 @@ demucs.separate.main()
         return min(int((y - self.ME_HEADER_H) / self.ME_LANE_H),
                    len(self.MIDI_EDITOR_LANES) - 1)
 
+    def _me_toggle_note_snap(self):
+        """Turn Snap to notes on or off (Ctrl+S)."""
+        var = getattr(self, "me_note_snap_var", None)
+        if var is None:
+            return
+        var.set(not bool(var.get()))  # flip Snap to notes
+        self._me_snap_guide_time = None
+        state = "on" if var.get() else "off"
+        status = getattr(self, "me_note_info_var", None)
+        if status is not None:
+            status.set("Snap to notes: %s  (Ctrl+S)" % state)
     def _me_snap_time(self, t, drag_idx=None):
         """Snap a time value to the nearest beat subdivision or nearby note."""
         self._me_snap_guide_time = None  # clear guide
@@ -26291,6 +28542,50 @@ demucs.separate.main()
         beat = 60.0 / self.me_bpm
         sub  = beat / 4.0
         return round(t / sub) * sub
+
+    def _me_snap_time_for_end(self, t):
+        """Grid snap only — note-snap would stick Chart End to the last note."""
+        if (not getattr(self, 'me_snap_var', None)
+                or not self.me_snap_var.get() or self.me_bpm <= 0):
+            return t
+        beat = 60.0 / self.me_bpm
+        sub = beat / 4.0
+        return round(t / sub) * sub
+
+    def _me_chart_end_canvas_extent(self, pad_secs):
+        _draw = _me_draw_chart_end_secs(
+            getattr(self, '_me_chart_end_follow', True),
+            getattr(self, '_me_chart_end', None),
+            _me_last_note_time(getattr(self, 'me_notes', None)),
+            getattr(self, '_me_chart_end_drag_t', None),
+        )
+        _audio = None
+        try:
+            _audio = self._me_audio_length_secs()
+        except Exception:
+            _audio = None
+        return _me_canvas_extent_secs(
+            getattr(self, 'me_duration', 0.0), _draw, _audio, pad_secs)
+
+    def _me_chart_end_follow_last(self):
+        if (getattr(self, '_me_chart_end_follow', True)
+                and getattr(self, '_me_chart_end_drag_t', None) is None):
+            return
+        self._me_push_undo()  # chart-end Follow last note pushes undo so Creator sees the edit
+        self._me_chart_end_follow = True
+        self._me_chart_end_drag_t = None
+        self._me_chart_end = _me_last_note_time(self.me_notes)
+        try:
+            self.me_status_var.set("Chart End follows last note")
+        except Exception:
+            pass
+        self._me_waveform_cache_key = None
+        self._me_redraw()
+        try:
+            self._me_waveform_draw()  # chart-end follow repaints the shade
+        except Exception:
+            pass
+        self._me_update_info()
 
     def _me_snap_find_nearest_time(self, t, thresh_secs, drag_idx):
         """Return the time of the nearest non-skipped note within thresh_secs
@@ -26338,6 +28633,65 @@ demucs.separate.main()
                 best_t  = times[i]
         return best_t
 
+    def _me_bind_chart_end_tooltip(self):
+        """Hover tip on the orange Chart End knob (tag chart_end_handle)."""
+        tip_window = []
+        canvas = self.me_canvas
+        text = CHART_END_HANDLE_TIP  # chart-end b3 handle tooltip
+
+        def on_enter(event):
+            if tip_window:
+                return
+            x = event.x_root + 16
+            y = event.y_root + 12
+            tw = tk.Toplevel(canvas)
+            tw.wm_overrideredirect(True)
+            tw.configure(bg="#2a2a2a")
+            _wrap = 320
+            try:
+                _wrap = max(320, min(560, canvas.winfo_screenwidth() - 80))
+            except Exception:
+                pass
+            lbl = tk.Label(tw, text=text, justify=tk.LEFT, wraplength=_wrap,
+                           background="#2a2a2a", foreground="#ffcc00",
+                           font=("Segoe UI", 9), relief="solid", borderwidth=1,
+                           padx=8, pady=6)
+            lbl.pack()
+            try:
+                self._position_popup_with_bounds(tw, x, y, anchor=canvas)
+            except Exception:
+                try:
+                    tw.geometry("+%d+%d" % (int(x), int(y)))
+                except Exception:
+                    pass
+            tip_window.append(tw)
+
+        def on_leave(_event):
+            if tip_window:
+                try:
+                    tip_window[0].destroy()
+                except Exception:
+                    pass
+                tip_window.clear()
+
+        canvas.tag_bind("chart_end_handle", "<Enter>", on_enter)
+        canvas.tag_bind("chart_end_handle", "<Leave>", on_leave)
+
+    def _me_chart_end_settle_floor(self):
+        """The one-way floor, applied at rest: never while the Chart End knob
+        or a note is being dragged. A note dragged past a committed end and
+        back to its slot would otherwise raise the end mid-gesture, with no
+        undo entry (the release only pushes one when a note ended up moved).
+        The release path redraws after me_drag_note clears, which applies
+        the floor under that entry when the note did move."""
+        if (getattr(self, '_me_chart_end_drag_t', None) is None
+                and getattr(self, 'me_drag_note', None) is None):  # chart-end floor waits for the note drag
+            self._me_chart_end = _me_chart_end_apply_one_way_floor(
+                getattr(self, '_me_chart_end_follow', True),
+                getattr(self, '_me_chart_end', None),
+                _me_last_note_time(self.me_notes),
+                False)
+
     def _me_redraw(self):
         """Redraw the piano roll — viewport-culled for performance.
         Only canvas items within the visible time window are created;
@@ -26346,6 +28700,7 @@ demucs.separate.main()
         (drag, zoom slider) to debounce rapid-fire redraws."""
         if not hasattr(self, 'me_canvas') or not hasattr(self, 'me_notes'):
             return
+        self._me_chart_end_settle_floor()
         c     = self.me_canvas
         lc    = self.me_label_canvas
         zoom  = self.me_zoom_var.get()
@@ -26366,13 +28721,16 @@ demucs.separate.main()
         pad_secs = max(bar_secs * 2, 2.0)
 
         def _calc_total_w(z):
-            return max(self._me_secs_to_x(self.me_duration + pad_secs, zoom=z), 800)
+            return max(self._me_secs_to_x(
+                self._me_chart_end_canvas_extent(pad_secs), zoom=z), 800)
 
         try:
             x0_frac, _ = c.xview()
             old_zoom   = getattr(self, '_me_last_zoom', zoom)
             # Convert left-edge fraction to seconds using old zoom/total_w
-            old_total_w  = _calc_total_w(old_zoom)
+            old_total_w  = getattr(self, '_me_last_total_w', None)
+            if not old_total_w:
+                old_total_w = _calc_total_w(old_zoom)
             left_px_old  = x0_frac * old_total_w
             # left_px = secs * 100 * zoom  →  secs = left_px / (100 * zoom)
             left_secs    = left_px_old / (120.0 * old_zoom) if old_zoom > 0 else 0.0
@@ -26388,6 +28746,7 @@ demucs.separate.main()
         self.ME_LANE_H = available_h // n_lanes
 
         total_w = _calc_total_w(zoom)
+        self._me_last_total_w = total_w
         total_h = self.ME_HEADER_H + n_lanes * self.ME_LANE_H
 
         c.delete("all")
@@ -26490,7 +28849,7 @@ demucs.separate.main()
         # ── Grid lines ────────────────────────────────────────────────────────
         # Drive by integer subdivision index to avoid float drift skipping beats.
         # Viewport-culled: only draw lines within the visible time window.
-        total_secs = self.me_duration + pad_secs
+        total_secs = self._me_chart_end_canvas_extent(pad_secs)
         n_subs = int(total_secs / sub_beat) + 4
         # v4.9.1 — RULER SECONDS (v5 parity, owner spec): between the bar
         # numbers, beat/subdivision tick positions are labeled with ABSOLUTE
@@ -26605,17 +28964,19 @@ demucs.separate.main()
                 c.create_text(_x_cs + 3, self.ME_HEADER_H // 2,
                               text="Chart Start", fill="#44cc88",
                               font=("Consolas", 7), anchor="w")
-            if _cs != _ce and _vis_t0 - 2.0 <= _ce <= _vis_t1 + 2.0:
-                _x_ce = self._me_secs_to_x(_ce)
-                c.create_line(_x_ce, 0, _x_ce, total_h,
-                              fill="#cc7733", width=1, dash=(4, 3))
-                c.create_text(_x_ce + 3, self.ME_HEADER_H // 2,
-                              text="Chart End", fill="#cc7733",
-                              font=("Consolas", 7), anchor="w")
+            _ce_draw = _me_draw_chart_end_secs(
+                getattr(self, '_me_chart_end_follow', True),
+                getattr(self, '_me_chart_end', None),
+                _ce,
+                getattr(self, '_me_chart_end_drag_t', None),
+            )
+            if _ce_draw is not None and _vis_t0 - 2.0 <= _ce_draw <= _vis_t1 + 2.0:
+                _x_ce = self._me_secs_to_x(_ce_draw)
+                _me_draw_chart_end(c, _x_ce, total_h, self.ME_HEADER_H)
 
         # ── Grid over notes (optional) — also viewport-culled ────────────────
         if getattr(self, 'me_grid_over_notes_var', None) and self.me_grid_over_notes_var.get():
-            n_subs_over = int((self.me_duration + 2) / sub_beat) + 2
+            n_subs_over = int(self._me_chart_end_canvas_extent(2.0) / sub_beat) + 2
             for sub_idx in range(n_subs_over):
                 t = sub_idx * sub_beat
                 if t < _vis_t0 or t > _vis_t1:
@@ -27000,7 +29361,25 @@ demucs.separate.main()
                 self.me_drag_start   = cx
                 self._me_redraw()
                 return "break"
-            # No marker hit — seek playhead
+            # No marker hit — Chart End handle, then seek playhead
+            _ce_draw = _me_draw_chart_end_secs(
+                getattr(self, '_me_chart_end_follow', True),
+                getattr(self, '_me_chart_end', None),
+                _me_last_note_time(self.me_notes),
+                getattr(self, '_me_chart_end_drag_t', None),
+            )
+            if _ce_draw is not None:
+                _x_ce = self._me_secs_to_x(_ce_draw)
+                if _me_chart_end_at(cx, cy, _x_ce, self.ME_HEADER_H):
+                    _committed = _me_draw_chart_end_secs(
+                        getattr(self, '_me_chart_end_follow', True),
+                        getattr(self, '_me_chart_end', None),
+                        _me_last_note_time(self.me_notes),
+                        None)
+                    self._me_drag_chart_end = True
+                    self._me_chart_end_press_t = _committed
+                    self._me_chart_end_drag_t = _committed
+                    return "break"
             self._me_ruler_dragging = True
             self._me_seek(event)
             return "break"
@@ -27166,6 +29545,19 @@ demucs.separate.main()
 
     def _me_on_drag(self, event):
         """Drag to move a note, scrub the ruler, or Shift+drag for rubber band select."""
+        if getattr(self, '_me_drag_chart_end', None) is not None:
+            cx = self.me_canvas.canvasx(event.x)
+            last = _me_last_note_time(self.me_notes)
+            try:
+                audio = self._me_audio_length_secs()
+            except Exception:
+                audio = None
+            t_new = _me_chart_end_clamp(
+                self._me_snap_time_for_end(self._me_x_to_secs(cx)),
+                last, audio)
+            self._me_chart_end_drag_t = t_new  # chart-end drawing resolver uses drag_t
+            self._me_redraw()
+            return "break"
         # Ruler drag — scrub playhead (skip if dragging a marker)
         if getattr(self, '_me_ruler_dragging', False) and self._me_drag_marker is None:
             self._me_seek(event)
@@ -27256,6 +29648,39 @@ demucs.separate.main()
         # drag — me_notes is re-sorted below, so any cached time list is now
         # stale relative to indices and must be rebuilt on the next drag.
         self._me_snap_cache = None
+        if getattr(self, '_me_drag_chart_end', None) is not None:
+            cx = self.me_canvas.canvasx(event.x)
+            last = _me_last_note_time(self.me_notes)
+            try:
+                audio = self._me_audio_length_secs()
+            except Exception:
+                audio = None
+            t_release = _me_chart_end_clamp(
+                self._me_snap_time_for_end(self._me_x_to_secs(cx)),
+                last, audio)
+            t_press = getattr(self, '_me_chart_end_press_t', t_release)
+            self._me_drag_chart_end = None
+            if (t_press is not None
+                    and abs(t_release - t_press) > CHART_END_DETACH_SECS):
+                self._me_push_undo()
+                self._me_chart_end_follow = False
+                self._me_chart_end = t_release
+                try:
+                    self.me_status_var.set(
+                        "Chart End @ %s (follow off)"
+                        % self._me_fmt_time(t_release))
+                except Exception:
+                    pass
+            self._me_chart_end_drag_t = None
+            self._me_chart_end_press_t = None
+            self._me_waveform_cache_key = None
+            self._me_redraw()
+            try:
+                self._me_waveform_draw()  # chart-end release repaints the shade
+            except Exception:
+                pass
+            self._me_update_info()
+            return
         # Defer-push (R1-1d): consume the press-time drag capture on EVERY
         # release path, so a stale snapshot / id-keyed orig-times mapping can
         # never survive past this event (dead-object id reuse hazard).
@@ -27568,7 +29993,8 @@ demucs.separate.main()
         bpm      = getattr(self, 'me_bpm', 120.0) or 120.0
         bar_secs = 4 * 60.0 / bpm
         pad_secs = max(bar_secs * 2, 2.0)
-        total_w  = max(self._me_secs_to_x(self.me_duration + pad_secs, zoom=zoom), 800)
+        total_w  = max(self._me_secs_to_x(
+            self._me_chart_end_canvas_extent(pad_secs), zoom=zoom), 800)
         canvas_w = max(self.me_canvas.winfo_width(), 400)
         target_x = self._me_secs_to_x(nxt)
         left_px  = max(0, target_x - canvas_w // 2)
@@ -27667,6 +30093,8 @@ demucs.separate.main()
             "flagged":   copy.deepcopy(getattr(self, "me_flagged", {})),
             "selection": set(getattr(self, "_me_selected_notes", set())),
             "duration":  getattr(self, "me_duration", 0.0),
+            "_me_chart_end": getattr(self, "_me_chart_end", None),
+            "_me_chart_end_follow": getattr(self, "_me_chart_end_follow", True),
         }
 
     def _me_restore_snapshot(self, state):
@@ -27682,8 +30110,14 @@ demucs.separate.main()
                 self._me_selected_notes = set(state["selection"])
             if "duration" in state:
                 self.me_duration = state["duration"]
+            self._me_chart_end = state.get("_me_chart_end")
+            self._me_chart_end_follow = state.get("_me_chart_end_follow", True)
+            self._me_chart_end_drag_t = None
         else:
             self.me_notes = state
+            self._me_chart_end_follow = True
+            self._me_chart_end = _me_last_note_time(self.me_notes)
+            self._me_chart_end_drag_t = None
         self._me_last_clicked_note = -1
 
     def _me_capture_selection(self):
@@ -27774,16 +30208,36 @@ demucs.separate.main()
     def _me_undo(self):
         if not self.me_undo_stack:
             return
+        follow_before = getattr(self, '_me_chart_end_follow', True)
+        committed_before = getattr(self, '_me_chart_end', None)
         self.me_redo_stack.append(self._me_snapshot())
         self._me_restore_snapshot(self.me_undo_stack.pop())
+        before = _me_chart_end_choice(follow_before, committed_before)
+        after = _me_chart_end_choice(
+            getattr(self, '_me_chart_end_follow', True),
+            getattr(self, '_me_chart_end', None))
+        if _me_chart_end_choice_changed(
+                before, after,
+                _me_chart_end_tick_tol(self.me_tpb, self.me_bpm)):
+            self._me_mark_edit_started()  # chart-end undo dirty when committed choice changes
         self._me_redraw()
         self._me_update_info()
 
     def _me_redo(self):
         if not self.me_redo_stack:
             return
+        follow_before = getattr(self, '_me_chart_end_follow', True)
+        committed_before = getattr(self, '_me_chart_end', None)
         self.me_undo_stack.append(self._me_snapshot())
         self._me_restore_snapshot(self.me_redo_stack.pop())
+        before = _me_chart_end_choice(follow_before, committed_before)
+        after = _me_chart_end_choice(
+            getattr(self, '_me_chart_end_follow', True),
+            getattr(self, '_me_chart_end', None))
+        if _me_chart_end_choice_changed(
+                before, after,
+                _me_chart_end_tick_tol(self.me_tpb, self.me_bpm)):
+            self._me_mark_edit_started()  # chart-end redo dirty when committed choice changes
         self._me_redraw()
         self._me_update_info()
 
@@ -27801,7 +30255,16 @@ demucs.separate.main()
         count_str = "  ".join(
             f"{self.MIDI_EDITOR_LANES[i]['name']}: {counts[i]}"
             for i in range(len(self.MIDI_EDITOR_LANES)) if counts[i] > 0)
-        dur_str = self._me_fmt_time(self.me_duration)
+        _draw = _me_draw_chart_end_secs(
+            getattr(self, '_me_chart_end_follow', True),
+            getattr(self, '_me_chart_end', None),
+            _me_last_note_time(self.me_notes),
+            getattr(self, '_me_chart_end_drag_t', None),
+        )
+        _dur = self.me_duration
+        if _draw is not None and _draw > _dur:
+            _dur = _draw
+        dur_str = self._me_fmt_time(_dur)
         self.me_info_var.set(
             f"BPM: {self.me_bpm:.1f}  |  {len(self.me_notes)} notes  |  "
             f"Duration: {dur_str}  |  {count_str}")
@@ -27848,16 +30311,25 @@ demucs.separate.main()
                 # ticks). Clamped here, pre-zero notes land at tick 0 — already
                 # outside the timeline — and everything at t >= 0 stays exact.
                 tick = max(0, secs_to_ticks(note["time"]))
-                flat.append((tick,            'note_on',  note["note"], note["vel"]))
-                flat.append((tick + note_len, 'note_off', note["note"], 0))
+                flat.append((tick,            1, 'note_on',  note["note"], note["vel"]))
+                flat.append((tick + note_len, 0, 'note_off', note["note"], 0))
+            if not getattr(self, '_me_chart_end_follow', True):  # chart-end write marker only when follow is off
+                _end_t = getattr(self, '_me_chart_end', None)
+                if _end_t is not None:
+                    _mtick = max(0, secs_to_ticks(_end_t))
+                    flat.append((_mtick, 2, 'marker', CHART_END_MARKER_TEXT, 0))
 
-            flat.sort(key=lambda x: (x[0], 0 if x[1] == 'note_off' else 1))
+            flat.sort(key=lambda x: (x[0], x[1]))
 
             prev_tick = 0
-            for tick, mtype, note_num, vel in flat:
+            for tick, _kind, mtype, note_num, vel in flat:
                 delta = max(0, tick - prev_tick)
-                track.append(Message(mtype, channel=9, note=note_num,
-                                     velocity=vel, time=delta))
+                if mtype == 'marker':
+                    track.append(_mido.MetaMessage(
+                        'marker', text=note_num, time=delta))
+                else:
+                    track.append(Message(mtype, channel=9, note=note_num,
+                                         velocity=vel, time=delta))
                 prev_tick = tick
 
             # R2-5: one-time sibling backup per path per session — the write
@@ -28012,8 +30484,12 @@ demucs.separate.main()
         if not os.path.isfile(path):
             return True
         _ld = getattr(self, "_me_load_dropped", None) or {}
+        _drop_ce = _me_chart_end_overwrite_drops_marker(
+            getattr(self, "_me_chart_end_follow", True),
+            _midi_file_has_chart_end_marker(path))
         if not (_ld.get("notes") or _ld.get("multi_tempo")
-                or _ld.get("source", "midi") != "midi"):
+                or _ld.get("source", "midi") != "midi"
+                or _drop_ce):
             return True
         _bits = []
         if _ld.get("notes"):
@@ -28023,6 +30499,9 @@ demucs.separate.main()
         if _ld.get("source", "midi") != "midi":
             _bits.append("notes loaded from an .rlrr, not from this MIDI "
                          "(the MIDI's own contents may hold more)")
+        if _drop_ce:
+            _bits.append("a saved Chart End marker that Follow last note "
+                         "(currently on) would drop")
         return messagebox.askyesno(
             "Overwrite loses content",
             "This chart carries " + " and ".join(_bits) +
@@ -28290,6 +30769,24 @@ demucs.separate.main()
         # waveform under the new stem's label. The waveform is what notes get
         # aligned against, so that is silent wrong output with no error.
         self._me_waveform_cache_key = None
+        if not getattr(self, '_me_chart_end_follow', True):
+            last = _me_last_note_time(getattr(self, 'me_notes', None))
+            try:
+                audio = self._me_audio_length_secs()
+            except Exception:
+                audio = None
+            new_c, dirty, status = _me_chart_end_on_audio_change(
+                False, getattr(self, '_me_chart_end', None), last, audio)
+            if dirty:
+                self._me_push_undo()
+                self._me_chart_end = new_c
+            elif new_c is not None:
+                self._me_chart_end = new_c
+            if status:
+                try:
+                    self.me_status_var.set(status)
+                except Exception:
+                    pass
         self._me_waveform_draw()
 
     def _me_waveform_draw(self, pos=None):
@@ -28340,10 +30837,16 @@ demucs.separate.main()
         # and me_duration is the CHART's length, not the audio's. Belt and braces —
         # the invalidation above is the real fix, this stops a same-length address
         # collision from mattering if some future path forgets to invalidate.
-        cache_key = (secs_start, secs_end, w, h, _style_now, id(amps),
-                     round(float(audio_dur or 0.0), 6),
-                     bool(getattr(self, 'me_notes', None)),
-                     getattr(self, 'me_duration', 0.0))
+        _ce_draw = _me_draw_chart_end_secs(
+            getattr(self, '_me_chart_end_follow', True),
+            getattr(self, '_me_chart_end', None),
+            _me_last_note_time(getattr(self, 'me_notes', None)),
+            getattr(self, '_me_chart_end_drag_t', None),
+        )
+        cache_key = _me_waveform_cache_key_for(
+            secs_start, secs_end, w, h, _style_now, id(amps),
+            audio_dur, getattr(self, 'me_notes', None),
+            getattr(self, 'me_duration', 0.0), _ce_draw)
         prev_key = getattr(self, '_me_waveform_cache_key', None)
         if prev_key == cache_key:
             # Fast path — background pixels unchanged; only update playhead
@@ -28520,11 +31023,18 @@ demucs.separate.main()
                 color = f"#{intensity:02x}{intensity // 3:02x}{min(255, intensity + 60):02x}"
                 c.create_line(x, y1, x, y2, fill=color)
 
-        # Shade regions outside the chart range (before first note / after last note)
+        # Shade regions outside the chart range (before Chart Start / after Chart End)
         _me_notes = getattr(self, 'me_notes', [])
         if _me_notes and secs_end > secs_start:
             _cs = _me_notes[0]["time"]
-            _ce = _me_notes[-1]["time"]
+            _ce = _me_draw_chart_end_secs(
+                getattr(self, '_me_chart_end_follow', True),
+                getattr(self, '_me_chart_end', None),
+                _me_notes[-1]["time"],
+                getattr(self, '_me_chart_end_drag_t', None),
+            )
+            if _ce is None:
+                _ce = _me_notes[-1]["time"]
             _span = secs_end - secs_start
             if _cs > secs_start:
                 cs_px = min(w, int((_cs - secs_start) / _span * w))
@@ -29951,6 +32461,18 @@ demucs.separate.main()
         ttk.Button(btn_row, text="Cancel", command=top.destroy).pack(side=tk.LEFT)
         self._center_popup(top)
         top.grab_set()
+
+    def _me_spectral_args(self):
+        """MIDI Editor Send-to-Spectral paths: drums, chart, mix."""
+        chart = (getattr(self, "_me_last_midi", None)
+                 or self.me_midi_var.get() or "").strip()
+        drums = self.me_audio_var.get().strip()
+        if not drums:
+            recorded = (getattr(self, "_me_source_audio_chart", None) or "").strip()
+            drums = ((getattr(self, "_me_source_audio", None) or "")
+                     if recorded == chart else "")
+        mix = self.me_audio_mix_var.get().strip()
+        return drums, chart, mix
 
     # ── Feature 3: Re-run ML only ─────────────────────────────────────────────
     def _me_rerun_ml(self):
@@ -32053,7 +34575,8 @@ demucs.separate.main()
             except Exception:
                 pass
             pad_secs = max((4 * 60.0 / bpm) * 2, 2.0)
-            total_w = max(self._me_secs_to_x(self.me_duration + pad_secs), 800)
+            total_w = max(self._me_secs_to_x(
+                self._me_chart_end_canvas_extent(pad_secs)), 800)
             if total_w > 0:
                 view_start = scroll_x[0] * total_w
                 view_end   = scroll_x[1] * total_w
@@ -33202,6 +35725,8 @@ demucs.separate.main()
         # while the user was working on the sheet-music one. Found by audit.
         self._me_source_audio = (getattr(self, '_a2m_source_file', None)
                                  if inherit_a2m_source else None)
+        self._me_source_audio_chart = (midi_path
+                                       if inherit_a2m_source else None)
 
     # =========================================================================
     # Tab 7 — Sheet Music → MIDI
@@ -35507,11 +38032,46 @@ demucs.separate.main()
         self._yt_deno_btn.pack(side=tk.LEFT, padx=(0, 4))
 
         def _yt_browse_node():
-            path = filedialog.askopenfilename(
-                title="Select node.exe",
-                filetypes=[("Node.js executable", "node.exe"), ("All executables", "*.exe")],
-            )
+            initialdir = None
+            raw = (self.yt_node_path_var.get() or "").strip()
+            if raw:  # empty configured value skipped before conversion
+                cand = raw if os.path.isdir(raw) else os.path.dirname(raw)
+                if cand:
+                    cand = _yt_abs_norm(cand)
+                    if _yt_dir_exists(cand):  # configured file's folder must exist
+                        initialdir = cand
+            if initialdir is None:
+                for name, path in _yt_resolve_js_runtimes(raw):
+                    if name == "node" and path:
+                        folder = os.path.dirname(_yt_abs_norm(path))
+                        if _yt_dir_exists(folder):
+                            initialdir = folder
+                            break
+            if initialdir is None:
+                for extra in _yt_default_node_extras():
+                    if not extra:
+                        continue
+                    folder = os.path.dirname(_yt_abs_norm(extra))
+                    if _yt_dir_exists(folder):  # default Node folder; executable itself need not exist
+                        initialdir = folder
+                        break
+            if initialdir is None:
+                pf = (os.environ.get("ProgramFiles") or "").strip()
+                if pf:  # empty ProgramFiles skipped before conversion
+                    pf = _yt_abs_norm(pf)
+                    if _yt_dir_exists(pf):
+                        initialdir = pf
+            dlg_kw = {
+                "parent": self.root,
+                "title": "Select node.exe",
+                "initialfile": "node.exe",
+                "filetypes": [("Node.js executable", "node.exe"), ("All executables", "*.exe")],
+            }
+            if initialdir:  # pass no initialdir when none qualifies
+                dlg_kw["initialdir"] = initialdir
+            path = filedialog.askopenfilename(**dlg_kw)
             if path:
+                path = os.path.normpath(path)  # Node path saved through normpath
                 self.yt_node_path_var.set(path)
                 save_config({"yt_node_path": path})
                 self._yt_check_runtime_status()
@@ -36583,15 +39143,17 @@ demucs.separate.main()
     # ── Download-completion hook (called via root.after from the worker) ─────
     def _yt_newest_audio_in(self, out_dir, fmt, not_before=None):
         """Newest matching audio file in out_dir, optionally restricted to files
-        written at or after `not_before`.
+        written at or after `not_before`. Last-resort folder scan for a download
+        whose own output (print file and console) did not name a usable path.
 
         F1 (breaker 2026-07-31): without that bound this returned the newest audio
         file in the folder REGARDLESS of age, so a run where yt-dlp printed no
-        [ExtractAudio] Destination line — e.g. "has already been downloaded" —
-        resolved to a completely unrelated earlier download. The caller then wrote
-        the REQUESTED video's title/artist/cover onto that file's library row,
-        silently relabelling song A with song B's metadata. Bounding by the download
-        start makes the honest outcome "couldn't locate the file" instead.
+        path of its own — e.g. the pathless "has already been downloaded" line —
+        resolved to a completely unrelated earlier download. The already-downloaded
+        case is now resolved from the run's own output when that output names a
+        file; the scan stays the last resort, still bounded, and the completion
+        hook asks before attributing a scan-only result. When the scan rejects
+        every candidate the honest outcome is still "couldn't locate the file".
 
         The 2 s slack absorbs coarse filesystem timestamp granularity (FAT32 is 2 s);
         it is far too small to re-admit a file from an earlier download."""
@@ -36621,34 +39183,70 @@ demucs.separate.main()
         except Exception:
             return None
 
-    def _yt_on_download_complete(self, path, fmt, out_dir, video_id=None):
+    def _yt_on_download_complete(self, path, fmt, out_dir, video_id=None, *,
+                                 classification=None, embed_art=None, log=None,
+                                 resolved_from=None):
         """Record the download, enable Send-to-Stem, add it to the library.
 
-        `path` comes from yt-dlp's [ExtractAudio] Destination line but can be
-        None even on success → fall back to the newest matching file in out_dir.
+        `path` is the print-file or console path when those sources named a
+        usable file; otherwise the newest matching file in out_dir, bounded
+        by this download's start. New per-run inputs are keyword-only.
         """
+        if log is None:
+            def log(msg):
+                self.root.after(0, lambda m=msg: self._yt_log(m))
+
+        scanned = False
         final = path
         if not final or not os.path.isfile(final):
-            # Bound the fallback to THIS download (F1). _yt_start_time is cleared by
-            # done(), which can run before this after()-marshalled hook, so read the
-            # uncleared copy first.
             _started = (getattr(self, "_yt_last_dl_started", None)
                         or getattr(self, "_yt_start_time", None))
             final = self._yt_newest_audio_in(out_dir, fmt, not_before=_started)
+            scanned = True
         if not final or not os.path.isfile(final):
             try:
                 self._yt_log("Library: couldn't locate the downloaded file to add it.")
             except Exception:
                 pass
             return
-        self._yt_last_downloaded = final
-        try:
-            if hasattr(self, "yt_send_stem_btn"):
-                self.yt_send_stem_btn.configure(state="normal")
-        except Exception:
-            pass
 
-        def _meta_worker(p=final, f=fmt, vid=video_id):
+        def _select_sendstem(p):
+            self._yt_last_downloaded = p
+            try:
+                if hasattr(self, "yt_send_stem_btn"):
+                    self.yt_send_stem_btn.configure(state="normal")
+            except Exception:
+                pass
+
+        fname = os.path.basename(final)
+        consent = False
+        if classification is not None:
+            if classification in ("present", "uncertain"):
+                consent = True
+            elif scanned or resolved_from not in ("p", "c"):
+                consent = True
+        if scanned and classification is not None:
+            log("Found %s in your folder; yt-dlp did not report the file it saved."
+                % fname)
+
+        def _library_row_for(p):
+            try:
+                norm = os.path.normcase(os.path.abspath(p))
+            except Exception:
+                norm = p
+            try:
+                entries = self._yt_library_load()
+            except Exception:
+                entries = []
+            for e in entries or []:
+                try:
+                    if os.path.normcase(os.path.abspath(e.get("path", ""))) == norm:
+                        return e
+                except Exception:
+                    continue
+            return None
+
+        def _meta_worker(p=final, f=fmt, vid=video_id, do_embed=False, captured_art=embed_art):
             dur = self._yt_audio_duration(p)
             title = os.path.splitext(os.path.basename(p))[0]
             artist = ""
@@ -36656,20 +39254,102 @@ demucs.separate.main()
                 meta = self._yt_lib_oembed_meta(vid)
                 if meta:
                     title = meta.get("title") or title
-                    # oEmbed's author is the CHANNEL name, and YouTube's
-                    # auto-generated artist channels are literally
-                    # "<Artist> - Topic" -- so playlist downloads used to land
-                    # in the library with the suffix stuck on the artist.
                     artist = strip_yt_topic_suffix(meta.get("author", "") or "")
-            # Art: embedded cover first (always available on FLAC downloads),
-            # then the YouTube thumbnail by id — so art shows even without vid.
+            if do_embed and captured_art and vid:
+                pic_state = _yt_audio_picture_state(p, f)
+                if pic_state == "unknown":
+                    log("Album art skipped: could not read the existing tags of %s."
+                        % os.path.basename(p))
+                elif pic_state == "no":
+                    self._yt_embed_thumbnail(None, p, f, log, video_id=vid)
+                elif pic_state == "wav":
+                    self._yt_embed_thumbnail(None, p, f, log, video_id=vid)
+            elif do_embed and captured_art and not vid:
+                log("⚠  Album art skipped: could not parse video ID from URL.")
             art = self._yt_fetch_art_cache(p, vid)
             self.root.after(0, lambda: (
                 self._yt_library_add(p, f, dur, art, title, artist),
-                self._libraries_refresh_all()))   # all views, not just YT
+                self._libraries_refresh_all()))
+
+        def _embed_only_worker(p=final, f=fmt, vid=video_id):
+            pic_state = _yt_audio_picture_state(p, f)
+            if pic_state == "unknown":
+                log("Album art skipped: could not read the existing tags of %s."
+                    % os.path.basename(p))
+                return
+            if pic_state == "yes":
+                return
+            if pic_state == "wav":
+                self._yt_embed_thumbnail(None, p, f, log, video_id=vid)
+                return
+            self._yt_embed_thumbnail(None, p, f, log, video_id=vid)
 
         import threading
-        threading.Thread(target=_meta_worker, daemon=True).start()
+        if not consent:
+            _select_sendstem(final)
+            threading.Thread(target=_meta_worker, daemon=True).start()
+            return
+
+        existing = _library_row_for(final)
+        if existing is not None:
+            _select_sendstem(final)
+            try:
+                self._yt_log("Library: %s is already in your library." % fname)
+            except Exception:
+                pass
+
+            def _row_exists_picture_path():
+                if not embed_art or not video_id:
+                    return
+                pic_state = _yt_audio_picture_state(final, fmt)
+                if pic_state == "unknown":
+                    log("Album art skipped: could not read the existing tags of %s."
+                        % fname)
+                    return
+                if pic_state != "no":
+                    return
+
+                def _ask():
+                    add_cover = messagebox.askyesno(
+                        "Add cover art?",
+                        "ParaKit cannot confirm that %s belongs to this video. "
+                        "Add this video's cover to the file?" % fname,
+                        parent=self.root)
+                    if add_cover:
+                        threading.Thread(
+                            target=_embed_only_worker, daemon=True).start()
+                    else:
+                        log("Album art skipped: cover was not added to %s." % fname)
+
+                self.root.after(0, _ask)
+
+            threading.Thread(target=_row_exists_picture_path, daemon=True).start()
+            return
+
+        if classification == "present":
+            opening = ("ParaKit found %s; an existing file may have been reused."
+                       % fname)
+        elif classification == "uncertain":
+            opening = ("ParaKit found %s, but could not confirm whether this run created it."
+                       % fname)
+        else:
+            opening = "ParaKit could not confirm which file this download produced."
+        add_it = messagebox.askyesno(
+            "Add to library?",
+            opening + " The existing file may belong to a different video.\n\n"
+            "Add it to the library with this video's title and artist? "
+            "Cover art is added only if the file has none.",
+            parent=self.root)
+        if add_it:
+            _select_sendstem(final)
+            def _yes():
+                _meta_worker(do_embed=True)
+            threading.Thread(target=_yes, daemon=True).start()
+        else:
+            try:
+                self._yt_log("Library: %s was left out of the library." % fname)
+            except Exception:
+                pass
 
     def _yt_library_maybe_backfill(self):
         """D5b — one-time scan of the YT output folder for pre-existing
@@ -38432,64 +41112,29 @@ demucs.separate.main()
             cookie_desc = "Cookie source: cookies.txt file"
         else:
             cookie_desc = "Cookie source: none"
-        self._yt_cancel_event.clear()
-        self.yt_dl_btn.configure(state="disabled")
-        self.yt_log.configure(state="normal")
-        self.yt_log.delete("1.0", tk.END)
-        self.yt_log.configure(state="disabled")
+        req = self._bundle_capture_request(
+            "youtube",
+            url=url, out_dir=out_dir, fmt=self.yt_fmt_var.get(),
+            cookie_args=cookie_args, cookie_desc=cookie_desc,
+            cookie_mode=cookie_mode, cookie_browser=cookie_browser,
+            cookie_profile=cookie_profile, cookie_file=cookie_file,
+        )
+        # bundle feature preflight before disable (youtube)
+        yt_status = self._bundle_detect()
+        if not youtube_feature_ready(yt_status):
+            self._offer_bundle_dialog(
+                missing=yt_status, mode="feature",
+                request=req)
+            return
 
-        # Kick off elapsed timer + progress bar — set before the worker runs
-        # so the very first log line carries an accurate [mm:ss] prefix.
-        import time as _t
-        self._yt_start_time = _t.time()
-        # F1 (breaker 2026-07-31): a SECOND copy that done() does not clear.
-        # _yt_start_time is set to None in done(), and _yt_on_download_complete runs
-        # via after(0, ...), so it can be gone by the time the completion hook needs
-        # to know when this download began. See _yt_newest_audio_in.
-        self._yt_last_dl_started = self._yt_start_time
-        self.yt_progress_bar.start(12)
-        self.yt_timer_lbl.configure(text="⏱  00:00")
-        self._timer_start(self.yt_timer_lbl)
-
-        embed_art = bool(getattr(self, "yt_embed_art_var",
-                                  tk.BooleanVar(value=False)).get())
-
-        # v4.4.2: optional custom filename (overrides the YouTube video title
-        # for the saved file). Only applied when the toggle is on AND the
-        # sanitized name is non-empty; otherwise we hand None to the worker
-        # and the default %(title)s template is used.
-        custom_basename = None
-        if getattr(self, "yt_custom_name_enabled_var",
-                   tk.BooleanVar(value=False)).get():
-            raw_name = getattr(self, "yt_custom_name_var",
-                               tk.StringVar(value="")).get()
-            custom_basename = self._youtube_sanitize_filename(raw_name)
-            if custom_basename is None and raw_name and raw_name.strip():
-                # User typed something but it cleaned to empty — log this
-                # so the file shows up under the video title and they know
-                # why their custom name was ignored.
-                self._yt_log(
-                    "ℹ  Custom filename was empty after cleanup; saving as "
-                    "the YouTube video title instead.")
-
-        t = threading.Thread(target=self._yt_download_worker,
-                             args=(url, out_dir, self.yt_fmt_var.get(),
-                                   cookie_args, cookie_desc, embed_art,
-                                   custom_basename),
-                             daemon=True)
-        t.start()
-
-        # v4.5.4.1-1: the custom filename is one-shot — this conversion has
-        # already captured it into custom_basename, so reset the field now so
-        # the next video doesn't silently inherit this one's name. (The URL ✕
-        # button clears it too.)
-        self.yt_custom_name_var.set("")
+        self._bundle_dispatch_captured_request(req)
 
     def _yt_download_worker(self, url, out_dir, fmt, cookie_args=None,
                              cookie_desc="Cookie source: none", embed_art=False,
-                             custom_basename=None):
+                             custom_basename=None, *, autoupdate=None,
+                             node_path=None, request=None):
         """Background worker: optionally update yt-dlp, then download."""
-        import subprocess, sys, shutil
+        import subprocess
 
         def log(msg):
             self.root.after(0, lambda m=msg: self._yt_log(m))
@@ -38509,7 +41154,12 @@ demucs.separate.main()
             ytdlp_exe = shutil.which("yt-dlp") or "yt-dlp"
 
         # Auto-update yt-dlp
-        if self.yt_autoupdate_var.get():
+        if autoupdate is None and request is not None:
+            autoupdate = bool(getattr(request.payload, "autoupdate", False))
+        if autoupdate is None:
+            auto_var = getattr(self, "yt_autoupdate_var", None)
+            autoupdate = bool(auto_var.get()) if auto_var is not None else False
+        if autoupdate:
             log("Checking for yt-dlp updates...")
             prog("Updating yt-dlp...")
             try:
@@ -38535,13 +41185,8 @@ demucs.separate.main()
             log(f"{cookie_desc}")
         prog("Downloading...")
 
-        # Build ffmpeg path — Requirements\ wins when present, else legacy
-        # next-to-EXE; finally falls back to whatever's on PATH.
-        ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
-        if getattr(sys, 'frozen', False):
-            ff_local = _external_path("ffmpeg.exe")
-            if os.path.isfile(ff_local):
-                ffmpeg = ff_local
+        # bundle ffmpeg-location is the selected pair directory
+        ffmpeg, _ffprobe = _resolve_ffmpeg_paths()
 
         # v4.4.2: honor the user-provided custom basename when present; fall
         # back to the YouTube video title (default v4.4.x behavior) otherwise.
@@ -38552,9 +41197,10 @@ demucs.separate.main()
             log(f"Output filename: {custom_basename}.{fmt}")
         else:
             out_template = os.path.join(out_dir, "%(title)s.%(ext)s")
-        cmd = [
-            ytdlp_exe,
-            "--ffmpeg-location", os.path.dirname(ffmpeg),
+        cmd = [ytdlp_exe]
+        if ffmpeg:
+            cmd.extend(["--ffmpeg-location", os.path.dirname(ffmpeg)])
+        cmd += [
             "-x", "--audio-format", fmt,
             "--audio-quality", "0",
             "-o", out_template,
@@ -38571,80 +41217,137 @@ demucs.separate.main()
 
         # JS runtime for YouTube signature solving — yt-dlp v2025+ only
         # auto-enables Deno, so we have to name Node explicitly when present.
-        _node_custom = getattr(self, "yt_node_path_var", None)
-        js_runtimes = _yt_resolve_js_runtimes(_node_custom.get() if _node_custom else "")
-        if js_runtimes:
-            runtime_arg = ",".join(f"{name}:{path}" for name, path in js_runtimes)
-            cmd.extend(["--js-runtimes", runtime_arg])
-            summary = ", ".join(f"{name} ({path})" for name, path in js_runtimes)
-            log(f"JS runtime(s): {summary}")
-        else:
-            log("⚠  No JS runtime detected. YouTube signature solving may fail.")
-            log("   Install Node.js (https://nodejs.org/) or Deno (https://deno.com/),")
-            log("   then close and relaunch ParaKit so the new install is picked up.")
-
-        if cookie_args:
-            cmd.extend(cookie_args)
-        cmd.append(url)
-
+        if node_path is None and request is not None:
+            node_path = getattr(request.payload, "node_path", None)
+        if node_path is None:
+            _node_custom = getattr(self, "yt_node_path_var", None)
+            node_path = _node_custom.get() if _node_custom else ""
+        import tempfile
+        folder_record = _yt_record_output_names(out_dir, fmt)
+        print_file = None
+        js_runtimes = _yt_resolve_js_runtimes(node_path or "")
         try:
-            seen_lines = []
-            final_audio_path = None  # captured from [ExtractAudio] Destination: line
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True,
-                                    encoding="utf-8", errors="replace",
-                                    bufsize=1)
-            for line in proc.stdout:
-                if self._yt_cancel_event.is_set():
-                    proc.terminate()
-                    log("\nCanceled by user.")
-                    prog("Canceled.")
-                    done()
-                    return
-                line = line.rstrip()
-                if line:
-                    seen_lines.append(line)
-                    log(line)
-                    if "[download]" in line or "[ExtractAudio]" in line:
-                        prog(line[:80])
-                    # Capture final converted audio path for album-art embedding
-                    if line.startswith("[ExtractAudio] Destination:"):
-                        final_audio_path = line.split("Destination:", 1)[1].strip()
-            proc.wait()
-            if proc.returncode == 0:
-                log(f"\n✓  Done! File saved to: {out_dir}")
-                prog("✓  Complete!")
-                if embed_art:
-                    self._yt_embed_thumbnail(url, final_audio_path, fmt, log)
-                # v4.4.61-1 — library completion hook. Fires on EVERY successful
-                # download (independent of embed_art) and ONLY in this success
-                # branch (an earlier auditor mis-anchored this in the failure
-                # branch). Marshalled to the Tk thread; capture out_dir (a worker
-                # local, not in scope on the Tk handler) for the fallback glob,
-                # plus the parsed video id for the row art/metadata.
-                import re as _re
-                _m = _re.search(
-                    r'(?:v=|youtu\.be/|embed/|shorts/)([A-Za-z0-9_-]{11})',
-                    url or "")
-                _vid = _m.group(1) if _m else None
-                self.root.after(0, lambda p=final_audio_path, f=fmt, d=out_dir,
-                                v=_vid: self._yt_on_download_complete(p, f, d, v))
+            if js_runtimes:
+                runtime_arg = ",".join(f"{name}:{path}" for name, path in js_runtimes)
+                cmd.extend(["--js-runtimes", runtime_arg])
+                summary = ", ".join(f"{name} ({path})" for name, path in js_runtimes)
+                log(f"JS runtime(s): {summary}")
+                try:
+                    ptf_fd, created = tempfile.mkstemp(
+                        prefix="parakit_yt_ptf_", suffix=".txt")
+                    print_file = created  # owned inside the cleanup scope
+                    os.close(ptf_fd)
+                    ptf_arg = print_file.replace("%", "%%")  # double every % for yt-dlp
+                    cmd.extend(["--print-to-file", "after_move:filepath", ptf_arg])
+                except Exception:
+                    log("Print-file source is unavailable.")
             else:
-                for extra_line in _yt_extra_error_guidance("\n".join(seen_lines)):
-                    log(extra_line)
-                log(f"\n✗  yt-dlp exited with code {proc.returncode}")
-                prog("✗  Error — see log below")
-        except FileNotFoundError:
-            log("✗  yt-dlp not found. Download yt-dlp.exe and place it next to "
-                "ParaKit.exe or in Requirements\\.")
-            log("   https://github.com/yt-dlp/yt-dlp/releases/latest")
-            prog("✗  yt-dlp not found")
-        except Exception as e:
-            log(f"✗  Error: {e}")
-            prog("✗  Error")
-        done()
+                log("⚠  No JS runtime detected. YouTube signature solving may fail.")
+                log("   Install Node.js (https://nodejs.org/) or Deno (https://deno.com/),")
+                log("   then close and relaunch ParaKit so the new install is picked up.")
 
-    def _yt_embed_thumbnail(self, url, audio_path, fmt, log):
+            if cookie_args:
+                cmd.extend(cookie_args)
+            cmd.append(url)
+
+            try:
+                seen_lines = []
+                final_audio_path = None
+                resolved_from = None
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, text=True,
+                                        encoding="utf-8", errors="replace",
+                                        bufsize=1)
+                for line in proc.stdout:
+                    if self._yt_cancel_event.is_set():
+                        proc.terminate()
+                        proc.wait()  # wait for the cancelled child before print-file finally cleanup
+                        log("\nCanceled by user.")
+                        prog("Canceled.")
+                        return
+                    line = line.rstrip("\r\n")
+                    if _yt_line_is_print_file_notice(line):
+                        continue
+                    if line:
+                        seen_lines.append(line)
+                        log(line)
+                        if "[download]" in line or "[ExtractAudio]" in line:
+                            prog(line[:80])
+                proc.wait()
+                if proc.returncode == 0:
+                    p_status, p_raw = "absent", None
+                    if print_file:
+                        p_status, p_raw = _yt_read_print_file_path(print_file)
+                    c_raw = _yt_parse_console_path(seen_lines, fmt)
+                    empty_print_file_falls_through = True
+                    if p_status == "ok" and p_raw:
+                        ok, _why = _yt_validate_output_candidate(
+                            p_raw, out_dir, fmt, custom_basename)
+                        if ok:
+                            final_audio_path = p_raw
+                            resolved_from = "p"
+                    if final_audio_path is None and c_raw:
+                        ok, _why = _yt_validate_output_candidate(
+                            c_raw, out_dir, fmt, custom_basename)
+                        if ok:
+                            final_audio_path = c_raw
+                            resolved_from = "c"
+                    classification = _yt_classify_run(
+                        seen_lines, folder_record, final_audio_path)
+                    named = bool(final_audio_path)
+                    if named and classification == "present":
+                        log("Found %s; an existing file may have been reused instead of downloading."
+                            % os.path.basename(final_audio_path))
+                    elif named and classification == "uncertain":
+                        log("Found %s; ParaKit could not confirm whether this run created it."
+                            % os.path.basename(final_audio_path))
+                    else:
+                        log(f"\n✓  Done! File saved to: {out_dir}")
+                    prog("✓  Complete!")
+                    automatic = (
+                        classification == "fresh"
+                        and resolved_from in ("p", "c")
+                    )
+                    if automatic and embed_art:
+                        self._yt_embed_thumbnail(url, final_audio_path, fmt, log)
+                    import re as _re
+                    _m = _re.search(
+                        r'(?:v=|youtu\.be/|embed/|shorts/)([A-Za-z0-9_-]{11})',
+                        url or "")
+                    _vid = _m.group(1) if _m else None
+                    self.root.after(
+                        0,
+                        lambda p=final_audio_path, f=fmt, d=out_dir, v=_vid,
+                        cl=classification, ea=embed_art, lg=log, src=resolved_from:
+                        self._yt_on_download_complete(
+                            p, f, d, v, classification=cl, embed_art=ea,
+                            log=lg, resolved_from=src))
+                else:
+                    for extra_line in _yt_extra_error_guidance("\n".join(seen_lines)):
+                        log(extra_line)
+                    log(f"\n✗  yt-dlp exited with code {proc.returncode}")
+                    prog("✗  Error — see log below")
+            except FileNotFoundError:
+                log("✗  yt-dlp was not found. Use the extra-tools window for the Requirements "
+                    "bundle (the one download that includes yt-dlp).")
+                prog("✗  yt-dlp not found")
+                def _fnfe_dialog():
+                    self._offer_bundle_dialog(
+                        missing=self._bundle_detect(), mode="feature",
+                        request=request)
+                self.root.after(0, _fnfe_dialog)  # bundle feature: FNFE marshals the dialog
+            except Exception as e:
+                log(f"✗  Error: {e}")
+                prog("✗  Error")
+        finally:
+            if print_file:
+                try:
+                    os.remove(print_file)  # print-file finally cleanup
+                except Exception:
+                    pass
+            done()  # restore download controls on every exit including cancel
+
+    def _yt_embed_thumbnail(self, url, audio_path, fmt, log, *, video_id=None):
         """Fetch the YouTube thumbnail, center-crop to a square, and embed it
         as cover art into the freshly-downloaded audio file.
 
@@ -38662,12 +41365,13 @@ demucs.separate.main()
             log("ℹ  Album art skipped: WAV does not have a standard cover-art tag.")
             return
 
-        # Extract video ID from the original URL
-        m = re.search(r'(?:v=|youtu\.be/|embed/|shorts/)([A-Za-z0-9_-]{11})', url)
-        if not m:
-            log("⚠  Album art skipped: could not parse video ID from URL.")
-            return
-        video_id = m.group(1)
+        # Extract video ID from the original URL unless the caller supplied one.
+        if not video_id:
+            m = re.search(r'(?:v=|youtu\.be/|embed/|shorts/)([A-Za-z0-9_-]{11})', url or "")
+            if not m:
+                log("⚠  Album art skipped: could not parse video ID from URL.")
+                return
+            video_id = m.group(1)
 
         log("\n🖼  Fetching thumbnail for album art...")
 
@@ -39824,6 +42528,17 @@ demucs.separate.main()
             # Overwrite/Export MIDI just rewrote a file on disk. The MIDI Editor
             # may be holding that same path in memory (breaker H6, 2026-07-29).
             "midi_written": self._spec_on_midi_written,
+            # The Spectral tab warns when the audio it analyzed AS DRUMS is
+            # the file Audio to MIDI was handed. `_a2m_source_file` is
+            # `_orig_input_path`, captured before stem isolation rebinds to a
+            # composite -- frequently a FULL MIX, which inflates MISS. The tab
+            # captures the path-equality Boolean when a real compare STARTS
+            # and carries it on that job's result, so a later conversion
+            # cannot rewrite the warning of an in-flight compare. getattr:
+            # the attribute does not exist until the session's first
+            # conversion.
+            "a2m_source_file":
+                lambda: getattr(self, "_a2m_source_file", "") or "",
         }
         try:
             self._spectral_tab = SpectralTab(parent, hooks=hooks)
@@ -42080,19 +44795,21 @@ demucs.separate.main()
               "it, and review the chart in the MIDI Editor before export.")
         divider(s)
         entry(s,
-              "🧠  Neural Stem Isolation  (experimental)\n\n"
+              "🧠  Neural Stem Isolation\n\n"
               "An optional pre-cleaning step. Before detection runs, ParaKit can "
               "feed your audio into an AI splitter that separates the drums into "
               "kick, snare, hi-hat, toms, and cymbals stems, then mixes those "
               "cleaner stems back into a single track. Detection runs on the "
               "cleaned track instead of the original.\n\n"
               "When to use it:\n"
-              "  • Leave it OFF for normal use — it adds about 30-60 seconds per\n"
-              "    song on CPU and is not always better.\n"
+              "  • For normal use, it is recommended as a starting point — it adds\n"
+              "    about 30-60 seconds per song on CPU and is not always better.\n"
+              "    A saved Off stays Off. With no saved choice, it is on only if\n"
+              "    the model is already on disk.\n"
               "  • Try it on tricky tracks where kick / snare / cymbal hits bleed\n"
               "    into each other and the default detector confuses them.\n"
-              "  • Internal testing on metal tracks showed strong improvements\n"
-              "    showed noticeably better snare, kick, and crash detection on metal tracks.\n"
+              "  • Internal testing on metal tracks showed strong improvements —\n"
+              "    noticeably better snare, kick, and crash detection.\n"
               "    Other genres are still being measured.\n\n"
               "First time you turn it on, ParaKit prompts to download a ~417 MB\n"
               "model file. The model is saved to your user app data folder; "
@@ -42245,6 +44962,7 @@ demucs.separate.main()
               "  Scroll wheel            →  scroll the timeline left/right\n"
               "  Click the beat ruler    →  seek playback position\n"
               "  Drag the beat ruler     →  scrub through the timeline\n"
+              "  Drag the orange knob    →  set where the song ends in game (Chart End)\n"  # chart-end b3 Standard-controls handle
               "  Right-click beat ruler  →  set loop In/Out points\n"
               "  Click the waveform      →  seek to that position\n\n"
               "Multi-select:\n"
@@ -42274,6 +44992,7 @@ demucs.separate.main()
               "  Ctrl + C                →  copy selected notes\n"
               "  Ctrl + V                →  paste at playhead or last click position\n"
               "  Ctrl + Q                →  quantize selected notes (or all) to 16th grid\n"
+              "  Ctrl + S                →  turn Snap to notes on / off\n"
               "  Ctrl + scroll wheel     →  zoom in / out\n\n"
               "  All note-placement keys (1–8, D) place at the playhead if audio is\n"
               "  playing, or at the last position you clicked on the canvas if not.\n"
@@ -42632,10 +45351,31 @@ demucs.separate.main()
         entry(s,
               "Chart Start / Chart End markers:\n\n"
               "  When a MIDI is loaded, a green dashed line marks the first note\n"
-              "  (Chart Start) and an orange dashed line marks the last note\n"
-              "  (Chart End). Both are labeled in the timeline header.\n\n"
-              "  On the waveform strip, audio before Chart Start and after Chart End\n"
-              "  is darkened — this audio is not covered by the chart.\n\n"
+              "  (Chart Start). An orange dashed line marks Chart End. Chart End\n"
+              "  follows the last note by default. Both are labeled in the timeline\n"  # chart-end b3 Help follow default
+              "  header. Chart End has an orange grab handle at the top of the line,\n"
+              "  the same kind of knob as the green playhead. The orange knob sits\n"
+              "  a little below the green playhead so they do not cover the same\n"
+              "  click. If they still overlap, the orange knob takes the click.\n\n"
+              "  Drag the orange handle along the beat ruler to set where the song\n"
+              "  ends in game — audio and chart. Notes stay where they are. The\n"
+              "  handle will not go before the last note. When loaded audio is\n"
+              "  longer than the last note, the handle will not go past the audio.\n"
+              "  If the last note is already past the loaded audio, Chart End stays\n"
+              "  on or after the last note; loading or swapping audio while the end\n"  # chart-end b3 Help conflict sentence
+              "  has been dragged shows a status warning when it lies past the audio.\n"
+              "  With audio loaded, the timeline extends to the audio length even\n"
+              "  while Chart End follows the last note. Auto zoom still fits the\n"
+              "  chart duration, not necessarily that full scroll region.\n\n"
+              "  To snap Chart End back to the last note, right-click the handle\n"
+              "  and choose Follow last note.\n\n"
+              "  On the waveform strip, audio before Chart Start and after Chart\n"
+              "  End is darkened — this audio is not covered by the chart.\n\n"
+              "  A dragged Chart End is saved in the MIDI file. Older ParaKit\n"
+              "  versions ignore that marker and drop it on the next Save.\n\n"
+              "  In follow mode (the default, and after Follow last note), export\n"  # chart-end b3 Help follow-mode sentence
+              "  still adds a five-second pad after the last note. After a drag,\n"
+              "  the exported length is exactly the marker.\n\n"
               "  Why this matters:\n"
               "  Many community charts skip pre-roll or outro drums and start at the\n"
               "  main verse downbeat. If the audio contains drum hits before the Chart\n"
@@ -42869,14 +45609,23 @@ demucs.separate.main()
               "  • Play source (Drums | Full Mix)  →  which audio you HEAR\n"
               "  • Analyze (Drums | Full Mix)  →  which audio the graph ANALYZES\n"
               "    (default Drums; switch to Full Mix for masking context)\n\n"
-              "Shortcut: the Spectral button on the MIDI Editor, Audio → MIDI,\n"
-              "Song Tester and Preview tabs sends that song's drums + chart here.\n\n"
+              "Shortcut: the Spectral button on the MIDI Editor, Audio → MIDI\n"
+              "and Song Tester tabs sends that song's drums + chart here and\n"
+              "runs the comparison for you. If only one of the pair can be\n"
+              "sent, or this tab is busy or has undo or redo history, it fills\n"
+              "in what it has and leaves Compare to you.\n\n"
               "Three views (toolbar toggle): Per-Lane (energy ribbon + notes\n"
               "per drum), Spectrogram (full heatmap with the chart's note rows)\n"
               "and Waveform (mirrored stereo amplitude — useful when a noisy or\n"
               "heavily compressed mix makes the heatmap hard to read).\n"
               "Zoom with the slider, Ctrl+wheel, or Fit. The Render panel on the\n"
-              "Spectrogram view adjusts brightness, top frequency and colormap.")
+              "Spectrogram view adjusts brightness, top frequency and colormap.\n"
+              "The Flash chips light the notes the playhead is crossing. Style\n"
+              "on the toolbar picks how they light: Reactive Notes (default)\n"
+              "flares each note toward its own color with a soft glow; Flash\n"
+              "Notes (Classic Style) is the original solid-white flash; Dark\n"
+              "Flash flares toward black so the hit stays visible on a bright\n"
+              "colormap.")
 
         # ── Preview/Practice Track ───────────────────────────────────────────
         s = section("▶  Preview (Tab 12)", right)
@@ -43182,14 +45931,18 @@ demucs.separate.main()
               "FLAC is the recommended format for the Stem Splitter — lossless quality\n"
               "and significantly better results than MP3 or .ogg as input.\n\n"
               "Requirements:\n"
-              "  yt-dlp.exe must be placed next to ParaKit.exe or in Requirements\\.\n"
-              "  Download it free from: https://github.com/yt-dlp/yt-dlp/releases/latest\n"
-              "  ffmpeg.exe must also be present next to ParaKit.exe or in Requirements\\\n"
-              "  (it ships with ParaKit).\n"
-              "  A JavaScript runtime is also needed — YouTube requires one to work out\n"
-              "  the download. If ParaKit reports 'No JS runtime detected', use the\n"
-              "  'Get Deno' button on this tab and it will install one for you; Node.js\n"
-              "  already on your system works too.\n\n"
+              "  Some features need the Requirements bundle (~174 MB): FFmpeg,\n"
+              "  yt-dlp + a JS runtime (Deno or Node), and ADB. Download\n"
+              "  Requirements.Files.ONLY.bundle.zip from the GitHub link, extract,\n"
+              "  and put the files in a Requirements folder next to ParaKit\n"
+              "  (recommended: Requirements\\platform-tools\\ for adb.exe + its two\n"
+              "  DLLs). Core charting (Audio → MIDI, MIDI Editor, Song Creator,\n"
+              "  Song Tester) does not need this bundle.\n"
+              "  The GitHub link is on the Show me how button of the extra-tools\n"
+              "  dialog that opens when a tool is missing.\n"
+              "  If ParaKit reports 'No JS runtime detected', the 'Get Deno' button\n"
+              "  on this tab installs one for you; Node.js already on your system\n"
+              "  works too.\n\n"
               "How to use:\n"
               "  1.  Paste a YouTube URL into the URL field\n"
               "  2.  Choose an output folder\n"
@@ -43287,13 +46040,20 @@ demucs.separate.main()
               "The Push to Quest button in the Song Creator sends your\n"
               "converted .rlrr folder directly to a connected Meta Quest\n"
               "over USB — no SideQuest or file manager needed.\n\n"
-              "Files included in the ParaKit zip:\n"
-              "  adb.exe, AdbWinApi.dll, AdbWinUsbApi.dll\n"
-              "  All three must be together in one of these locations:\n"
+              "  Some features need the Requirements bundle (~174 MB): FFmpeg,\n"
+              "  yt-dlp + a JS runtime (Deno or Node), and ADB. Download\n"
+              "  Requirements.Files.ONLY.bundle.zip from the GitHub link, extract,\n"
+              "  and put the files in a Requirements folder next to ParaKit\n"
+              "  (recommended: Requirements\\platform-tools\\ for adb.exe + its two\n"
+              "  DLLs). Core charting (Audio → MIDI, MIDI Editor, Song Creator,\n"
+              "  Song Tester) does not need this bundle.\n"
+              "  The GitHub link is on the Show me how button of the extra-tools\n"
+              "  dialog that opens when a tool is missing.\n\n"
+              "  adb.exe, AdbWinApi.dll and AdbWinUsbApi.dll must be together\n"
+              "  in one of these locations:\n"
               "    - inside Requirements\\platform-tools\\ (recommended), or\n"
               "    - directly inside Requirements\\ (flat), or\n"
-              "    - directly next to ParaKit.exe (legacy layout).\n"
-              "  Manual download: https://developer.android.com/tools/releases/platform-tools\n\n"
+              "    - directly next to ParaKit.exe (legacy layout).\n\n"
               "Quest setup (one-time):\n"
               "  1.  Enable Developer Mode on your Quest:\n"
               "      Meta app → Menu → Devices → [headset] → Developer Mode → On\n"
@@ -47553,7 +50313,7 @@ demucs.separate.main()
         try:
             import mutagen as _mutagen
             af = _mutagen.File(audio_path)
-            if af and af.info and getattr(af.info, "length", None):
+            if af is not None and getattr(af, "info", None) is not None and getattr(af.info, "length", None):  # viz audio length: a tagless file is falsy
                 return float(af.info.length)
         except Exception:
             pass
@@ -49640,19 +52400,17 @@ demucs.separate.main()
             messagebox.showerror("No Output Folder", "Please select an output folder.")
             return
 
-        # Disable button and run in background thread
-        self.ogg_convert_btn.configure(state="disabled", text="Converting...")
-        self.ogg_progress.start(12)
-        self.ogg_log_text.configure(state="normal")
-        self.ogg_log_text.delete("1.0", tk.END)
-        self.ogg_log_text.configure(state="disabled")
+        req = self._bundle_capture_request(
+            "ogg", files=files, output_base=output_base)
+        # bundle feature preflight before disable (ogg)
+        ogg_status = self._bundle_detect()
+        if ogg_status.groups.get("ffmpeg") != "ok":
+            self._offer_bundle_dialog(
+                missing=ogg_status, mode="feature",
+                request=req)
+            return
 
-        thread = threading.Thread(
-            target=self._ogg_do_convert,
-            args=(files, output_base),
-            daemon=True
-        )
-        thread.start()
+        self._bundle_dispatch_captured_request(req)
 
     def _mp3_warning_popup(self):
         """
@@ -49716,17 +52474,15 @@ demucs.separate.main()
         popup.wait_window()
         return result[0]
 
-    def _ogg_do_convert(self, files, output_base):
+    def _ogg_do_convert(self, files, output_base, *, request=None):
         try:
             from pydub import AudioSegment
         except ImportError:
             self.root.after(0, lambda: messagebox.showerror(
                 "Missing Dependency",
                 "A required audio component is unavailable.\n\n"
-                "Please reinstall ParaKit to restore .ogg conversion.\n\n"
-                "Also ensure FFmpeg is installed on your system:\n"
-                "https://www.gyan.dev/ffmpeg/builds/"
-            ))
+                "Please reinstall ParaKit to restore .ogg conversion."
+            ))  # bundle B: pydub ImportError does not offer the bundle
             self.root.after(0, lambda: self.ogg_convert_btn.configure(
                 state="normal", text="Convert to .ogg"))
             self.root.after(0, self.ogg_progress.stop)
@@ -49741,24 +52497,20 @@ demucs.separate.main()
         # the thing they need to install. Detect it up front and show the guidance that
         # was always sitting here.
         #
-        # Honour AudioSegment.converter, not just PATH: frozen builds point pydub at a
-        # bundled ffmpeg.exe next to the .exe (see _configure_bundled_ffmpeg), and
-        # checking PATH alone would wrongly refuse to convert on exactly those installs.
-        _conv = getattr(AudioSegment, "converter", None) or "ffmpeg"
-        _have_ffmpeg = bool(
-            (os.path.isfile(_conv) if os.path.isabs(str(_conv)) else shutil.which(str(_conv)))
-            or shutil.which("ffmpeg"))
+        # Same pair the detector and yt-dlp use. Do not honour a leftover
+        # AudioSegment.converter from a previous process, and do not take PATH
+        # ffmpeg without ffprobe in that directory.
+        ffmpeg, ffprobe = _resolve_ffmpeg_paths()
+        if ffmpeg:
+            AudioSegment.converter = ffmpeg
+            AudioSegment.ffmpeg = ffmpeg
+            AudioSegment.ffprobe = ffprobe
+        _have_ffmpeg = bool(ffmpeg)
         if not _have_ffmpeg:
             self._ogg_log("✗  FFmpeg was not found — no files were converted.")
-            self.root.after(0, lambda: messagebox.showerror(
-                "FFmpeg Not Found",
-                "Converting to .ogg needs FFmpeg, and it could not be found on "
-                "this system.\n\n"
-                "Install it, then restart ParaKit:\n"
-                "https://www.gyan.dev/ffmpeg/builds/\n\n"
-                "(Download a release build, unzip it, and add its bin folder to "
-                "your PATH.)"
-            ))
+            self.root.after(0, lambda request=request: self._offer_bundle_dialog(
+                missing=self._bundle_detect(), mode="feature",
+                request=request))  # bundle feature: FFmpeg-missing retarget to the bundle dialog
             self.root.after(0, lambda: self.ogg_convert_btn.configure(
                 state="normal", text="Convert to .ogg"))
             self.root.after(0, self.ogg_progress.stop)
@@ -51304,6 +54056,7 @@ demucs.separate.main()
             event_count = 0
             ch_count = 0
             rlrr = None   # audit E2: CH derives from the final rlrr events
+            _ce_end = None  # chart-end resolved marker; None means follow / last-tick+5
 
             if fmt in ("paradiddle", "both"):
                 rlrr = build_rlrr(
@@ -51333,6 +54086,13 @@ demucs.separate.main()
                 # site: build_rlrr is protected and unchanged.
                 if not rlrr["events"]:
                     self._batch_log("  ERROR: No events generated. Check MIDI file and BPM.\n")
+                    return False
+
+                last_midi = drum_notes[-1][3] if drum_notes else None
+                rlrr, err, _ce_end = finalize_exported_rlrr(
+                    rlrr, mid, tpb, last_midi)  # chart-end batch paradiddle after shift
+                if err:
+                    self._batch_log("  " + err + "\n")
                     return False
 
                 os.makedirs(out_dir, exist_ok=True)
@@ -51380,6 +54140,16 @@ demucs.separate.main()
                             rlrr["events"], bpm, diff)
                     # Only this branch built the rlrr; the other one already shifted.
                     self._apply_chart_timing_shift(rlrr)
+                    last_midi = drum_notes[-1][3] if drum_notes else None
+                    rlrr, err, _ce_end = finalize_exported_rlrr(
+                        rlrr, mid, tpb, last_midi)  # chart-end batch chart-only after shift
+                    if err:
+                        self._batch_log("  " + err + "\n")
+                        try:
+                            os.rmdir(ch_dir)  # chart-end batch refusal leaves no folder
+                        except OSError:
+                            pass
+                        return False
                 _g = bool(getattr(self, "ghost_notes_var", None)
                           and self.ghost_notes_var.get())
                 _a = bool(getattr(self, "accent_notes_var", None)
@@ -51424,11 +54194,8 @@ demucs.separate.main()
                     with open(os.path.join(ch_dir, "notes.chart"), "w", encoding="utf-8", newline="\n") as f:
                         f.write(chart_str)
 
-                    song_len_ms = 0
-                    if ch_events:
-                        last_tick = ch_events[-1][0]
-                        last_sec = last_tick / (bpm / 60.0 * 192) + 5.0
-                        song_len_ms = int(last_sec * 1000)
+                    song_len_ms = _midi_to_ch_song_len_ms(
+                        ch_events, bpm, _ce_end)  # chart-end batch MIDI→CH
                     _diff_ratings = {"Easy": 1, "Medium": 2, "Hard": 3, "Expert": 4}
                     ini_str = write_song_ini(
                         title=title, artist=artist,
@@ -52695,6 +55462,7 @@ demucs.separate.main()
         output_base = self.output_var.get() or os.getcwd()
         output_dir = None
         rlrr = None
+        _ce_end = None  # chart-end resolved marker; None means follow / last-tick+5
         rlrr_filename = ""
         total_events = 0
         ch_events = []
@@ -52738,6 +55506,13 @@ demucs.separate.main()
             total_events = len(rlrr["events"])
             if total_events == 0:
                 self.log("\nERROR: No events generated. Check MIDI file and BPM.")
+                return
+
+            last_midi = drum_notes[-1][3] if drum_notes else None
+            rlrr, err, _ce_end = finalize_exported_rlrr(
+                rlrr, mid, ticks_per_beat, last_midi)  # chart-end single paradiddle after shift
+            if err:
+                self.log("\n" + err)
                 return
 
             counts = {}
@@ -52817,6 +55592,16 @@ demucs.separate.main()
                         rlrr["events"], bpm, difficulty)
                 # Only this branch built the rlrr; the other one already shifted.
                 self._apply_chart_timing_shift(rlrr)
+                last_midi = drum_notes[-1][3] if drum_notes else None
+                rlrr, err, _ce_end = finalize_exported_rlrr(
+                    rlrr, mid, ticks_per_beat, last_midi)  # chart-end single chart-only after shift
+                if err:
+                    self.log("\n" + err)
+                    try:
+                        os.rmdir(ch_dir)  # chart-end single refusal leaves no folder
+                    except OSError:
+                        pass
+                    return
             _g = bool(self.ghost_notes_var.get())
             _a = bool(self.accent_notes_var.get())
             ch_events = rlrr_events_to_ch_events(
@@ -52843,11 +55628,8 @@ demucs.separate.main()
             with open(os.path.join(ch_dir, "notes.chart"), "w", encoding="utf-8", newline="\n") as f:
                 f.write(chart_str)
 
-            song_len_ms = 0
-            if ch_events:
-                last_tick = ch_events[-1][0]
-                last_sec = last_tick / (bpm / 60.0 * 192) + 5.0
-                song_len_ms = int(last_sec * 1000)
+            song_len_ms = _midi_to_ch_song_len_ms(
+                ch_events, bpm, _ce_end)  # chart-end single MIDI→CH
             ini_str = write_song_ini(
                 title=title, artist=artist,
                 album=self.sc_album_var.get().strip(),
@@ -53043,10 +55825,7 @@ def main():
         import pydub
     except ImportError:
         missing.append("pydub")
-    try:
-        import demucs
-    except ImportError:
-        missing.append("demucs")
+    # demucs is optional. Stem Splitter disables Split Stems when it is absent.
 
     if DND_AVAILABLE:
         root = TkinterDnD.Tk()

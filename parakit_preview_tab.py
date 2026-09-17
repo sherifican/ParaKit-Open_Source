@@ -2031,7 +2031,7 @@ _HINT_RECLASS = ("RECLASSIFY — click a note = lane picker · drag sideways = "
                  "change lane · times are locked · drag empty space = select · "
                  "right-click = delete · Ctrl+wheel = zoom")
 _HELP_TEXT = (
-    "Space          Play / Pause\n"
+    "Space / P      Play / Pause\n"
     "Home           Stop & rewind\n"
     "E / Esc        enter / exit Edit\n"
     "R              Reclassify mode (change a note's lane, not its time)\n"
@@ -2211,7 +2211,7 @@ class PreviewTab(ttk.Frame):
         self.play_btn = OutlineButton(bar, "▶ Play", accent=MAGENTA,
                                        command=self._on_play_toggle,
                                        tooltip="Play / pause the chart "
-                                               "(Space). Playing exits edit "
+                                               "(Space or P). Playing exits edit "
                                                "mode.")
         self.play_btn.pack(**pad)
         self.stop_btn = OutlineButton(bar, "■ Stop", accent=RED,
@@ -3267,12 +3267,29 @@ class PreviewTab(ttk.Frame):
             # there is no shared host store to restore, so the clock plays as it
             # always did. Only a PRESENT loader that raises or returns False refuses.
             return True
-        specs = [{"path": p, "bus": b} for b, p in self._stem_paths.items() if p]
+        # A selected path that is gone by Play is not the same as nothing
+        # selected. The host loader drops vanished files and still returns
+        # True, and mixer_play returns True on an empty store so the tab
+        # clock can run. Both of those zeros look like an intentional silent
+        # session. Read the selection here, before that store is reached.
+        selected = [
+            (b, p) for b, p in self._stem_paths.items() if p
+        ]  # preview-missing: empty slots are not a selected path
+        missing = [
+            p for _b, p in selected if not os.path.isfile(p)
+        ]  # preview-missing: selected path must still resolve at Play
+        specs = [{"path": p, "bus": b} for b, p in selected]
         ok, res = self._hook_call("mixer_load_stems", specs)
         if not ok or res is False:
             self._status("Could not restore Preview audio. "
                          "Playback was not started.", AMBER)
             return False
+        if missing:  # preview-missing: warn and play; playback still starts
+            self._status(
+                "Preview audio is missing — the selected file is no "
+                "longer on disk; playback continues.",
+                AMBER,
+            )
         return True
 
     def _load_stem(self, bus, path):
@@ -3758,6 +3775,10 @@ class PreviewTab(ttk.Frame):
         top = self.winfo_toplevel()
         self._key_binds = []
         seqs = [("<space>", self._key_space), ("<Home>", self._key_home),
+                # P = play/pause, the same key the MIDI Editor and the Spectral
+                # tab use. The add="+" in the loop below is load-bearing: v4
+                # binds <p>/<P> on this same toplevel with a PLAIN bind.
+                ("<p>", self._key_space), ("<P>", self._key_space),
                 ("<Control-z>", self._key_undo), ("<Control-y>", self._key_redo),
                 ("<Control-Z>", self._key_redo),
                 ("<e>", self._key_edit), ("<E>", self._key_edit),

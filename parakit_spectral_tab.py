@@ -56,6 +56,11 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+try:
+    import parakit_preview_sprites as _spr
+except Exception:
+    _spr = None
+
 # ---------------------------------------------------------------------------
 # Palette -- ParaKit v4 dark-purple identity. Kept as module constants so the
 # v4 theming pass can swap them in one place.
@@ -87,6 +92,15 @@ MISS_GREEN = "#39ff14"
 PHANTOM_ORANGE = "#ff9100"   # PHANTOM flag: ring, glyph, dotted connector
 NOTE_OUTLINE = "#ffffff"     # charted-note diamond outline + flash fill
 PLAYHEAD_COL = "#00ff88"     # transport playhead -- v4's playhead green
+SPEC_REACTIVE_STYLES = (
+    ("glow", "Reactive Notes"),
+    ("classic", "Flash Notes (Classic Style)"),
+    ("dark", "Dark Flash"),
+)
+SPEC_REACTIVE_DEFAULT = "glow"
+SPEC_REACTIVE_KEYS = frozenset(k for k, _ in SPEC_REACTIVE_STYLES)
+SPEC_GLOW_RINGS = ((4, 0.08), (3, 0.15), (2, 0.26), (1, 0.42))
+SPEC_REACTIVE_WINDOW_S = 0.05
 TIME_YELLOW = "#ffd54a"      # live transport readout
 CHIP_OFF_EDGE = "#3a3a55"
 SEPARATOR = "#2b2b45"
@@ -243,6 +257,23 @@ GRID_DIVS = (("1/4", 1), ("1/8", 2), ("1/16", 4), ("1/32", 8))
 _LANE_DEL_TOL_MAX_S = 0.5
 
 
+def _honor_reactive_style(saved):
+    """A saved style is honored only if it is still a real key; garbled
+    values fall back to the current default rather than a style the
+    painter does not implement."""
+    s = str(saved or SPEC_REACTIVE_DEFAULT)
+    return s if s in SPEC_REACTIVE_KEYS else SPEC_REACTIVE_DEFAULT  # spec-reactive: garbled key falls back to glow
+
+
+def _note_body_box(x, yc, r, shape):
+    """Inner body box used by _paint_note (bar) / the diamond bbox."""
+    if shape == "bar":
+        bw = max(1.5, r * 0.5)
+        bh = r * 1.4
+        return (x - bw, yc - bh, x + bw, yc + bh)
+    return (x - r, yc - r, x + r, yc + r)
+
+
 def _paint_note(c, x, yc, r, fill, shape, tag="overlay"):
     """Draw one chart-note marker (v4.9.0 note-shape toggle): a lane-coloured
     DIAMOND (default) or a classic thin vertical BAR like the MIDI editor, each
@@ -260,6 +291,57 @@ def _paint_note(c, x, yc, r, fill, shape, tag="overlay"):
                 x, yc + r + 1.5, x - r - 1.5, yc)
         c.create_polygon(halo, fill="", outline="#000000", width=2, tags=tag)
         c.create_polygon(pts, fill=fill, outline=NOTE_OUTLINE, width=1, tags=tag)
+
+
+def _paint_reactive(c, x, yc, r, lane_color, shape, style, strength, row_bg,
+                    tag="playhead", hold=None):
+    """Shared playhead-reactive painter for both Spectral views.
+
+    classic: byte-for-byte the pre-package _paint_note(NOTE_OUTLINE) call.
+    glow:    lane color mixed toward white; halo rings toward row_bg.
+    dark:    same geometry, mixed toward black (bright colormaps).
+    """
+    style = _honor_reactive_style(style)
+    if style == "classic":  # spec-reactive: classic paints via _paint_note
+        _paint_note(c, x, yc, r, NOTE_OUTLINE, shape, tag=tag)
+        return
+    if strength <= 0.0:
+        return
+    toward = "#000000" if style == "dark" else "#ffffff"
+    core = blend(lane_color, toward, 0.30 + 0.40 * strength)  # spec-reactive: glow mix toward white / dark mix toward black
+    x1, y1, x2, y2 = _note_body_box(x, yc, r, shape)
+    halo_target = "#000000" if style == "dark" else lane_color
+    for grow, mix in SPEC_GLOW_RINGS:
+        c.create_rectangle(
+            x1 - grow, y1 - grow, x2 + grow, y2 + grow,
+            fill=blend(row_bg, halo_target, mix * strength),
+            outline="", tags=(tag, "spec_glow"))
+    used_sprite = False
+    spr = _spr  # spec-reactive: sidecar sprite path
+    if spr is not None and shape in ("bar", "diamond"):
+        try:
+            bw = max(1, int(round(x2 - x1)))
+            bh = max(1, int(round(y2 - y1)))
+            img = spr.note_sprite(
+                core, shape, bw, bh,
+                state=("dark" if style == "dark" else "normal"),  # spec-reactive: dark HQ sprite
+                style="hq",
+                master=c)
+            c.create_image(x, yc, image=img, anchor=tk.CENTER,
+                           tags=(tag, "spec_core"))
+            if hold is not None:
+                hold.append(img)
+            used_sprite = True
+        except Exception:
+            used_sprite = False
+    if not used_sprite:
+        if shape == "bar":
+            c.create_rectangle(x1, y1, x2, y2, fill=core, outline="",
+                               tags=(tag, "spec_core"))
+        else:
+            pts = (x, yc - r, x + r, yc, x, yc + r, x - r, yc)
+            c.create_polygon(pts, fill=core, outline="",
+                             tags=(tag, "spec_core"))
 
 
 def _paint_time_grid(view, x0, x1, top, bottom):
@@ -1372,7 +1454,8 @@ class LaneViewCanvas(tk.Frame):
                         per_lane_raw=True, note_size=1.0, ghost=False,
                         ghost_opacity=0.30, flash=True, grid=False,
                         grid_div=4, note_shape="diamond",
-                        edit=False, snap=True, lane_visible=None)
+                        edit=False, snap=False, lane_visible=None,
+                        reactive_style=SPEC_REACTIVE_DEFAULT)
         self.canvas = tk.Canvas(self, background=CANVAS_BG, height=200,
                                 highlightthickness=0, cursor="arrow")
         self.hbar = ttk.Scrollbar(self, orient=tk.HORIZONTAL,
@@ -1850,13 +1933,17 @@ class LaneViewCanvas(tk.Frame):
         self._draw_playhead()
 
     def _draw_playhead(self):
-        """Thin per-tick layer (v4.9.2): the transport playhead line + the white
-        flash markers for the FEW notes the playhead is currently crossing.
+        """Thin per-tick layer (v4.9.2): the transport playhead line + the
+        reactive markers for the FEW notes the playhead is currently crossing.
         Tagged 'playhead' (separate from 'overlay') so set_playhead repaints only
         this — a line plus ~0-5 flash dots — instead of every visible note/flag.
-        The r / yc math mirrors redraw_overlay so the flash sits on its note."""
+        The r / yc math mirrors redraw_overlay so the flash sits on its note.
+        Painting is the shared _paint_reactive so this view cannot drift from
+        GramView (the 2026-07-23 bug was exactly that drift)."""
         c = self.canvas
         c.delete("playhead")
+        hold = []
+        self._react_imgs = hold
         if self._playhead is None or self._model is None:
             return
         pos = self._playhead
@@ -1868,18 +1955,34 @@ class LaneViewCanvas(tk.Frame):
             advanced = last < pos <= last + 0.12
             # Only notes inside the flash window can light up -> a bisect slice
             # of a handful, not the whole visible set.
+            window = SPEC_REACTIVE_WINDOW_S
             f_lo = min(pos - 0.05, last) - 0.001
+            style = _honor_reactive_style(self.opt.get("reactive_style",
+                                                      SPEC_REACTIVE_DEFAULT))
+            ghost = self.opt.get("ghost")
+            fade = (1.0 - self.opt.get("ghost_opacity", 0.30)) if ghost else 0.0
             for t, lane, _vel in _iter_window(self._snotes, self._sntimes,
                                               f_lo, pos + 0.001):
-                if _vis is not None and lane not in _vis:
+                if _vis is not None and lane not in _vis:  # spec-reactive: hidden lanes never light
                     continue
                 dt = pos - t
-                if (0.0 <= dt <= 0.05) or (advanced and last < t <= pos):
+                just_crossed = advanced and last < t <= pos
+                if (0.0 <= dt <= 0.05) or just_crossed:
+                    strength = 1.0 if just_crossed else max(
+                        0.0, min(1.0, 1.0 - (dt / window if window else 0.0)))  # spec-reactive: decay Lane
                     x = self._x_of(t)
                     yc = RULER_H + lane * self.row_h + self.row_h / 2.0
-                    _paint_note(c, x, yc, r, NOTE_OUTLINE,
-                                self.opt.get("note_shape", "diamond"),
-                                tag="playhead")
+                    lane_color = LANES[lane][2]
+                    strip = blend(lane_color, CANVAS_BG, fade) if ghost else lane_color
+                    row_bg = blend(CANVAS_BG, strip, 0.10)
+                    _paint_reactive(
+                        c, x, yc, r, lane_color,
+                        self.opt.get("note_shape", "diamond"),
+                        style, strength, row_bg, tag="playhead", hold=hold)
+            try:
+                c.tag_lower("spec_glow", "spec_core")
+            except Exception:
+                pass
         px = self._x_of(pos)
         h = RULER_H + self.row_h * len(LANES)
         c.create_line(px, 0, px, h, fill=PLAYHEAD_COL, width=1, tags="playhead")
@@ -1927,7 +2030,8 @@ class GramView(tk.Frame):
         self._last_h = 0
         self.opt = dict(notes=True, flags=True, bands=True, chart_colors=True,
                         hz_readout=False, grid=False, grid_div=4, flash=True,
-                        note_shape="diamond", lane_visible=None)
+                        note_shape="diamond", lane_visible=None,
+                        reactive_style=SPEC_REACTIVE_DEFAULT)
         # style: "gram" = the log-freq heatmap; "wave" = the mirrored amplitude
         # waveform. Both live on THIS view rather than in a separate widget so
         # the ruler, playhead, note strip, scroll-sync and zoom are shared code
@@ -2139,11 +2243,13 @@ class GramView(tk.Frame):
         from 'overlay', so a sweep tick repaints only this line plus the handful
         of note-strip markers it is flashing over, rather than every visible
         note/flag. Photo guard mirrors redraw_overlay (no sweep over an empty
-        heatmap). The flash mirrors LaneView._draw_playhead so the note-strip
+        heatmap). Painting is the shared _paint_reactive so the note-strip
         lights up in step with the lane view (owner-reported 2026-07-23: the
         reactive flash was missing from the spectrogram view)."""
         c = self.canvas
         c.delete("playhead")
+        hold = []
+        self._react_imgs = hold
         if self._playhead is None or self._model is None or self._photo is None:
             return
         pos = self._playhead
@@ -2154,21 +2260,35 @@ class GramView(tk.Frame):
             advanced = last < pos <= last + 0.12
             # Only notes inside the flash window can light up -> a windowed slice
             # of a handful, not the whole visible set (matches the lane view).
+            window = SPEC_REACTIVE_WINDOW_S
             f_lo = min(pos - 0.05, last) - 0.001
+            style = _honor_reactive_style(self.opt.get("reactive_style",
+                                                      SPEC_REACTIVE_DEFAULT))
             for t, lane, _vel in _iter_window(self._snotes, self._sntimes,
                                               f_lo, pos + 0.001):
-                if _vis is not None and lane not in _vis:
+                if _vis is not None and lane not in _vis:  # spec-reactive: hidden lanes never light
                     continue
                 if lane not in ROLL_ROWS:
                     continue
                 dt = pos - t
-                if (0.0 <= dt <= 0.05) or (advanced and last < t <= pos):
+                just_crossed = advanced and last < t <= pos
+                if (0.0 <= dt <= 0.05) or just_crossed:
+                    strength = 1.0 if just_crossed else max(
+                        0.0, min(1.0, 1.0 - (dt / window if window else 0.0)))  # spec-reactive: decay Gram
                     x = self._x_of(t)
                     yc = (strip_y0 + ROLL_ROWS.index(lane) * STRIP_ROW_H
                           + STRIP_ROW_H / 2.0)
-                    _paint_note(c, x, yc, 5.0, NOTE_OUTLINE,
-                                self.opt.get("note_shape", "diamond"),
-                                tag="playhead")
+                    lane_color = (LANES[lane][2] if self.opt.get("chart_colors", True)
+                                  else BAND_COLORS[LANE_TO_BAND[lane]])
+                    row_bg = blend(CANVAS_BG, LANES[lane][2], 0.08)
+                    _paint_reactive(
+                        c, x, yc, 5.0, lane_color,
+                        self.opt.get("note_shape", "diamond"),
+                        style, strength, row_bg, tag="playhead", hold=hold)
+            try:
+                c.tag_lower("spec_glow", "spec_core")
+            except Exception:
+                pass
         px = self._x_of(pos)
         c.create_line(px, 0, px, self._total_h(), fill=PLAYHEAD_COL,
                       width=1, tags="playhead")
@@ -2777,6 +2897,14 @@ class SpectralTab(ttk.Frame):
         self._undo_stack = []
         self._redo_stack = []
         self._overwrite_target = ""
+        # Did the audio THIS model was compared against come from the Audio
+        # to MIDI input file, and so possibly from a full mix? Written by the
+        # two compare finishers and by nothing else -- it describes a
+        # completed compare, not the current field contents, which is what
+        # lets it stand over the counts it qualifies while they are edited.
+        # Read by _sync_mix_notice and by the compare footer line. See
+        # _drums_came_from_a2m.
+        self._mix_as_drums = False
         self._lane_visible = set(range(len(LANES)))   # all instruments shown
 
         if self.hooks:
@@ -2794,6 +2922,7 @@ class SpectralTab(ttk.Frame):
         self._bind_keys()
         self._apply_lane_options()
         self._apply_gram_options()
+        self._sync_reactive_style_state()
         # NO audio is loaded by default (2026-07-20 owner request): the tab
         # opens with empty Reference/Chart fields. We intentionally do NOT
         # restore the last-used paths here. (`spec_last_*` is still written on
@@ -2893,6 +3022,29 @@ class SpectralTab(ttk.Frame):
                                "charted note near it.")
         Tooltip(self.phantom_lbl, "Orange \u00d7 on a lane: a charted note "
                                   "with no audio energy under it.")
+        # The PERSISTENT half of the full-mix warning; the compare footer
+        # carries the other half and scrolls away (any lane edit rewrites it).
+        # Built UNPACKED -- the same create-then-pack-on-demand idiom as
+        # adv_panel / wave_panel, because this header is PACK throughout and
+        # _sync_analyze_toggle's grid()/grid_remove() cannot be used in a
+        # packed container. _sync_mix_notice packs it at the END of the
+        # chain, AFTER phantom_lbl, and that position is load-bearing:
+        # `right` is packed side=RIGHT with no fill, so when the bar runs
+        # short pack UNMAPS trailing children -- the counts vanish, they do
+        # not truncate. Packed LAST, the notice is what yields first and the
+        # three counts keep the exact disappearance widths they have today
+        # (measured: notes 740 / MISS 810 / PHANTOM 850 px, unchanged).
+        # Packed FIRST instead (before=notes_lbl) it holds the counts at a
+        # fixed x but pushes those widths to 980/1040/1090, so at the app's
+        # 900 px default floor all three numbers disappear and the notice is
+        # left claiming "MISS may be inflated" with no MISS beside it.
+        self.mix_notice_lbl = tk.Label(
+            right, text="\u26a0 possible full mix \u2014 MISS may be inflated",
+            background=PANEL, foreground=AMBER, font=F_SMALL)
+        Tooltip(self.mix_notice_lbl,
+                "If this is a full mix, other instruments can create extra "
+                "MISS flags or hide PHANTOM flags. Load an isolated drums "
+                "stem and press Compare again; review the flags by ear.")
 
     # ----- sources -------------------------------------------------------------
     def _build_sources(self):
@@ -2998,7 +3150,7 @@ class SpectralTab(ttk.Frame):
 
         self.play_btn = OutlineButton(
             inner, "\u25ba Play", accent=MAGENTA, command=self._on_play,
-            tooltip="Play / pause the audio (Space) -- the drums stem by "
+            tooltip="Play / pause the audio (P or Space) -- the drums stem by "
                     "default -- the playhead sweeps both views.")
         self.play_btn.pack(side=tk.LEFT)
         self.stop_btn = OutlineButton(
@@ -3074,6 +3226,24 @@ class SpectralTab(ttk.Frame):
             tooltip="Note shape (both views): OFF = diamonds, ON = classic thin "
                     "bars like the MIDI editor.")
         self.shape_chip.pack(side=tk.LEFT, padx=(6, 0))
+        self._react_style_labels = [lbl for _k, lbl in SPEC_REACTIVE_STYLES]
+        _saved_style = _honor_reactive_style(
+            self._cfg_get("spec_reactive_style", SPEC_REACTIVE_DEFAULT))
+        self._reactive_style_key = _saved_style
+        self._react_style_label_var = tk.StringVar(
+            value=dict(SPEC_REACTIVE_STYLES)[_saved_style])
+        self._react_cmb = ttk.Combobox(
+            inner, state="readonly", width=26, style="Spec.TCombobox",
+            values=self._react_style_labels,
+            textvariable=self._react_style_label_var)
+        self._react_cmb.pack(side=tk.LEFT, padx=(6, 0))
+        self._react_cmb.bind("<<ComboboxSelected>>", self._on_reactive_style)
+        Tooltip(
+            self._react_cmb,
+            "Reactive Notes (default) flares each note toward its own color "
+            "with a glow; Flash Notes (Classic Style) is the original "
+            "solid-white flash; Dark Flash flares toward black so the hit "
+            "stays visible on a bright colormap.")
         self.inst_chip = Chip(
             inner, "Instruments ▼", accent=PURPLE_LT, off_edge=PURPLE_EDGE,
             command=self._on_inst_chip,
@@ -3170,10 +3340,16 @@ class SpectralTab(ttk.Frame):
                     "remove it (Ctrl+Z undo / Ctrl+Y redo). Turns Notes on "
                     "if needed.")
         self.edit_chip.pack(side=tk.LEFT)
+        # Default OFF (owner direction 2026-09-12). It must match the `snap`
+        # default in self.opt: _chips_changed only runs on a chip press, so
+        # until the user touches one, the chip and self.opt["snap"] are two
+        # independent initial values -- and the two consumers read different
+        # ones (the drag path reads the chip, LaneView reads self.opt). Change
+        # one alone and the control reads OFF while placement still snaps.
         self.snap_chip = Chip(
-            row, "Snap 1/16", accent=GREEN, on=True, command=changed,
+            row, "Snap 1/16", accent=GREEN, on=False, command=changed,
             tooltip="Snap added notes to the nearest 1/16 of the beat grid. "
-                    "Turn off for free placement.")
+                    "Off by default; turn on to place notes on the grid.")
         self.snap_chip.pack(side=tk.LEFT, padx=(6, 0))
         self.undo_btn = OutlineButton(
             row, "Undo", accent=GREEN, command=self._on_undo,
@@ -3204,8 +3380,9 @@ class SpectralTab(ttk.Frame):
                                        "cannot click notes you cannot see. "
                                        "Turn Edit off to hide them.")
         self.flash_chip = Chip(row, "Flash", on=True, command=changed,
-                               tooltip="Notes flash white as the playhead "
-                                       "passes (timing check).")
+                               tooltip="Notes light up as the playhead "
+                                       "passes (timing check). Style is set "
+                                       "on the toolbar.")
         self.flags_chip = Chip(row, "Flag issues", on=True, command=changed,
                                tooltip="The disagreements: green + MISS / "
                                        "orange \u00d7 PHANTOM.")
@@ -3253,8 +3430,9 @@ class SpectralTab(ttk.Frame):
                                  tooltip="The chart's notes overlaid on the "
                                          "note-row strip.")
         self.g_flash_chip = Chip(row, "Flash", on=True, command=changed,
-                                 tooltip="Notes flash white as the playhead "
-                                         "crosses them.")
+                                 tooltip="Notes light up as the playhead "
+                                         "crosses them. Style is set on the "
+                                         "toolbar.")
         self.g_colors_chip = Chip(row, "Chart colors", on=True, command=changed,
                                   tooltip="Color note markers by LANE (on) "
                                           "or by drum BAND (off).")
@@ -3489,6 +3667,14 @@ class SpectralTab(ttk.Frame):
             pass   # destroyed/mid-teardown tab (breaker R5B2-2, 2026-07-20)
 
     def _update_readout(self):
+        # Re-assert the mix notice from HERE, beside the counts it qualifies,
+        # so the two can never drift apart: every path that changes the counts
+        # (both compare finishers, and _apply_notes on every lane edit / undo
+        # / redo) already calls this method, so the notice needs no refresh
+        # plumbing of its own -- which is what makes it survive editing after
+        # _apply_notes has overwritten the footer line. ONE call, before the
+        # branch, because _sync_mix_notice tests self._model itself.
+        self._sync_mix_notice()
         if self._model is None:
             self.notes_lbl.configure(text="\u2014 notes", foreground=MUTED)
             self.miss_lbl.configure(text="0 MISS", foreground=MUTED)
@@ -3671,6 +3857,76 @@ class SpectralTab(ttk.Frame):
             return mix
         return self.reference_field.get()               # 0 = Drums (default)
 
+    def _drums_came_from_a2m(self, analyzed_path: str) -> bool:
+        """True when the audio just analyzed AS DRUMS is the very file the
+        Audio to MIDI tab was handed.
+
+        That file is `_orig_input_path`, captured BEFORE stem isolation
+        rebinds to a composite, so it is frequently the FULL MIX -- and a mix
+        analyzed as drums drops every other instrument's onsets into the drum
+        bands, where find_issues turns each one with no note nearby into a
+        MISS (see _analysis_source above). Mix energy can also sit under a
+        note the drums never played, which HIDES a real PHANTOM.
+
+        A full mix loaded in the SECOND field is deliberately not consulted
+        (owner, 2026-09-12). It was, and that silenced this warning on the
+        MIDI Editor route in its ordinary case: that button passes a real
+        mix alongside the conversion source, so the guard fired exactly
+        where the warning was wanted. The rationale for it -- that a
+        visible Drums|Full Mix toggle already does this job -- is wrong:
+        switching that toggle analyzes the OTHER file, so it cannot turn a
+        mix sitting in the Drums field into a stem.
+
+        Asks the HOST for the path when a compare STARTS, instead of being
+        tagged at send time, so one check covers every Spectral button and a
+        hand-loaded file too, and no field handler has to remember to
+        invalidate anything. The Boolean is captured onto that job's result
+        so a later conversion cannot rewrite `_a2m_source_file` out from
+        under an in-flight compare. Never raises: a missing or raising hook
+        degrades to False (no warning), which is also the standalone __main__
+        behaviour."""
+        try:
+            if not analyzed_path:
+                return False
+            fn = (self.hooks or {}).get("a2m_source_file")
+            if not callable(fn):
+                return False
+            src = fn()
+            if not src:
+                return False
+            # normcase+abspath, exactly like external_chart_changed above:
+            # the host and the field can spell one Windows file two ways.
+            return (os.path.normcase(os.path.abspath(str(src)))
+                    == os.path.normcase(os.path.abspath(analyzed_path)))
+        except Exception:
+            return False
+
+    def _sync_mix_notice(self):
+        """Show or hide the persistent full-mix notice beside the counts.
+        PACK, not grid: `right` (in _build_header) is a packed container, so
+        _sync_analyze_toggle's grid()/grid_remove() idiom below is
+        unavailable here; the sibling is _sync_adv_panel's pack_forget().
+
+        Deliberately NOT guarded by winfo_ismapped(), unlike _sync_adv_panel:
+        a widget on an unselected Notebook page reports ismapped() == 0 while
+        its manager is still "pack", and a compare can finish after the user
+        has switched tabs -- an ismapped() guard would skip the HIDE and leave
+        a stale notice standing over fresh counts. pack/pack_forget are both
+        idempotent, so nothing is lost by calling them unconditionally."""
+        lbl = getattr(self, "mix_notice_lbl", None)
+        if lbl is None:
+            return    # _update_readout can run before the header is built
+        try:
+            if self._mix_as_drums and self._model is not None:
+                # No `before=`: appending puts it after the three counts, so
+                # a narrow window drops the NOTICE and never a number (see
+                # _build_header). Re-packing after a forget appends again.
+                lbl.pack(side=tk.LEFT, padx=(10, 0))
+            else:
+                lbl.pack_forget()
+        except tk.TclError:
+            pass      # destroyed/mid-teardown tab, same policy as _status
+
     def _sync_analyze_toggle(self):
         """Show the Analyze Drums|Full Mix toggle only when a full mix is loaded
         (there is nothing to swap otherwise)."""
@@ -3772,15 +4028,21 @@ class SpectralTab(ttk.Frame):
         self._status("Analyzing\u2026")
         self._update_transport()
         self._compare_queue = queue.Queue()
+        # Capture provenance NOW, while this job's analyzed path and the
+        # host's A2M source still describe the same conversion. The finish
+        # handler must not re-ask: `_a2m_source_file` is rewritten when the
+        # next conversion completes, which can happen while this worker runs.
+        _mix_as_drums = self._drums_came_from_a2m(ref)
         self._compare_thread = threading.Thread(
             target=self._compare_worker,
-            args=(self.hooks["decode_audio"], ref, cand, self._compare_queue),
+            args=(self.hooks["decode_audio"], ref, cand, self._compare_queue,
+                  _mix_as_drums),
             daemon=True)
         self._compare_thread.start()
         self._poll_compare_job = self.after(100, self._poll_compare)
 
     @staticmethod
-    def _compare_worker(decode_audio, ref, cand, q):
+    def _compare_worker(decode_audio, ref, cand, q, mix_as_drums=False):
         """No widget access. All heavy lifting (librosa/numpy/mido) happens
         here; the result dict is queued for the main thread."""
         try:
@@ -3814,6 +4076,7 @@ class SpectralTab(ttk.Frame):
                     "ref": ref,
                     "cand": cand,
                     "wave_env": wave_env,
+                    "mix_as_drums": bool(mix_as_drums),
                 }
             })
         except Exception as e:
@@ -3863,6 +4126,12 @@ class SpectralTab(ttk.Frame):
         # waveform must not break a Compare the other two views can serve.
         self._model = _SpectralModel(spec, notes, issues, bpm,
                                      wave_env=data.get("wave_env"))
+        # Provenance was captured when THIS job started and travelled on
+        # data["mix_as_drums"]. Do not re-query the host: a later conversion
+        # may have rewritten `_a2m_source_file` while the worker ran.
+        # .get(), like wave_env above: a hand-built result dict in a test
+        # carries no such key and must not warn.
+        self._mix_as_drums = bool(data.get("mix_as_drums", False))
         self._undo_stack.clear()
         self._redo_stack.clear()
         cand = data["cand"]
@@ -3880,23 +4149,42 @@ class SpectralTab(ttk.Frame):
         n_miss = sum(1 for i in self._model.issues if i["type"] == "miss")
         n_phantom = sum(1 for i in self._model.issues
                         if i["type"] == "phantom")
+        # ONE result line, then every qualification that applies appended to
+        # it in the same slot -- they can co-occur (a silent full mix), and
+        # the old if/else could only ever say one of the two. Byte-identical
+        # text for both pre-existing outcomes: `_line` carries no trailing
+        # space, so `_line + _warn` reproduces the old silent string exactly.
+        # The silence verdict is appended LAST because status_lbl is
+        # anchor=tk.E and so clips its FRONT, and a silent decode is the more
+        # severe of the two -- it means the whole compare is meaningless, and
+        # this line is the only place it is reported.
+        _line = ("Compared: %d notes, %d MISS + %d PHANTOM over %.1fs"
+                 % (len(self._model.notes), n_miss, n_phantom,
+                    self._model.dur))
+        _warn = ""
+        if self._mix_as_drums:
+            # The analyzed audio is the Audio to MIDI source, so it may be a
+            # full mix; say so rather than letting an inflated MISS count
+            # read as a verdict on the chart.
+            _warn += (" -- NOTE: analyzed the Audio to MIDI source, which "
+                      "may be a full mix; extra MISS may be other "
+                      "instruments, not missed drums. Auto Fetch Audio can "
+                      "find the drums stem.")
         if spec.get("silent"):
             # Surface the engine's silence verdict (breaker B2-2, 2026-07-20):
             # a silent/near-silent decode used to report a confident compare.
-            self._status("Compared: %d notes, %d MISS + %d PHANTOM over %.1fs "
-                         "-- WARNING: the audio is silent/near-silent; "
-                         "check the file or stem."
-                         % (len(self._model.notes), n_miss, n_phantom,
-                            self._model.dur), AMBER)
-        else:
-            self._status("Compared: %d notes, %d MISS + %d PHANTOM over %.1fs"
-                         % (len(self._model.notes), n_miss, n_phantom,
-                            self._model.dur))
+            _warn += (" -- WARNING: the audio is silent/near-silent; "
+                      "check the file or stem.")
+        self._status(_line + _warn, AMBER if _warn else CYAN)
 
     def _finish_compare(self):
         self._synth_job = None
         self._on_stop()
         self._model = MockSpectralModel()
+        # Demo/synthetic notes are not the user's audio at all, so a mix
+        # notice from a previous real compare must never survive into them
+        # (same reasoning as the Overwrite disarm below).
+        self._mix_as_drums = False
         self._undo_stack.clear()
         self._redo_stack.clear()
         # NEVER arm Overwrite MIDI from the SYNTHETIC path (breaker R3B2-3,
@@ -4116,6 +4404,32 @@ class SpectralTab(ttk.Frame):
         if editing and not self.notes_chip.get():
             self.notes_chip.set(True)
         self.notes_chip.set_enabled(not editing)
+        self._sync_reactive_style_state()
+        self._apply_lane_options()
+        self._apply_gram_options()
+
+    def _sync_reactive_style_state(self):
+        """Gray the style dropdown out while both Flash chips are off —
+        with the feature disabled the painter never reads the style, so
+        leaving the control live would let a user change a setting that
+        does nothing."""
+        cmb = getattr(self, "_react_cmb", None)
+        if cmb is None:
+            return
+        lane_on = bool(getattr(self, "flash_chip", None) and self.flash_chip.get())
+        gram_on = bool(getattr(self, "g_flash_chip", None) and self.g_flash_chip.get())
+        try:
+            cmb.configure(state="readonly" if (lane_on or gram_on) else "disabled")
+        except Exception:
+            pass
+
+    def _on_reactive_style(self, _evt=None):
+        lbl = self._react_style_label_var.get()
+        for key, label in SPEC_REACTIVE_STYLES:
+            if label == lbl:
+                self._reactive_style_key = key
+                self._cfg_set("spec_reactive_style", key)  # spec-reactive: persist spec_reactive_style
+                break
         self._apply_lane_options()
         self._apply_gram_options()
 
@@ -4152,7 +4466,9 @@ class SpectralTab(ttk.Frame):
             flash=self.flash_chip.get(), grid=self.grid_chip.get(),
             grid_div=self._grid_div_subs(), note_shape=self._note_shape(),
             edit=self.edit_chip.get(), snap=self.snap_chip.get(),
-            lane_visible=self._visible_lanes())
+            lane_visible=self._visible_lanes(),
+            reactive_style=getattr(self, "_reactive_style_key",
+                                   SPEC_REACTIVE_DEFAULT))
         # Keep the gutter's (shared)/(own) band labels in sync with the Per-lane
         # raw toggle (owner 2026-07-20): re-fill the gutter only when it flipped.
         if (hasattr(self, "raw_chip")
@@ -4172,7 +4488,9 @@ class SpectralTab(ttk.Frame):
             hz_readout=self.hz_chip.get(),
             grid=self.grid_chip.get(), grid_div=self._grid_div_subs(),
             note_shape=self._note_shape(),
-            lane_visible=self._visible_lanes())
+            lane_visible=self._visible_lanes(),
+            reactive_style=getattr(self, "_reactive_style_key",
+                                   SPEC_REACTIVE_DEFAULT))
 
     def _on_ghost_scale(self, _value):
         self._apply_lane_options()
@@ -4723,6 +5041,14 @@ class SpectralTab(ttk.Frame):
         top = self.winfo_toplevel()
         self._key_binds = []
         for seq, fn in (("<space>", self._key_space),
+                        # P = play/pause, matching the MIDI Editor's P. v4 binds
+                        # <p>/<P> on THIS SAME toplevel in _me_root_play with a
+                        # PLAIN bind guarded to its own tab; the add="+" below is
+                        # the only reason both survive -- a plain bind here would
+                        # erase the MIDI Editor's P app-wide. Both cases, as v4
+                        # does, for Caps Lock / Shift.
+                        ("<p>", self._key_space),
+                        ("<P>", self._key_space),
                         ("<Home>", self._key_home),
                         ("<Control-z>", self._key_undo),
                         ("<Control-y>", self._key_redo),
