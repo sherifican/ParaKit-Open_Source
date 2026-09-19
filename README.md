@@ -134,8 +134,6 @@ That's it. To **update** to the latest version later, just run `git pull` inside
 >
 > The reason is simple: ParaKit updates itself by downloading changed files. A compiled `.exe` bundles those files inside itself, so the updater cannot replace them — compiling breaks the update system. Running the `.py` keeps updates working.
 
->**.exe DOWNLOAD:** [LimeWire Bundle Link](https://limewire.com/d/UV9Zm#DHqxKgEtmn)
-
 >**Requirements bundle:** [Requirements.Files.ONLY.bundle.zip (GitHub release)](https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip)
 
 >**Note (v4.5.3.1-1):** The in-app download button for the Jarredou neural stem-isolation model has been **rewired to the official [Hugging Face repo](https://huggingface.co/Politrees/UVR_resources)** for it, with a **second Hugging Face mirror as an automatic fallback**. If *both* of those ever go down for any reason, see `docs/TROUBLESHOOTING.md` for the manual placement steps.
