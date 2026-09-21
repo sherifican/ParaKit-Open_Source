@@ -192,8 +192,8 @@
   LICENSE
       GNU GPL v3.
 
-  Practice v1 vs v2: the STABLE Practice mode is v1, built into the main app.
-  practice_v2/ is an in-development alpha -- included so you can build on it.
+  Practice v1 vs v2: Preview and Practice are built-in tabs. practice_v2/ is a
+  prototype that preceded the in-app tab -- included so you can build on it.
 
 ------------------------------------------------------------------------------
   FEATURES
@@ -201,8 +201,7 @@
 
   - MIDI editor -- visual note placement and refinement.
   - Audio -> MIDI detection -- automatic drum transcription with three engines:
-      Spectral (traditional), ML / ONNX (neural net), and Hybrid (combined),
-      plus genre presets (Pop / Rock / Metal / Funk).
+      Spectral (traditional), ML / ONNX (neural net), and Hybrid (combined).
   - Stem splitter -- isolate a drums-only track from any song (Demucs).
   - MusicXML -> MIDI -- convert sheet music into a chart.
   - YouTube -> FLAC -- download lossless audio to chart from YouTube.
@@ -305,27 +304,30 @@
 
   1. Python 3.12
      ParaKit targets Python 3.12 specifically. Get it from
-     https://www.python.org/downloads/  (check "Add to PATH" / use the py
+     https://www.python.org/downloads/release/python-3120/  (check "Add to PATH" / use the py
      launcher).
 
   2. Python packages
        py -3.12 -m pip install -r requirements.txt
-     (See requirements.txt -- note the Stem Splitter pulls in demucs + torch,
-     a large ~2-3 GB download you can skip if you will not split stems.)
+     (See requirements.txt -- the Stem Splitter pulls in demucs and torch. On a
+     standard Windows install that torch is the CPU-only PyPI build, about 116 MB;
+     a CUDA build is over 2 GB. Skip the demucs line if stems will not be split.)
 
   3. Bundled command-line tools (the "requirements bundle")
      ParaKit shells out to several tools that are NOT Python packages:
        - FFmpeg (ffmpeg / ffplay / ffprobe) -- audio conversion / pydub
-       - yt-dlp (+ deno, its JS signature runtime) -- YouTube -> FLAC downloads
+       - yt-dlp (+ a JS runtime: Deno or Node) -- YouTube -> FLAC downloads
        - ADB (+ AdbWinApi.dll, AdbWinUsbApi.dll) -- "push to Quest" / transfer
 
-     These are distributed separately as the Requirements.zip bundle
-     (about 183 MB -- too large to commit to the Git repo). It is a GitHub
+     These are distributed separately as the Requirements bundle
+     (about 174 MB -- too large to commit to the Git repo). It is a GitHub
      release asset on this repository, so the link is permanent:
        https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip
 
      The Jarredou model is NOT in this bundle. The app downloads it straight
      from Hugging Face on demand and puts it where it needs to go.
+     That optional path also needs the Python package audio-separator
+     (pip install audio-separator); the model file alone is not enough.
 
      Extract it, then place the files next to "ParaKit v4.0.py", or keep them
      in the included Requirements\ subfolder beside it. They are kept out of
@@ -436,8 +438,8 @@
     Try it: open this file in a modern browser (Chrome or Edge for USB-MIDI):
       Practice Window v2 - Web Edition/parakit-practice.html
 
-  Both v2 and v3 are complete and ready to play today. A single best-of-both
-  native (.py) version folded back into the app is planned for a later release.
+  Both v2 and v3 are complete and ready to play today as standalone HTML files.
+  Native Preview and Practice tabs are already in the app (see Features above).
 
   Preview Track v2 -- Web Edition
     Watch your drum chart fall in time with the music -- then fix what's wrong
@@ -478,11 +480,11 @@
   to CPU (still works, just slower). AMD / Intel GPUs are CPU-only too (Demucs
   needs CUDA).
 
-  A working GPU fix exists (CUDA 12.8 / cu128 PyTorch + a save-path tweak) --
-  see docs/TROUBLESHOOTING.md. A separate, creator-verified RTX 50-series build
-  with GPU acceleration configured out of the box is also being prepared, to
-  ship as a follow-up. The CPU fallback always stays in the code regardless --
-  the point is that the feature works on every machine, even if a bit slower.
+  RTX 50-series cards need nothing special from ParaKit -- just a cu128
+  PyTorch build. Installing one is the entire step, and it is covered in
+  docs/TROUBLESHOOTING.md. There is no separate download, no patch, and
+  nothing to wait for. The CPU fallback always stays in the code regardless,
+  so the feature works on every machine, even if a bit slower.
 
 ------------------------------------------------------------------------------
   BUILD YOUR OWN VERSION

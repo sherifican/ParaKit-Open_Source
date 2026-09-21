@@ -85,9 +85,9 @@ None of the libraries this app is built on publishes a real hardware minimum, an
 
 ## ⬇️ Download & run ParaKit (copy-paste setup)
 
-New to GitHub? The easiest way to get ParaKit, with every file placed correctly, is a few copy-paste commands in your terminal (**Command Prompt**, **PowerShell**, or **Terminal**). You need two free things installed first: **[Git](https://git-scm.com/downloads)** and **[Python 3.12](https://www.python.org/downloads/)** (3.12 is required).
+New to GitHub? The easiest way to get ParaKit, with every file placed correctly, is a few copy-paste commands in your terminal (**Command Prompt**, **PowerShell**, or **Terminal**). You need two free things installed first: **[Git](https://git-scm.com/downloads)** and **[Python 3.12](https://www.python.org/downloads/release/python-3120/)** (3.12 is required).
 
-> **Don't have Git, or don't want it?** You don't need it. Click the green **`<> Code`** button near the top of this page → **Download ZIP**, unzip it wherever you like, then continue at **step 2**. The extracted folder is named `ParaKit-Open_Source-main` (not `ParaKit-Open_Source`), so `cd` into that name. Skip the `git clone` in step 1. ParaKit itself never uses Git — the only difference is that you'll update with the in-app **Download update now** button instead of `git pull`, which works exactly the same either way. **Python 3.12 is the only real requirement.**
+> **Don't have Git, or don't want it?** You don't need it. Click the green **`<> Code`** button near the top of this page → **Download ZIP**, unzip it wherever you like, then continue at **step 2**. The extracted folder is named `ParaKit-Open_Source-main` (not `ParaKit-Open_Source`), so `cd` into that name. Skip the `git clone` in step 1. ParaKit itself never uses Git — the only difference is that you'll update with the in-app **Download update now** button instead of `git pull`, which works exactly the same either way. **Python 3.12 is required to launch.** Some features also need the Requirements bundle, a JavaScript runtime, or an optional stem-isolation model; those are listed under [Requirements](#requirements). Core charting does not use them.
 
 **1 — Download everything.** Open **Command Prompt** or **PowerShell** and run the command below. It creates a `ParaKit-Open_Source` folder **inside whatever folder your terminal is currently in** — a fresh window opens in your user folder, so by default you'll get it at **`C:\Users\YourName\ParaKit-Open_Source`** (an easy place to find it again):
 
@@ -104,8 +104,16 @@ git clone https://github.com/sherifican/ParaKit-Open_Source.git
 
 **2 — Go into the folder** (the terminal needs to be *inside* the folder for the next steps):
 
+From `git clone` (step 1):
+
 ```
 cd ParaKit-Open_Source
+```
+
+From Download ZIP (the extracted folder is `ParaKit-Open_Source-main`):
+
+```
+cd ParaKit-Open_Source-main
 ```
 
 *(Used the custom-path option above? `cd` into that folder instead — e.g. `cd "D:\Games\ParaKit"`.)*
@@ -128,25 +136,10 @@ That's it. To **update** to the latest version later, just run `git pull` inside
 
 ---
 
-> ### The .exe version is no longer supported
->
-> Its download link has expired and is not being replaced. **Use the `.py` version** — that is what ParaKit is built and supported around.
->
-> The reason is simple: ParaKit updates itself by downloading changed files. A compiled `.exe` bundles those files inside itself, so the updater cannot replace them — compiling breaks the update system. Running the `.py` keeps updates working.
-
->**Requirements bundle:** [Requirements.Files.ONLY.bundle.zip (GitHub release)](https://github.com/sherifican/ParaKit-Open_Source/releases/download/Requirements_Bundle/Requirements.Files.ONLY.bundle.zip)
-
->**Note (v4.5.3.1-1):** The in-app download button for the Jarredou neural stem-isolation model has been **rewired to the official [Hugging Face repo](https://huggingface.co/Politrees/UVR_resources)** for it, with a **second Hugging Face mirror as an automatic fallback**. If *both* of those ever go down for any reason, see `docs/TROUBLESHOOTING.md` for the manual placement steps.
-
->ParaKit Official Homepage ***(Site temporarily down)***
-
-
----
-
 ## Recent Changes
 
 <details>
-<summary><b>Open the release-by-release log</b> — newest first. The full history is in <a href="CHANGELOG.txt"><code>CHANGELOG.txt</code></a>.</summary>
+<summary><b>Open older tab-layout screenshots</b> — selected redesigns from v4.9.8 back to v4.4.64-1. Current releases are in the <a href="#changelog">Changelog</a> table and in <a href="CHANGELOG.txt"><code>CHANGELOG.txt</code></a>.</summary>
 
 
 *Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
@@ -498,14 +491,15 @@ or exported. Detection itself is untouched — the tab only reads audio and char
 
 ### 1. Python 3.12
 ParaKit targets **Python 3.12** specifically. Get it from
-[python.org](https://www.python.org/downloads/) (check "Add to PATH" / use the `py` launcher).
+[python.org](https://www.python.org/downloads/release/python-3120/) (check "Add to PATH" / use the `py` launcher).
 
 ### 2. Python packages
 ```
 py -3.12 -m pip install -r requirements.txt
 ```
-(See `requirements.txt` — note the **Stem Splitter** pulls in `demucs` + `torch`, a large
-~2–3 GB download you can skip if you won't split stems.)
+(See `requirements.txt` — the **Stem Splitter** pulls in `demucs` and `torch`. On a
+standard Windows install that torch is the CPU-only PyPI build, about 116 MB; a CUDA
+build is over 2 GB. Skip the demucs line if stems will not be split.)
 
 ### 3. Bundled command-line tools (the "requirements bundle")
 ParaKit shells out to several tools that are **not** Python packages:
@@ -517,8 +511,7 @@ ParaKit shells out to several tools that are **not** Python packages:
 Some features need the Requirements bundle (~174 MB): FFmpeg, yt-dlp + a JS runtime (Deno or Node), and ADB. Download Requirements.Files.ONLY.bundle.zip from the GitHub link, extract, and put the files in a `Requirements` folder next to ParaKit (recommended: `Requirements\platform-tools\` for adb.exe + its two DLLs). Core charting (Audio → MIDI, MIDI Editor, Song Creator, Song Tester) does not need this bundle. When files are missing, ParaKit's extra-tools window lists them; under that list it says which features stop working without each missing group.
 
 ````
-ParaKit\                      <- the folder ParaKit.exe is in
-├── ParaKit.exe
+ParaKit\                      <- the ParaKit folder
 └── Requirements\
     ├── ffmpeg.exe
     ├── ffprobe.exe
@@ -543,6 +536,7 @@ binaries with their own licenses, well over GitHub's per-file size limit. Leave 
 auto-update on so it stays current with YouTube changes.
 
 ---
+
 
 ## Run it
 
