@@ -302,6 +302,8 @@ class ChartModel:
         self.notes: List[EdNote] = []
         self.chart_end_secs = None
         self.midi_source_path = None
+        self.midi_source_sig = None
+        self.midi_source_id = None
         self.bpm = float(bpm) if bpm > 0 else 120.0
         self.duration = 0.0
         self._index = TimeIndex()
@@ -584,9 +586,12 @@ def load_rlrr_as_notes(path: str) -> Tuple[List[EdNote], float]:
 # real-world files); otherwise a hand-rolled minimal SMF0/1 reader + SMF0
 # writer so Import/Export work with ZERO third-party deps.
 # ---------------------------------------------------------------------------
-def _read_vlq(data: bytes, i: int) -> Tuple[int, int]:
+def _read_vlq(data: bytes, i: int, limit: Optional[int] = None) -> Tuple[int, int]:
     value = 0
+    end = len(data) if limit is None else min(len(data), limit)
     while True:
+        if i >= end:
+            raise ValueError("truncated MIDI variable-length quantity")
         b = data[i]
         i += 1
         value = (value << 7) | (b & 0x7F)
@@ -605,18 +610,23 @@ def _write_vlq(value: int) -> bytes:
     return bytes(reversed(buf))
 
 
-def _read_midi_minimal(path: str, chart_end_only=False):
+def _read_midi_minimal_from_bytes(data: bytes, chart_end_only=False):
     """Hand-rolled SMF reader: returns [(time_sec, midi_note, vel), ...] onset
     rows (note-offs / vel==0 note-ons are consumed but not returned) + the
     first tempo as BPM. No sysex/meta payload other than Set Tempo is
     interpreted -- everything else is skipped by its declared length, so an
-    unsupported meta/sysex event never desyncs the byte stream."""
-    with open(path, "rb") as f:
-        data = f.read()
-    if data[0:4] != b"MThd":
+    unsupported meta/sysex event never desyncs the byte stream.
+
+    Every length is bounds-checked against the file and the declared track
+    end. A truncated meta payload or a track length that overruns the file
+    raises rather than returning a successful empty parse.
+    """
+    if len(data) < 14 or data[0:4] != b"MThd":
         raise ValueError("not a Standard MIDI File (missing MThd)")
     header_len = struct.unpack(">I", data[4:8])[0]
-    fmt, ntrks, division = struct.unpack(">HHH", data[8:8 + 6])
+    if header_len < 6 or 8 + header_len > len(data):
+        raise ValueError("truncated MIDI header")
+    fmt, ntrks, division = struct.unpack(">HHH", data[8:14])
     if division & 0x8000:
         raise ValueError("SMPTE-timecode MIDI files are not supported")
     if chart_end_only and (division == 0 or fmt == 2):
@@ -629,18 +639,22 @@ def _read_midi_minimal(path: str, chart_end_only=False):
     marker_ticks = []
 
     for _ in range(ntrks):
-        if data[pos:pos + 4] != b"MTrk":
+        if pos + 8 > len(data) or data[pos:pos + 4] != b"MTrk":
             raise ValueError("corrupt MIDI file (missing MTrk)")
         pos += 4
         track_len = struct.unpack(">I", data[pos:pos + 4])[0]
         pos += 4
+        if pos + track_len > len(data):
+            raise ValueError("MIDI track length overruns the file")
         track_end = pos + track_len
         i = pos
         abs_tick = 0
         running_status: Optional[int] = None
         while i < track_end:
-            delta, i = _read_vlq(data, i)
+            delta, i = _read_vlq(data, i, track_end)
             abs_tick += delta
+            if i >= track_end:
+                raise ValueError("truncated MIDI event")
             status = data[i]
             if status < 0x80:
                 if running_status is None:
@@ -652,9 +666,13 @@ def _read_midi_minimal(path: str, chart_end_only=False):
                 if status < 0xF0:
                     running_status = status
             if status == 0xFF:
+                if i >= track_end:
+                    raise ValueError("truncated MIDI meta event")
                 meta_type = data[i]
                 i += 1
-                length, i = _read_vlq(data, i)
+                length, i = _read_vlq(data, i, track_end)
+                if i + length > track_end:
+                    raise ValueError("MIDI meta payload overruns the track")
                 meta_data = data[i:i + length]
                 i += length
                 if meta_type == 0x51 and length == 3:
@@ -667,13 +685,19 @@ def _read_midi_minimal(path: str, chart_end_only=False):
                 if meta_type == 0x2F:
                     break
             elif status in (0xF0, 0xF7):
-                length, i = _read_vlq(data, i)
+                length, i = _read_vlq(data, i, track_end)
+                if i + length > track_end:
+                    raise ValueError("MIDI sysex payload overruns the track")
                 i += length
             else:
                 hi = status & 0xF0
                 if hi in (0xC0, 0xD0):
+                    if i + 1 > track_end:
+                        raise ValueError("truncated MIDI channel event")
                     i += 1   # one data byte
                 else:
+                    if i + 2 > track_end:
+                        raise ValueError("truncated MIDI channel event")
                     d1, d2 = data[i], data[i + 1]
                     i += 2
                     if hi == 0x90 and d2 > 0:   # note-on, real velocity
@@ -710,40 +734,21 @@ def _read_midi_minimal(path: str, chart_end_only=False):
     return rows, safe_bpm(bpm)
 
 
-def load_midi_as_notes(path: str) -> Tuple[List[EdNote], float]:
-    """Read a .mid into (EdNotes, bpm); notes outside the 8 drum lanes are
-    skipped. Tries ``mido`` first (more robust vs. real-world files with
-    exotic meta/sysex layouts), falls back to the hand-rolled reader."""
+def _read_midi_minimal(path: str, chart_end_only=False):
+    with open(path, "rb") as f:
+        data = f.read()
+    return _read_midi_minimal_from_bytes(data, chart_end_only=chart_end_only)
+
+
+def load_midi_as_notes_from_bytes(data: bytes) -> Tuple[List[EdNote], float]:
+    """Read already-loaded .mid bytes into (EdNotes, bpm)."""
     rows: Optional[List[Tuple[float, int, int]]] = None
     bpm = 120.0
     try:
+        import io
         import mido  # lazy, optional
-        mid = mido.MidiFile(path)
+        mid = mido.MidiFile(file=io.BytesIO(data))
         ticks_per_beat = mid.ticks_per_beat or 480
-        # ⛔ MERGE THE TRACKS. This walked `for track in mid.tracks` and reset
-        # `tempo_us = 500000` at the top of every one, so a track's notes were timed
-        # by that track's OWN set_tempo events and by nothing else. A Type-1 file
-        # puts the tempo map in track 0 and the notes in tracks 1..N — the standard
-        # layout for a DAW export, a ParaDB chart, or any .mid the user did not make
-        # here — so the notes never saw the tempo at all and were laid out at the
-        # 120 BPM default.
-        #
-        # Measured on a 180 BPM Type-1 probe: the last of 8 kicks landed at 3.5729 s
-        # instead of 2.3819 s, exactly 1.5x late = 180/120. The whole chart stretches.
-        #
-        # ⚠ AND IT LOOKED FINE, WHICH IS WHY IT LASTED. `bpm` was read correctly
-        # (180.0) from that same track-0 event, so the engine reported the right
-        # tempo while placing every note for the wrong one. Grid and notes disagreed
-        # self-consistently, with nothing anywhere reporting an error. The file's own
-        # hand-rolled fallback `_read_midi_minimal` builds a proper cross-track tempo
-        # map and was right the whole time; it is only reached when mido is missing
-        # or raises, so the CORRECT reader was the one almost nobody ran.
-        #
-        # `merge_tracks` interleaves every track into one delta-time stream in
-        # tempo-map order, which is what the sidecar's parse already does. Seconds
-        # accumulate incrementally: a message's delta elapses under the tempo in
-        # force BEFORE it, so the tempo is applied after the accumulation, never to
-        # the total elapsed ticks.
         tempo_us = 500000
         got_tempo = False
         cur_sec = 0.0
@@ -759,7 +764,7 @@ def load_midi_as_notes(path: str) -> Tuple[List[EdNote], float]:
                 rows.append((cur_sec, msg.note, msg.velocity))
         rows.sort(key=lambda r: r[0])
     except Exception:
-        rows, bpm = _read_midi_minimal(path)
+        rows, bpm = _read_midi_minimal_from_bytes(data)
 
     notes: List[EdNote] = []
     for t, note, vel in rows:
@@ -770,6 +775,14 @@ def load_midi_as_notes(path: str) -> Tuple[List[EdNote], float]:
                              vel=max(1, min(127, int(vel)))))
     notes.sort(key=operator.attrgetter("time"))
     return notes, safe_bpm(bpm)
+
+
+def load_midi_as_notes(path: str) -> Tuple[List[EdNote], float]:
+    """Read a .mid into (EdNotes, bpm); notes outside the 8 drum lanes are
+    skipped. Tries ``mido`` first (more robust vs. real-world files with
+    exotic meta/sysex layouts), falls back to the hand-rolled reader."""
+    with open(path, "rb") as fh:
+        return load_midi_as_notes_from_bytes(fh.read())
 
 
 def load_chart_as_notes(path: str) -> Tuple[List[EdNote], float]:
@@ -803,19 +816,175 @@ def _as_rows(notes: Iterable) -> List[Tuple[float, int, int]]:
 CHART_END_MARKER_TEXT = "ParaKit Chart End"
 
 
-def read_chart_end_secs(path):
-    """Prefer the shared mido reader; retain the dependency-free fallback."""
+class MidiDestinationChanged(Exception):
+    """Destination bytes changed after the caller approved the write."""
+
+
+def midi_bytes_signature(data, mtime_ns=0):
+    """(size, mtime_ns, sha256 hex) of already-read MIDI bytes."""
+    import hashlib
+    digest = hashlib.sha256(data).hexdigest()
+    return (len(data), int(mtime_ns), digest)
+
+
+def midi_file_signature(path):
+    """(size, st_mtime_ns, sha256 hex) of path, or None if the file cannot be read."""
+    import os
     try:
-        from parakit_spectral_engine import read_chart_end_secs as read_saved_end
-        end = read_saved_end(path)
-        if end is not None:
-            return end
-    except Exception:
-        pass
-    try:
-        return _read_midi_minimal(path, chart_end_only=True)
+        st = os.stat(path)
+        with open(path, "rb") as fh:
+            data = fh.read()
+        return midi_bytes_signature(data, st.st_mtime_ns)
     except Exception:
         return None
+
+
+def midi_signatures_match(path, sig):
+    """True only when path's bytes match sig's sha256. mtime is not enough."""
+    current = midi_file_signature(path)
+    if current is None or sig is None or len(sig) < 3:
+        return False
+    return current[2] == sig[2]
+
+
+def midi_path_identity(path):
+    import os
+    if not path:
+        return None
+    try:
+        real = os.path.normcase(os.path.abspath(os.path.realpath(path)))
+    except OSError:
+        try:
+            real = os.path.normcase(os.path.abspath(path))
+        except OSError:
+            return None
+    ino = None
+    try:
+        st = os.stat(path)
+        if st.st_ino != 0:
+            ino = (st.st_dev, st.st_ino)
+    except OSError:
+        pass
+    return (real, ino)
+
+
+def midi_inode_usable(ino):
+    """True only for a real (st_dev, st_ino) pair. st_ino 0 is not identity."""
+    return ino is not None and len(ino) >= 2 and ino[1] != 0
+
+
+def same_midi_path(left, right, source_id=None):
+    import os
+    if left is None or right is None:
+        return False
+    dest_exists = False
+    rec_real = rec_ino = None
+    if source_id is not None:
+        rec_real, rec_ino = source_id
+        try:
+            dest_exists = os.path.isfile(left)
+        except OSError:
+            dest_exists = False
+        if dest_exists:  # alias-lost: dest still exists under another spelling
+            dest_id = midi_path_identity(left)
+            if dest_id is not None:  # alias-rebound: identity-first before samefile
+                dest_real, dest_ino = dest_id
+                if (midi_inode_usable(rec_ino) and midi_inode_usable(dest_ino)
+                        and rec_ino == dest_ino):  # identity-zero-inode
+                    return True
+                if rec_real and dest_real and rec_real == dest_real:
+                    return True
+    try:
+        if os.path.isfile(left) and os.path.isfile(right):
+            return os.path.samefile(left, right)
+    except OSError:
+        pass
+    if source_id is not None:
+        if not dest_exists:  # source-unresolvable: dest spelling of a gone file
+            try:
+                dest_abs = os.path.normcase(os.path.abspath(left))
+            except OSError:
+                dest_abs = None
+            if rec_real and dest_abs and dest_abs == rec_real:
+                return True
+            try:
+                dest_real = os.path.normcase(os.path.abspath(os.path.realpath(left)))
+            except OSError:
+                dest_real = dest_abs
+            if rec_real and dest_real and dest_real == rec_real:
+                return True
+        try:
+            source_exists = os.path.isfile(right)
+        except OSError:
+            source_exists = False
+        if not source_exists:
+            return "unknown"
+    return (os.path.normcase(os.path.abspath(left))
+            == os.path.normcase(os.path.abspath(right)))
+
+
+def _read_midi_minimal_state_from_bytes(data):
+    try:
+        secs = _read_midi_minimal_from_bytes(data, chart_end_only=True)
+    except Exception:
+        return ("unreadable", None)
+    if secs is None:
+        return ("absent", None)
+    return ("marker", secs)
+
+
+def _read_midi_minimal_state(path):
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+        return _read_midi_minimal_state_from_bytes(data)
+    except Exception:
+        return ("unreadable", None)
+
+
+def read_chart_end_state_from_bytes(data):
+    """Return (kind, secs) from already-read MIDI bytes."""
+    try:
+        from parakit_spectral_engine import (
+            read_chart_end_state_from_bytes as read_saved_state)
+        kind, secs = read_saved_state(data)
+        if kind != "unreadable":
+            return kind, secs
+    except Exception:
+        pass
+    return _read_midi_minimal_state_from_bytes(data)
+
+
+def read_chart_end_state(path):
+    """Return (kind, secs). Prefer the shared mido reader; fall back when it cannot parse."""
+    try:
+        from parakit_spectral_engine import read_chart_end_state as read_saved_state
+        kind, secs = read_saved_state(path)
+        if kind != "unreadable":
+            return (kind, secs)
+    except Exception:
+        pass
+    return _read_midi_minimal_state(path)
+
+
+def read_chart_end_secs(path):
+    """Prefer the shared mido reader; retain the dependency-free fallback."""
+    kind, secs = read_chart_end_state(path)
+    return secs if kind == "marker" else None
+
+
+def resolve_chart_end_for_write(dest_path, source_path, model_end):
+    """Same-source: disk marker, then absent (no marker), else the model."""
+    import os
+    if (not same_midi_path(dest_path, source_path)
+            or not os.path.isfile(dest_path)):
+        return model_end
+    kind, secs = read_chart_end_state(dest_path)
+    if kind == "marker":
+        return secs
+    if kind == "absent":
+        return None
+    return model_end
 
 
 def _chart_end_tick(chart_end_secs, tempo, tpb, last_tick):
@@ -825,8 +994,60 @@ def _chart_end_tick(chart_end_secs, tempo, tpb, last_tick):
     return max(last_tick, round(end * 1e6 * tpb / tempo))
 
 
-def _write_midi_atomic(path, payload):
-    """Commit already-serialized bytes through a unique sibling temp file."""
+def midi_dest_lstat(path):
+    """Discriminating lstat: ('present', st), ('absent',), or ('unreadable',).
+
+    FileNotFoundError or NotADirectoryError is genuine absence. Any other
+    OSError is inaccessible, never absent. os.path.lexists / exists /
+    isfile swallow PermissionError as False and must not decide absence.
+    """
+    import os
+    try:
+        st = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):  # dest-absent
+        return ("absent",)
+    except OSError:  # dest-denied: not absent
+        return ("unreadable",)
+    return ("present", st)
+
+
+def midi_dest_expectation(path):
+    """Destination state: ('bytes', sig), ('absent',), or ('unreadable',).
+
+    ('unreadable',) is not an approvable overwrite state. Absence is
+    midi_dest_lstat only: FileNotFoundError / NotADirectoryError. Any
+    other OSError is unreadable, never absent. lexists/exists/isfile
+    swallow PermissionError as False and are not used here.
+    """
+    import stat
+    probe = midi_dest_lstat(path)
+    if probe[0] == "absent":
+        return ("absent",)
+    if probe[0] == "unreadable":
+        return ("unreadable",)
+    st = probe[1]
+    if not stat.S_ISREG(st.st_mode):  # dest-inaccessible: not absent
+        return ("unreadable",)
+    sig = midi_file_signature(path)
+    if sig is None:
+        return ("unreadable",)
+    return ("bytes", sig)
+
+
+def _write_midi_atomic(path, payload, expected_dest=None):
+    """Commit already-serialized bytes through a unique sibling temp file.
+
+    expected_dest is ('bytes', sig), ('absent',), or None (unguarded).
+    ('unreadable',) is not approvable: the writer treats it as a mismatch
+    and raises. Immediately before os.replace the approved state is
+    re-checked. Bytes: re-hash; mismatch or disappearance raises
+    MidiDestinationChanged. Absent: any existing entry raises. A mismatch
+    unlinks the temp.
+
+    Remaining window: between that re-hash and os.replace another process
+    can still replace the destination. Python on Windows has no
+    content-conditional replace. That interval is not closable here.
+    """
     import os
     import tempfile
     path = os.path.abspath(os.fspath(path))
@@ -841,6 +1062,39 @@ def _write_midi_atomic(path, payload):
         stream.flush()
         stream.close()
         stream = None
+        if expected_dest is not None:
+            kind = expected_dest[0]
+            if kind == "bytes":
+                sig = expected_dest[1]
+                probe = midi_dest_lstat(path)
+                if probe[0] == "absent":  # dest-vanished: expected bytes
+                    raise MidiDestinationChanged(
+                        "destination vanished before replace: %s" % path)
+                if probe[0] == "unreadable":
+                    raise MidiDestinationChanged(
+                        "destination unreadable; no blind replace: %s" % path)
+                current = midi_file_signature(path)
+                if current is None:
+                    raise MidiDestinationChanged(
+                        "destination changed before replace: %s" % path)
+                if (sig is None or len(sig) < 3
+                        or current[2] != sig[2]):  # dest-changed: bytes mismatch
+                    raise MidiDestinationChanged(
+                        "destination changed before replace: %s" % path)
+            elif kind == "absent":
+                probe = midi_dest_lstat(path)
+                if probe[0] == "unreadable":
+                    raise MidiDestinationChanged(
+                        "destination unreadable; no blind replace: %s" % path)
+                if probe[0] != "absent":  # dest-appeared: expected absent
+                    raise MidiDestinationChanged(
+                        "destination appeared before replace: %s" % path)
+            elif kind == "unreadable":  # unreadable-refused: no blind replace
+                raise MidiDestinationChanged(
+                    "destination unreadable; no blind replace: %s" % path)
+            else:
+                raise MidiDestinationChanged(
+                    "destination changed before replace: %s" % path)
         os.replace(tmp, path)
     except BaseException as exc:
         if stream is not None:
@@ -864,7 +1118,8 @@ def _write_midi_atomic(path, payload):
 
 
 def _write_midi_minimal(notes: Iterable, bpm: float, path: str,
-                        chart_end_secs=None) -> int:
+                        chart_end_secs=None, expected_dest=None,
+                        emitted=None) -> int:
     """Hand-rolled SMF format-0 writer -- no third-party deps. Matches
     write_smf0's semantics exactly (480 tpb, channel 9, 1/8-beat note length,
     canonical per-lane GM note)."""
@@ -904,11 +1159,15 @@ def _write_midi_minimal(notes: Iterable, bpm: float, path: str,
 
     header = b"MThd" + struct.pack(">IHHH", 6, 0, 1, tpb)
     chunk = b"MTrk" + struct.pack(">I", len(track)) + bytes(track)
-    _write_midi_atomic(path, header + chunk)
+    payload = header + chunk
+    _write_midi_atomic(path, payload, expected_dest=expected_dest)
+    if emitted is not None:
+        emitted.append(payload)
     return len(rows)
 
 
-def write_smf0(notes: Iterable, bpm: float, path: str, chart_end_secs=None) -> int:
+def write_smf0(notes: Iterable, bpm: float, path: str, chart_end_secs=None,
+               expected_dest=None, emitted=None) -> int:
     """Build with mido (minimal fallback), then commit without an I/O retry."""
     # Materialize once so a mido build failure cannot exhaust a generator
     # before the minimal writer sees it. Validate the marker before any I/O.
@@ -954,10 +1213,14 @@ def write_smf0(notes: Iterable, bpm: float, path: str, chart_end_secs=None) -> i
         payload = io.BytesIO()
         mid.save(file=payload)
     except Exception:
-        return _write_midi_minimal(notes, bpm, path, chart_end_secs=chart_end_secs)
+        return _write_midi_minimal(notes, bpm, path, chart_end_secs=chart_end_secs,
+                                   expected_dest=expected_dest, emitted=emitted)
     # Destination failures must propagate; the minimal writer cannot repair
     # a denied/locked/directory target or a failed temp write/replace.
-    _write_midi_atomic(path, payload.getvalue())
+    data = payload.getvalue()
+    _write_midi_atomic(path, data, expected_dest=expected_dest)
+    if emitted is not None:
+        emitted.append(data)
     return len(rows)
 
 

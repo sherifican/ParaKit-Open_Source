@@ -385,10 +385,8 @@ def chart_bpm(path):
     ext = os.path.splitext(path)[1].lower()
     if ext in (".mid", ".midi"):
         try:
-            import mido
-            tempo_map = _midi_tempo_map(mido.MidiFile(path))
-            _b = 6e7 / tempo_map[0][1]
-            return _b if _math_bpm.isfinite(_b) and 4.0 <= _b <= 100000.0 else None
+            with open(path, "rb") as fh:
+                return chart_bpm_from_bytes(fh.read())
         except Exception:
             return None
     if ext == ".rlrr":
@@ -412,15 +410,159 @@ def chart_bpm(path):
 CHART_END_MARKER_TEXT = "ParaKit Chart End"
 
 
-def read_chart_end_secs(path):
-    """Latest exact Chart End marker in seconds; unreadable/invalid -> None."""
+class MidiDestinationChanged(Exception):
+    """Destination bytes changed after the caller approved the write."""
+
+
+def midi_bytes_signature(data, mtime_ns=0):
+    """(size, mtime_ns, sha256 hex) of already-read MIDI bytes."""
+    import hashlib
+    digest = hashlib.sha256(data).hexdigest()
+    return (len(data), int(mtime_ns), digest)
+
+
+def midi_file_signature(path):
+    """(size, st_mtime_ns, sha256 hex) of path, or None if the file cannot be read."""
+    try:
+        st = os.stat(path)
+        with open(path, "rb") as fh:
+            data = fh.read()
+        return midi_bytes_signature(data, st.st_mtime_ns)
+    except Exception:
+        return None
+
+
+def midi_signatures_match(path, sig):
+    """True only when path's bytes match sig's sha256. mtime is not enough."""
+    current = midi_file_signature(path)
+    if current is None or sig is None or len(sig) < 3:
+        return False
+    return current[2] == sig[2]
+
+
+def midi_path_identity(path):
+    """Load-time destination identity: (realpath, (st_dev, st_ino) or None).
+
+    realpath is normcased. The inode pair is None when stat fails or
+    st_ino is 0 (some shares report zero for every file; that is not an
+    identity). Callers store this next to the path spelling so a later
+    lost or rebound alias can still name the original destination.
+    """
+    if not path:
+        return None
+    try:
+        real = os.path.normcase(os.path.abspath(os.path.realpath(path)))
+    except OSError:
+        try:
+            real = os.path.normcase(os.path.abspath(path))
+        except OSError:
+            return None
+    ino = None
+    try:
+        st = os.stat(path)
+        if st.st_ino != 0:
+            ino = (st.st_dev, st.st_ino)
+    except OSError:
+        pass
+    return (real, ino)
+
+
+def midi_inode_usable(ino):
+    """True only for a real (st_dev, st_ino) pair. st_ino 0 is not identity."""
+    return ino is not None and len(ino) >= 2 and ino[1] != 0
+
+
+def same_midi_path(left, right, source_id=None):
+    """True / False / 'unknown' when left and right name the same destination.
+
+    left is the write destination; right is the loaded source spelling.
+    source_id is midi_path_identity recorded at load.
+
+    When a source_id was recorded and the destination exists, the
+    destination's current identity is compared to that record first. A
+    match is 'same' even if the source spelling now resolves elsewhere
+    (rebound junction) or no longer exists (lost alias). An unusable
+    inode pair (None or st_ino 0) is never an inode match; canonical-
+    path equality or current-spelling samefile can still return True.
+
+    Only then is identity os.path.samefile on the current spellings
+    (st_dev/st_ino; on Windows the file index). That covers a directory
+    junction, an 8.3 short name, and a mapped drive vs UNC that still
+    name the same file.
+
+    When samefile cannot run, a missing destination is compared to the
+    recorded realpath. If the loaded source was file-backed and can no
+    longer be resolved at all, the result is 'unknown' (callers treat
+    that as ask, not unrelated).
+
+    A file symlink is not treated as "write the target": os.replace replaces
+    the link itself, not the file it pointed at. samefile may still report
+    True against that target; the write still commits at the path given.
+    """
+    if left is None or right is None:
+        return False
+    dest_exists = False
+    rec_real = rec_ino = None
+    if source_id is not None:
+        rec_real, rec_ino = source_id
+        try:
+            dest_exists = os.path.isfile(left)
+        except OSError:
+            dest_exists = False
+        if dest_exists:  # alias-lost: dest still exists under another spelling
+            dest_id = midi_path_identity(left)
+            if dest_id is not None:  # alias-rebound: identity-first before samefile
+                dest_real, dest_ino = dest_id
+                if (midi_inode_usable(rec_ino) and midi_inode_usable(dest_ino)
+                        and rec_ino == dest_ino):  # identity-zero-inode
+                    return True
+                if rec_real and dest_real and rec_real == dest_real:
+                    return True
+    try:
+        if os.path.isfile(left) and os.path.isfile(right):
+            return os.path.samefile(left, right)
+    except OSError:
+        pass
+    if source_id is not None:
+        if not dest_exists:  # source-unresolvable: dest spelling of a gone file
+            try:
+                dest_abs = os.path.normcase(os.path.abspath(left))
+            except OSError:
+                dest_abs = None
+            if rec_real and dest_abs and dest_abs == rec_real:
+                return True
+            try:
+                dest_real = os.path.normcase(os.path.abspath(os.path.realpath(left)))
+            except OSError:
+                dest_real = dest_abs
+            if rec_real and dest_real and dest_real == rec_real:
+                return True
+        try:
+            source_exists = os.path.isfile(right)
+        except OSError:
+            source_exists = False
+        if not source_exists:
+            return "unknown"
+    return (os.path.normcase(os.path.abspath(left))
+            == os.path.normcase(os.path.abspath(right)))
+
+
+def _midi_from_bytes(data):
+    import io
+    import mido
+    return mido.MidiFile(file=io.BytesIO(data))
+
+
+def read_chart_end_state_from_bytes(data):
+    """Return (kind, secs) parsed from already-read MIDI bytes."""
+    if not data:
+        return ("unreadable", None)
     try:
         import math
-        import mido
-        mid = mido.MidiFile(path)
+        mid = _midi_from_bytes(data)
         tpb = mid.ticks_per_beat
         if tpb <= 0 or mid.type == 2:
-            return None
+            return ("unreadable", None)
         best = None
         for track in mid.tracks:
             tick = 0
@@ -430,7 +572,7 @@ def read_chart_end_secs(path):
                         and msg.text == CHART_END_MARKER_TEXT):
                     best = tick if best is None else max(best, tick)
         if best is None:
-            return None
+            return ("absent", None)
         secs, prev_tick, prev_tempo = 0.0, 0, 500000
         for tick, tempo in _midi_tempo_map(mid):
             if tick >= best:
@@ -438,13 +580,106 @@ def read_chart_end_secs(path):
             secs += (tick - prev_tick) * prev_tempo / tpb / 1e6
             prev_tick, prev_tempo = tick, tempo
         secs += (best - prev_tick) * prev_tempo / tpb / 1e6
-        return secs if math.isfinite(secs) and secs >= 0 else None
+        if math.isfinite(secs) and secs >= 0:
+            return ("marker", secs)
+        return ("unreadable", None)
     except Exception:
+        return ("unreadable", None)
+
+
+def read_chart_end_state(path):
+    """Return (kind, secs): marker, absent (parsed, no Chart End), or unreadable."""
+    try:
+        if os.path.getsize(path) == 0:
+            return ("unreadable", None)
+    except OSError:
+        return ("unreadable", None)
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return ("unreadable", None)
+    return read_chart_end_state_from_bytes(data)
+
+
+def read_chart_end_secs(path):
+    """Latest exact Chart End marker in seconds; unreadable/invalid -> None."""
+    kind, secs = read_chart_end_state(path)
+    return secs if kind == "marker" else None
+
+
+def resolve_chart_end_for_write(dest_path, source_path, model_end):
+    """Same-source: disk marker, then absent (no marker), else the model.
+
+    Any other destination keeps the model's value. An unreadable same-source
+    file is being replaced; the model's end is used rather than refusing.
+    """
+    if (not same_midi_path(dest_path, source_path)
+            or not os.path.isfile(dest_path)):
+        return model_end
+    kind, secs = read_chart_end_state(dest_path)
+    if kind == "marker":
+        return secs
+    if kind == "absent":
         return None
+    return model_end
 
 
-def _write_chart_midi_atomic(path, payload):
-    """Commit already-serialized bytes through a unique sibling temp file."""
+def midi_dest_lstat(path):
+    """Discriminating lstat: ('present', st), ('absent',), or ('unreadable',).
+
+    FileNotFoundError or NotADirectoryError is genuine absence. Any other
+    OSError is inaccessible, never absent. os.path.lexists / exists /
+    isfile swallow PermissionError as False and must not decide absence.
+    """
+    try:
+        st = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):  # dest-absent
+        return ("absent",)
+    except OSError:  # dest-denied: not absent
+        return ("unreadable",)
+    return ("present", st)
+
+
+def midi_dest_expectation(path):
+    """Destination state: ('bytes', sig), ('absent',), or ('unreadable',).
+
+    ('unreadable',) is not an approvable overwrite state. Absence is
+    midi_dest_lstat only: FileNotFoundError / NotADirectoryError. Any
+    other OSError is unreadable, never absent. lexists/exists/isfile
+    swallow PermissionError as False and are not used here.
+    """
+    import stat
+    probe = midi_dest_lstat(path)
+    if probe[0] == "absent":
+        return ("absent",)
+    if probe[0] == "unreadable":
+        return ("unreadable",)
+    st = probe[1]
+    if not stat.S_ISREG(st.st_mode):  # dest-inaccessible: not absent
+        return ("unreadable",)
+    sig = midi_file_signature(path)
+    if sig is None:
+        return ("unreadable",)
+    return ("bytes", sig)
+
+
+def _write_chart_midi_atomic(path, payload, expected_dest=None):
+    """Commit already-serialized bytes through a unique sibling temp file.
+
+    expected_dest is ('bytes', sig), ('absent',), or None (unguarded).
+    ('unreadable',) is not approvable: the writer treats it as a mismatch
+    and raises. Immediately before os.replace the approved state is
+    re-checked. Bytes: re-hash; mismatch or disappearance raises
+    MidiDestinationChanged. Absent: any existing entry raises. A mismatch
+    unlinks the temp (via the cleanup path).
+
+    Remaining window: between that re-hash and os.replace another process
+    can still replace the destination. Python on Windows has no
+    content-conditional replace (no compare-and-swap on file bytes;
+    ReplaceFileW is not hash-gated; a lock is advisory against a writer
+    that does not take it). That interval is not closable here.
+    """
     import os
     import tempfile
     path = os.path.abspath(os.fspath(path))
@@ -459,6 +694,39 @@ def _write_chart_midi_atomic(path, payload):
         stream.flush()
         stream.close()
         stream = None
+        if expected_dest is not None:
+            kind = expected_dest[0]
+            if kind == "bytes":
+                sig = expected_dest[1]
+                probe = midi_dest_lstat(path)
+                if probe[0] == "absent":  # dest-vanished: expected bytes
+                    raise MidiDestinationChanged(
+                        "destination vanished before replace: %s" % path)
+                if probe[0] == "unreadable":
+                    raise MidiDestinationChanged(
+                        "destination unreadable; no blind replace: %s" % path)
+                current = midi_file_signature(path)
+                if current is None:
+                    raise MidiDestinationChanged(
+                        "destination changed before replace: %s" % path)
+                if (sig is None or len(sig) < 3
+                        or current[2] != sig[2]):  # dest-changed: bytes mismatch
+                    raise MidiDestinationChanged(
+                        "destination changed before replace: %s" % path)
+            elif kind == "absent":
+                probe = midi_dest_lstat(path)
+                if probe[0] == "unreadable":
+                    raise MidiDestinationChanged(
+                        "destination unreadable; no blind replace: %s" % path)
+                if probe[0] != "absent":  # dest-appeared: expected absent
+                    raise MidiDestinationChanged(
+                        "destination appeared before replace: %s" % path)
+            elif kind == "unreadable":  # unreadable-refused: no blind replace
+                raise MidiDestinationChanged(
+                    "destination unreadable; no blind replace: %s" % path)
+            else:
+                raise MidiDestinationChanged(
+                    "destination changed before replace: %s" % path)
         os.replace(tmp, path)
     except BaseException as exc:
         if stream is not None:
@@ -481,7 +749,8 @@ def _write_chart_midi_atomic(path, payload):
         raise
 
 
-def write_chart_midi(notes, bpm, path, chart_end_secs=None):
+def write_chart_midi(notes, bpm, path, chart_end_secs=None, expected_dest=None,
+                     emitted=None):
     """Write ``[(time_s, lane, vel)]`` to a format-0 SMF (prototype writeMidi):
     tpb 480, drum channel 9, one constant-tempo meta event, note-off 60 ticks
     (tpb>>3) after each note-on. Times are re-gridded to ticks at the constant
@@ -551,18 +820,36 @@ def write_chart_midi(notes, bpm, path, chart_end_secs=None):
     import io
     payload = io.BytesIO()
     mid.save(file=payload)
-    _write_chart_midi_atomic(path, payload.getvalue())
+    data = payload.getvalue()
+    _write_chart_midi_atomic(path, data, expected_dest=expected_dest)
+    if emitted is not None:
+        emitted.append(data)
 
 
-def _load_midi_notes(path):
+def load_chart_notes_from_bytes(data):
+    notes = _load_midi_notes_from_bytes(data)
+    notes.sort(key=lambda x: x[0])
+    return notes
+
+
+def chart_bpm_from_bytes(data):
+    import math as _math_bpm
+    try:
+        tempo_map = _midi_tempo_map(_midi_from_bytes(data))
+        _b = 6e7 / tempo_map[0][1]
+        return _b if _math_bpm.isfinite(_b) and 4.0 <= _b <= 100000.0 else None
+    except Exception:
+        return None
+
+
+def _load_midi_notes_from_bytes(data):
     """Honors the FULL tempo map (prototype parseMidi/ticksToSecs): pass 1
     collects the global tempo map across all tracks; pass 2 converts each
     note-on's absolute tick by integrating the piecewise-constant tempo. A
     format-1 chart (tempo in the conductor track, notes in another) and
     mid-song tempo changes both land on the right seconds -- the old per-track
     constant-tempo conversion mistimed exactly those charts."""
-    import mido
-    mid = mido.MidiFile(path)
+    mid = _midi_from_bytes(data)
     tpb = mid.ticks_per_beat
     # tpb must be a POSITIVE PPQ value (breaker R11-B2-1 + R12-B2-1,
     # 2026-07-20): mido loads a header with ticks_per_beat<=0 without
@@ -614,6 +901,11 @@ def _load_midi_notes(path):
                         continue
                     notes.append((_sec, int(lane), int(msg.velocity)))
     return notes
+
+
+def _load_midi_notes(path):
+    with open(path, "rb") as fh:
+        return _load_midi_notes_from_bytes(fh.read())
 
 
 def _load_rlrr_notes(path):

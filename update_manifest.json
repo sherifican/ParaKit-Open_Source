@@ -1,10 +1,10 @@
 {
-  "version": "4.14.1",
+  "version": "4.14.2",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Entries marked \"doc\": true are prose -- a hash mismatch on one is skipped by the updater instead of aborting the whole update; everything else stays fatal. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "3b556086f9bc912a1ac5a8bd31399c3a4380bbe655999c38fa91b63ca823244e",
+      "sha256": "12d11c82db4b775568896ab558b6436c1c8fd6dc0e03b5822083a70e31ba45fb",
       "doc": true
     },
     {
@@ -60,12 +60,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "4217940dbe0415b0f88e1e59bff2346fea5da27e87900013f1b80aa34ca78803",
+      "sha256": "f87f6325c32a94df17e44e67fe45c2c88a93714c8d4a8e433dd374da5d3ed2ea",
       "doc": true
     },
     {
       "path": "README.txt",
-      "sha256": "2e3dc3d55eb45c2a2e42fec923cffb987181bb5598c159fff8a3bcf3b3429071",
+      "sha256": "4f83731189bfba7336057efa4a86bf073d3fc86772f1b9646206c27e7177a015",
       "doc": true
     },
     {
@@ -157,7 +157,7 @@
     },
     {
       "path": "docs/TROUBLESHOOTING.md",
-      "sha256": "babaf4ab6416cecccebcac527040f33b6f43f5a035dbc403436b583464778318",
+      "sha256": "4f3d45ad9e72449c5183591df1592db31de4a730036eb603e9c58a984e0adb90",
       "doc": true
     },
     {
@@ -4583,7 +4583,7 @@
     },
     {
       "path": "parakit_practice_home.py",
-      "sha256": "e5a4a47792f69abeab005536d8b8b94cfd756c8f71a9bf88a36a5ec3cca64d7e"
+      "sha256": "454837378868288df356909fdacc284f1849fee5b189684226730031b248ec80"
     },
     {
       "path": "parakit_practice_sprites.py",
@@ -4595,11 +4595,11 @@
     },
     {
       "path": "parakit_practice_widgets.py",
-      "sha256": "ecda79c5d501eedb1c6661d227c69a550143290753d1f61888fcdae6d7271254"
+      "sha256": "048f360d749dbd7724c5b9b155cdfa7dc481003f074c1eb1640f957f6754a8f8"
     },
     {
       "path": "parakit_preview_engine.py",
-      "sha256": "5c454f71078ada055922f8d6015bc2f2ab5057076dce8df82be0b3c438b341af"
+      "sha256": "6190ad620078cf691520318a011c362728a780cde7884c255a4061ba1eefae52"
     },
     {
       "path": "parakit_preview_sprites.py",
@@ -4607,7 +4607,7 @@
     },
     {
       "path": "parakit_preview_tab.py",
-      "sha256": "22b21c794f106700600b7852cc491cc520bc01070b15881d733c9617b6bd973d"
+      "sha256": "d0a864202c8ad85fa8b05e7ac4e7f0dfd89508d9e0568ec41da0ef58203e0dc0"
     },
     {
       "path": "parakit_repo_banner.svg",
@@ -4631,7 +4631,7 @@
     },
     {
       "path": "parakit_song_tester_tab.py",
-      "sha256": "1e90f6ba3fad068d37fe09a8e32698e5168db459a861b969b4f76c4a2db57958"
+      "sha256": "9a3887bb86bfa0d28f114eff8f0997f2834e881b68b1a6bddc701682c5e9a179"
     },
     {
       "path": "parakit_song_tester_widgets.py",
@@ -4639,11 +4639,11 @@
     },
     {
       "path": "parakit_spectral_engine.py",
-      "sha256": "9778f9f0e5536560c4adeab502a8be0a7c718f929696ae2b9a14cc9a9db3bda3"
+      "sha256": "9871c3da1288985e9c8de9abd048ca28329c4cd0128ce505d4df093cf7b0eeff"
     },
     {
       "path": "parakit_spectral_tab.py",
-      "sha256": "8e4800abd1b20d876cf82d79360a5a65c045fc414b988367b8f102cf6e0e0cc8"
+      "sha256": "b61116c97af340c03793edef560ff7fc6b151be5cf1979857581ee7782db82a1"
     },
     {
       "path": "parakit_synth_voices.py",
@@ -4892,7 +4892,7 @@
     },
     {
       "path": "requirements.txt",
-      "sha256": "ac7d033972067700628b679619000da8c4a94a013e8f0a67dac229f43a9ffa0b"
+      "sha256": "6c1cc05e303a25d3a14e82de67d339ddec8acf23e06e19e2a1e9fce5a8aca040"
     },
     {
       "path": "rlrr_parse.py",

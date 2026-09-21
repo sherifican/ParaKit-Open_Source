@@ -50,8 +50,10 @@ PUBLIC API (freeze this surface -- Sol/Grok import against it):
             Momentary coloured-outline button (optional filled=True solid look).
             .set_enabled(enabled).
         GradientButton(parent, text, command, stops=(...), width=None,
-                       height=44, font=...)
+                       height=44, font=..., fg=None)
             Canvas multi-stop horizontal gradient button (Play CTAs).
+            fg=None keeps the class default bright label; a dark hex is
+            for a light fill (Play Loaded Song).
             .configure_state(normal|disabled), .set_enabled(enabled).
         Segmented(parent, options: list[str], command=None)
             Multi-option segmented control. .get() -> int, .set(index, fire=True).
@@ -583,10 +585,11 @@ class GradientButton(tk.Canvas):
     def __init__(self, parent, text, command=None,
                  stops=("#7C3AED", "#A044E3", "#ff69b4"),
                  width=None, height=44, font=None, tooltip=None,
-                 padx=18):
+                 padx=18, fg=None):
         self._text = str(text)
         self._command = command
         self._stops = tuple(stops) if stops else ("#7C3AED", "#A044E3", "#ff69b4")
+        self._fg = fg
         self._height = int(height)
         self._font = font or F_H2
         self._enabled = True
@@ -649,13 +652,13 @@ class GradientButton(tk.Canvas):
         w, h = self._width, self._height
         if not self._enabled:
             strips = self._strips_disabled
-            label_fg = blend(TEXT_BRIGHT, BG, 0.55)
+            label_fg = blend(self._fg or TEXT_BRIGHT, BG, 0.55)
         elif self._hover:
             strips = self._strips_hover
-            label_fg = "#ffffff"
+            label_fg = self._fg or "#ffffff"
         else:
             strips = self._strips_normal
-            label_fg = TEXT_BRIGHT
+            label_fg = self._fg or TEXT_BRIGHT
 
         # Keep canvas bg in the face palette so strip seams never flash parent bg.
         if strips:

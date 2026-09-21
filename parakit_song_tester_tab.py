@@ -122,6 +122,13 @@ class SongTesterTab(ttk.Frame):
         ok, img = self._hook_call("fluent_icon", name)
         return img if ok else None
 
+
+    def _primary_icon(self, name):
+        ok, img = self._hook_call("primary_fluent_icon", name)
+        if ok and img is not None:
+            return img
+        return self._icon(name)
+
     def _title(self, lf, text, icon):
         ok, _ = self._hook_call("labelframe_title", lf, text, icon)
         if not ok:
@@ -336,8 +343,8 @@ class SongTesterTab(ttk.Frame):
                   ).pack(anchor="w", pady=(4, 0))
 
         # ── Run + Send to Spectral ────────────────────────────────────────────
-        self.tester_btn = ttk.Button(left, text="Run Sync Test", image=self._icon("beaker") or "",
-                                     compound="left", style="Convert.TButton",
+        self.tester_btn = ttk.Button(left, text="Run Sync Test", image=self._primary_icon("beaker") or "",
+                                     compound="left", style="Hero.TButton",
                                      command=lambda: self._hook_call("start_analysis"))
         self.tester_btn.pack(fill=tk.X, pady=(5, 6), ipady=8)
         # Prototype `.runnote` (HTML :316): the amber prerequisite note under the Run button.
@@ -686,6 +693,12 @@ class SongTesterTab(ttk.Frame):
         for key, v in getattr(self, "_stat", {}).items():
             try:
                 v.configure(bg=PANEL, fg=CYAN if key in ("bpm", "offset") else TEXT)
+            except Exception:
+                pass
+        tbtn = getattr(self, "tester_btn", None)
+        if tbtn is not None:
+            try:
+                tbtn.configure(image=self._primary_icon("beaker") or "")
             except Exception:
                 pass
         for sw, color in getattr(self, "_legend_swatches", ()):

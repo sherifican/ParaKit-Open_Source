@@ -817,8 +817,7 @@ BUNDLE_HOW_TEXT = (
     "Put the files here:"
 )
 BUNDLE_HOW_TREE = (
-    "ParaKit\\                      <- the folder ParaKit.exe is in\n"
-    "├── ParaKit.exe\n"
+    "ParaKit\\                      <- the ParaKit folder\n"
     "└── Requirements\\\n"
     "    ├── ffmpeg.exe\n"
     "    ├── ffprobe.exe\n"
@@ -830,7 +829,7 @@ BUNDLE_HOW_TREE = (
     "        └── AdbWinUsbApi.dll"
 )
 BUNDLE_HOW_LAYOUTS = (
-    "The same files directly next to ParaKit.exe also work, and adb.exe with "
+    "The same files directly in the ParaKit folder also work, and adb.exe with "
     "its two DLLs may sit flat in Requirements\\."
 )
 BUNDLE_HOW_TAIL = (
@@ -7642,7 +7641,7 @@ class MidiExtractorPanel:
         if not _RLRR_AVAILABLE:
             ttk.Label(body,
                       text="MIDI Extractor unavailable — could not import rlrr_parse.\n"
-                           "Make sure the 'Extractor Mini App' folder is alongside ParaKit.exe.",
+                           "Make sure the 'Extractor Mini App' folder is alongside ParaKit.",
                       foreground="#ff6b81").pack(anchor="w")
             return
 
@@ -8124,7 +8123,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.14.1"
+    VERSION = "4.14.2"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -8268,18 +8267,33 @@ class MidiToRlrrApp:
         # the out-of-box window show one clean row. Clamped to the real screen so small
         # displays don't get a window larger than their desktop.
         try:
-            _dw = max(900, min(1480, self.root.winfo_screenwidth() - 80))
-            _dh = max(640, min(820, self.root.winfo_screenheight() - 80))
-            _default_geom = f"{_dw}x{_dh}"
+            _default_geom = self._fresh_default_geometry()
         except Exception:
             _default_geom = "1100x800"
+        _applied = _default_geom
         if geom:
             try:
-                self.root.geometry(geom)
+                _applied = self._clamp_restored_geometry(geom, _default_geom)
             except Exception:
-                self.root.geometry(_default_geom)
-        else:
+                _applied = _default_geom
+        try:
+            self.root.geometry(_applied)
+        except Exception:
             self.root.geometry(_default_geom)
+            _applied = _default_geom
+        _wh = self._parse_wm_geometry(_applied)
+        self._restore_client_wh = (_wh[0], _wh[1]) if _wh[0] and _wh[1] else (
+            self._parse_wm_geometry(_default_geom)[0] or 1100,
+            self._parse_wm_geometry(_default_geom)[1] or 800)
+        self._restore_client_applied = False
+        self._restore_menu_settled = False
+        self._restore_user_cancel = False
+        self._restore_idle_id = None
+        self._restore_cfg_id = None
+        try:
+            self._restore_cfg_id = self.root.bind("<Configure>", self._restore_on_configure, add="+")
+        except Exception:
+            self._restore_cfg_id = None
 
         try:
             self.root.update_idletasks()
@@ -8442,6 +8456,13 @@ class MidiToRlrrApp:
         self.notebook.bind("<<NotebookTabChanged>>", _ensure_help_built, add="+")
         self._build_asset_manager_tab(tab12)
         self._build_menu_bar()
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
+        self._restore_menu_settled = True
+        self._apply_requested_client_size()
+        self._schedule_requested_client_size()
         self._build_tab_buttons()   # v4.8.0 custom colored tab bar (native tabs hidden in _apply_theme)
         self.notebook.bind("<<NotebookTabChanged>>",
                            lambda e: self._sync_tab_buttons(), add="+")
@@ -8514,6 +8535,10 @@ class MidiToRlrrApp:
 
         self._global_status_var = tk.StringVar(
             value="Ready - choose a tab to start building or cleaning up a chart.")
+        try:
+            self._refresh_layout_disclosure(set_status=True)
+        except Exception:
+            pass
         global_status = ttk.Frame(root)
         global_status.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=(0, 6))
         ttk.Label(global_status, textvariable=self._global_status_var,
@@ -8590,6 +8615,11 @@ class MidiToRlrrApp:
                                       image=fluent_icon("grid") or "", compound="left",
                                       command=self._cycle_layout_mode)
         self._layout_btn.pack(side=tk.RIGHT, padx=(0, 10))
+        self._layout_btn_tip_bound = False
+        try:
+            self._refresh_layout_disclosure()
+        except Exception:
+            pass
 
         brand_frame = tk.Frame(header_frame, bg=BG)
         brand_frame.pack(anchor="w", fill=tk.X,
@@ -8721,14 +8751,19 @@ class MidiToRlrrApp:
         # compact and roomy header layouts so users on cramped 1080p
         # displays can find the manual override without digging. See
         # Help tab "Layout Mode" section for the full explanation.
-        ttk.Label(header_frame,
-                  # One line at wraplength=900 (a longer hint wrapped the roomy header to two
-                  # lines, captured 2026-09-03). Job 2: every tab follows the swap, so the hint
-                  # no longer lists exceptions.
-                  text="🖥  Cramped layout? Use Layout (top right) or Tools > Layout Mode — applies now.",
-                  style="Sub.TLabel", foreground="#e09a3a",
-                  wraplength=900, justify=tk.LEFT).pack(
-                      anchor="w", pady=((1 if compact else 4), 0))
+        self._layout_hint_lbl = ttk.Label(
+            header_frame,
+            # One line at wraplength=900 (a longer hint wrapped the roomy header to two
+            # lines, captured 2026-09-03). Job 2: every tab follows the swap, so the hint
+            # no longer lists exceptions. Short-window Roomy fallback replaces this text.
+            text="🖥  Cramped layout? Use Layout (top right) or Tools > Layout Mode — applies now.",
+            style="Sub.TLabel", foreground="#e09a3a",
+            wraplength=900, justify=tk.LEFT)
+        self._layout_hint_lbl.pack(anchor="w", pady=((1 if compact else 4), 0))
+        try:
+            self._refresh_layout_disclosure()
+        except Exception:
+            pass
 
 
     def _normalize_header_labels(self):
@@ -8763,17 +8798,38 @@ class MidiToRlrrApp:
     def _resolve_layout_flag(self, mode):
         """compact/roomy -> the flag; auto -> the work-area rule (same rule as
         _should_use_compact_layout). Never reads the config file, so a failed save still
-        resolves to the mode the user just chose."""
+        resolves to the mode the user just chose.
+
+        A chosen Roomy (or Auto that would otherwise be Roomy) still returns Compact
+        when the current client height is below 913, so the piano roll stays visible.
+        The saved selection is not rewritten. This is evaluated at startup and when a
+        layout is selected; it is not re-run on ordinary resizing. Enlarging a short
+        window keeps Compact spacing until Layout is reselected or the app restarts.
+        """
         mode = (mode or "auto").lower()
         if mode == "compact":
             return True
         if mode == "roomy":
+            try:
+                h = int(self.root.winfo_height() or 0)
+            except Exception:
+                h = 0
+            if h >= 100 and h < 913:
+                return True
             return False
         try:
             work_w, work_h = self._current_monitor_work_area()
-            return work_w <= 1920 or work_h <= 1200
+            if work_w <= 1920 or work_h <= 1200:
+                return True
         except Exception:
-            return False
+            pass
+        try:
+            h = int(self.root.winfo_height() or 0)
+        except Exception:
+            h = 0
+        if h >= 100 and h < 913:
+            return True
+        return False
 
     def _rebuild_chrome(self, compact):
         """Live layout swap (Job 1): rebuild the header and the tab-bar buttons for the given
@@ -9046,6 +9102,15 @@ class MidiToRlrrApp:
         r = int(r + (255 - r) * amt); g = int(g + (255 - g) * amt); b = int(b + (255 - b) * amt)
         return f"#{r:02x}{g:02x}{b:02x}"
 
+
+    @staticmethod
+    def _darken(hexc, amt=0.18):
+        """Blend a hex color toward black by amt (0..1) — Hero.TButton pressed."""
+        hexc = hexc.lstrip("#")
+        r, g, b = int(hexc[0:2], 16), int(hexc[2:4], 16), int(hexc[4:6], 16)
+        r = int(r * (1 - amt)); g = int(g * (1 - amt)); b = int(b * (1 - amt))
+        return f"#{r:02x}{g:02x}{b:02x}"
+
     def _tab_hover(self, idx, entering):
         """Lighten a tab button on mouse-over for affordance; the active (dark) tab
         doesn't react (it stays the pressed color until you leave it)."""
@@ -9295,6 +9360,26 @@ class MidiToRlrrApp:
         except Exception:
             got_drums = got_chart = got_mix = False
             sent = False
+        # Record after assignment, each key in its own guard: a malformed
+        # recent-list value (e.g. null) must not roll back the send, skip
+        # Analyze sync, or suppress Compare. Do not call this a failed send.
+        rec_warn = []
+        if assigned:
+            if got_drums:
+                try:
+                    self._add_recent_file("recent_spec_drums", drums)
+                except Exception:
+                    rec_warn.append("drums")
+            if got_chart:
+                try:
+                    self._add_recent_file("recent_spec_chart", chart)
+                except Exception:
+                    rec_warn.append("chart")
+            if got_mix:
+                try:
+                    self._add_recent_file("recent_spec_mix", mix)
+                except Exception:
+                    rec_warn.append("mix")
         if assigned:
             # Reveal or hide the Analyze Drums|Full Mix row, exactly as the
             # tab's own Auto Fetch Audio / mix-clear paths do after changing
@@ -9375,6 +9460,8 @@ class MidiToRlrrApp:
             else:
                 _msg = ("Opened Spectral Comparison — load a drums stem + "
                         "chart.")
+            if rec_warn:
+                _msg += " Recent-list update failed."
             self._set_global_status(_msg, 4000)
         except Exception:
             pass
@@ -10277,7 +10364,7 @@ class MidiToRlrrApp:
     # self.VERSION. If newer, the user can open GitHub to download just the one
     # file, and (running from source) let ParaKit download + replace that single
     # file in place. We deliberately do NOT git clone — that pulls the whole repo
-    # for a one-file change. The compiled .exe download is maintained separately.
+    # for a one-file change. A compiled .exe is no longer offered.
     # IMPORTANT: the README "Version in this release:" line is the source of
     # truth here — keep it in sync with the VERSION constant on every push.
     PARAKIT_RELEASE_URL = "https://github.com/sherifican/ParaKit-Open_Source"
@@ -10447,9 +10534,8 @@ class MidiToRlrrApp:
         ttk.Label(frame, text=f"You have v{self.VERSION}.",
                   style="Sub.TLabel").pack(anchor="w", pady=(2, 8))
         if is_frozen:
-            body = ("Download the latest ParaKit from GitHub. (The compiled .exe "
-                    "download is maintained separately and may lag this source "
-                    "version.)")
+            body = ("Download the latest ParaKit from GitHub. This repository "
+                    "is the source release and does not include a compiled .exe.")
         else:
             body = ("Grab the latest ParaKit from GitHub — you don't need the whole "
                     "repo — or let ParaKit download and install the updated files "
@@ -12386,20 +12472,354 @@ class MidiToRlrrApp:
         except Exception:
             return (0, 0, 1920, 1080)
 
+    def _parse_wm_geometry(self, geom):
+        """Return (w, h, x, y) from a Tk geometry string. x/y are None if omitted.
+
+        A negative coordinate is serialised as ``+-N`` (plus then a negative
+        integer). Walking plus-or-minus digits on the remainder after WxH is
+        the parse that yields x=-4000 from ``1480x900+-4000+40``.
+        """
+        s = (geom or "").strip()
+        w = h = x = y = None
+        m = re.match(r"^(\d+)x(\d+)(.*)$", s)
+        if not m:
+            return w, h, x, y
+        w, h = int(m.group(1)), int(m.group(2))
+        nums = re.findall(r"[+-]\d+", m.group(3) or "")
+        if len(nums) >= 2:
+            x, y = int(nums[0]), int(nums[1])
+        return w, h, x, y
+
+    def _fresh_default_geometry(self):
+        """Client size for a first launch, clamped to the primary screen.
+
+        Width is 900-1480. Height is 760-1002. 760 is the configured
+        minimum (minsize); the previous 640 floor could request a height
+        below that minimum. A display whose screen height minus 80 is
+        below 760 still requests 760 and the window overflows that work
+        area. That overflow is documented, not hidden: the supported
+        minimum is 760.
+        """
+        sw = int(self.root.winfo_screenwidth() or 1920)
+        sh = int(self.root.winfo_screenheight() or 1080)
+        dw = max(900, min(1480, sw - 80))
+        dh = max(760, min(1002, sh - 80))
+        return "%dx%d" % (dw, dh)
+
+    def _fit_client_wh(self, w, h, work_w, work_h):
+        """Fit a requested client size to a work area, then raise to minsize.
+
+        The restored value is a client size. Native frame (caption + borders)
+        sits outside it; menu-bar height is inside the client after the
+        startup re-apply. Frame allowance is 16x40. Result width/height are
+        never below 640x760. If the work area cannot hold that minimum, the
+        minimum is still requested and the window overflows the work area.
+        """
+        min_w, min_h = 640, 760
+        frame_w, frame_h = 16, 40
+        ww = max(0, int(work_w or 0))
+        hh = max(0, int(work_h or 0))
+        max_w = ww - frame_w if ww > frame_w else ww
+        max_h = hh - frame_h if hh > frame_h else hh
+        fit_w = max(min_w, min(int(w), max(min_w, max_w)))
+        fit_h = max(min_h, min(int(h), max(min_h, max_h)))
+        return fit_w, fit_h
+
+    def _clamp_restored_geometry(self, geom, default_geom):
+        """Fit restored size to the destination work area, then place it.
+
+        Size is normalized against the destination work area, the 640x760
+        minimum, and a 16x40 frame allowance before it is stored as
+        `_restore_client_wh`. A size-only geometry (no x/y) is fitted the
+        same way. A position on a still-attached monitor, including one
+        with negative coordinates, is left alone. A position whose nearest
+        monitor is not the one the coordinates name (detached / off the
+        virtual desktop) is clamped onto that nearest work area.
+
+        Fitting size is not the same as claiming the saved window already
+        fit. An oversized save is reduced; a position-only clamp is not
+        described as fitting.
+        """
+        w, h, x, y = self._parse_wm_geometry(geom)
+        dw, dh, _, _ = self._parse_wm_geometry(default_geom)
+        if not w or not h:
+            w, h = dw or 1100, dh or 800
+        try:
+            if x is None or y is None:
+                l, t, r, b = self._monitor_bounds_for_point(0, 0)
+            else:
+                l, t, r, b = self._monitor_bounds_for_point(int(x), int(y))
+            ww, hh = (r - l), (b - t)
+            if ww > 0 and hh > 0:
+                w, h = self._fit_client_wh(w, h, ww, hh)
+            if x is None or y is None:
+                return "%dx%d" % (w, h)
+            if ww > 0 and hh > 0 and not (l <= x < r and t <= y < b):
+                x = min(max(int(x), l), r - min(w, ww))
+                y = min(max(int(y), t), b - min(h, hh))
+        except Exception:
+            if x is None or y is None:
+                return "%dx%d" % (w, h)
+        return "%dx%d+%d+%d" % (w, h, x, y)
+
+    def _unbind_restore_configure(self):
+        fid = getattr(self, "_restore_cfg_id", None)
+        if not fid:
+            return
+        try:
+            self.root.unbind("<Configure>", fid)
+        except Exception:
+            pass
+        self._restore_cfg_id = None
+
+    def _cancel_restore_client_size(self, _why):
+        """End the startup size correction because the user sized or snapped."""
+        self._restore_user_cancel = True
+        self._restore_client_applied = True
+        self._unbind_restore_configure()
+        _id = getattr(self, "_restore_idle_id", None)
+        if _id is not None:
+            try:
+                self.root.after_cancel(_id)
+            except Exception:
+                pass
+            self._restore_idle_id = None
+
+    def _restore_on_configure(self, event=None):
+        """Startup-only. Cancel restoration on user sizing or snap.
+
+        Not a geometry-enforcement loop. Ignored until the menu bar is
+        attached. A width-changing snap or a taller-than-requested size
+        cancels the pending re-apply. A same-width height drop during this
+        short window is treated as menu settlement; a same-width user
+        shrink in that window is not distinguished.
+        """
+        if getattr(self, "_restore_client_applied", False):
+            return
+        if getattr(self, "_restore_user_cancel", False):
+            return
+        if not getattr(self, "_restore_menu_settled", False):
+            return
+        try:
+            if event is not None and getattr(event, "widget", None) is not self.root:
+                return
+        except Exception:
+            pass
+        want = getattr(self, "_restore_client_wh", None)
+        if not want:
+            return
+        try:
+            if str(self.root.state()) == "zoomed":
+                self._cancel_restore_client_size("zoomed")
+                return
+        except Exception:
+            pass
+        try:
+            cw = int(self.root.winfo_width() or 0)
+            ch = int(self.root.winfo_height() or 0)
+        except Exception:
+            return
+        if cw < 100 or ch < 100:
+            return
+        ww, hh = int(want[0]), int(want[1])
+        if abs(cw - ww) > 2:
+            self._cancel_restore_client_size("width")
+            return
+        if ch > hh + 2:
+            self._cancel_restore_client_size("taller")
+
+    def _apply_requested_client_size(self):
+        """Menu-settled startup re-apply of the restored/default client size.
+
+        On Windows, geometry() before first show is the outer size; the menu
+        bar is then put inside it, so the client comes out shorter and that
+        shorter size is what _on_close saves. geometry() on an already-shown
+        window sets client = requested, so one re-apply round-trips.
+
+        Bounded first-map / menu-settled startup step, not a continuing
+        geometry-enforcement loop. Does not run until the menu bar has
+        been attached. Does not retire on first equality: a later idle
+        retry still runs so a late menu loss is corrected. Keep the
+        current x,y so a move is not undone.
+        """
+        if getattr(self, "_restore_client_applied", False):
+            return
+        if getattr(self, "_restore_user_cancel", False):
+            self._restore_client_applied = True
+            return
+        if not getattr(self, "_restore_menu_settled", False):
+            return
+        want = getattr(self, "_restore_client_wh", None)
+        if not want:
+            self._restore_client_applied = True
+            return
+        try:
+            st = str(self.root.state())
+        except Exception:
+            return
+        if st == "zoomed":
+            self._cancel_restore_client_size("zoomed")
+            return
+        try:
+            mapped = bool(self.root.winfo_ismapped())
+            cw = int(self.root.winfo_width() or 0)
+            ch = int(self.root.winfo_height() or 0)
+        except Exception:
+            return
+        ww, hh = int(want[0]), int(want[1])
+        # Re-apply every requested client height, including 820 (menu-bar drift).
+        if mapped and cw == ww and ch == hh:
+            return
+        if ch < 100 or cw < 100:
+            try:
+                self.root.geometry("%dx%d" % (ww, hh))
+                self.root.update_idletasks()
+            except Exception:
+                pass
+            return
+        try:
+            self.root.geometry("%dx%d" % (ww, hh))
+            self.root.update_idletasks()
+        except Exception:
+            return
+
+    def _finish_restore_client_size(self):
+        """End of the bounded startup step: one idle retry, then stop."""
+        self._restore_idle_id = None
+        if not getattr(self, "_restore_client_applied", False) and not getattr(self, "_restore_user_cancel", False):
+            self._apply_requested_client_size()
+        self._restore_client_applied = True
+        self._unbind_restore_configure()
+
+    def _schedule_requested_client_size(self):
+        try:
+            self._restore_idle_id = self.root.after_idle(self._finish_restore_client_size)
+        except Exception:
+            self._finish_restore_client_size()
+
+    def _chosen_layout_mode(self):
+        for src in (getattr(self, "_layout_mode_var", None),
+                    getattr(self, "_header_layout_var", None)):
+            try:
+                if src is not None:
+                    return (src.get() or "auto").lower()
+            except Exception:
+                pass
+        try:
+            return (load_config().get("me_layout_mode", "auto") or "auto").lower()
+        except Exception:
+            return "auto"
+
+    def _layout_fallback_text(self, mode=None, compact_flag=None):
+        """Persistent disclosure when Compact spacing is covering a Roomy/Auto choice."""
+        if mode is None:
+            mode = self._chosen_layout_mode()
+        if compact_flag is None:
+            compact_flag = bool(getattr(self, "_compact_layout", False))
+        mode = (mode or "auto").lower()
+        if not compact_flag:
+            return ""
+        if mode == "roomy":
+            return ("Roomy selected; Compact spacing is used while the window is too short. "
+                    "Enlarging the window keeps Compact spacing until Layout is reselected or the app restarts.")
+        if mode == "auto":
+            try:
+                work_w, work_h = self._current_monitor_work_area()
+                if work_w <= 1920 or work_h <= 1200:
+                    return ""
+            except Exception:
+                return ""
+            return ("Auto selected; Compact spacing is used while the window is too short. "
+                    "Enlarging the window keeps Compact spacing until Layout is reselected or the app restarts.")
+        return ""
+
+    def _bind_layout_btn_tip(self):
+        btn = getattr(self, "_layout_btn", None)
+        if btn is None or getattr(self, "_layout_btn_tip_bound", False):
+            return
+        tip_window = []
+
+        def on_enter(event):
+            if tip_window:
+                return
+            text = getattr(self, "_layout_btn_tip", None) or (
+                "Cycle Auto, Compact, and Roomy. The selected name is kept even when "
+                "Compact spacing is used on a short window. The layout is not "
+                "re-resolved while resizing.")
+            try:
+                x = btn.winfo_rootx() + 20
+                y = btn.winfo_rooty() + btn.winfo_height() + 4
+                tw = tk.Toplevel(btn)
+                tw.wm_overrideredirect(True)
+                tw.configure(bg="#2a2a2a")
+                _wrap = max(320, min(560, btn.winfo_screenwidth() - 80))
+                lbl = tk.Label(tw, text=text, justify=tk.LEFT, wraplength=_wrap,
+                               background="#2a2a2a", foreground="#ffcc00",
+                               font=("Segoe UI", 9), relief="solid", borderwidth=1,
+                               padx=8, pady=6)
+                lbl.pack()
+                self._position_popup_with_bounds(tw, x, y, anchor=btn)
+                tip_window.append(tw)
+            except Exception:
+                pass
+
+        def on_leave(event):
+            if tip_window:
+                try:
+                    tip_window[0].destroy()
+                except Exception:
+                    pass
+                tip_window.clear()
+
+        try:
+            btn.bind("<Enter>", on_enter)
+            btn.bind("<Leave>", on_leave)
+            self._layout_btn_tip_bound = True
+        except Exception:
+            pass
+
+    def _refresh_layout_disclosure(self, mode=None, compact_flag=None, set_status=False):
+        """Header hint, Layout-button tooltip, and optional status for short-window fallback."""
+        text = self._layout_fallback_text(mode, compact_flag)
+        short = (text.split(".")[0] + ".") if text else (
+            "🖥  Cramped layout? Use Layout (top right) or Tools > Layout Mode — applies now.")
+        hint = getattr(self, "_layout_hint_lbl", None)
+        if hint is not None:
+            try:
+                hint.configure(text=short)
+            except Exception:
+                pass
+        self._layout_btn_tip = text or (
+            "Cycle Auto, Compact, and Roomy. The selected name is kept even when "
+            "Compact spacing is used on a short window. The layout is not "
+            "re-resolved while resizing.")
+        self._bind_layout_btn_tip()
+        if set_status and text:
+            try:
+                self._set_global_status(text)
+            except Exception:
+                pass
+
     def _should_use_compact_layout(self):
         """Use tighter chrome on 1920x1080-class work areas.
 
         v4.4.45 — honors user-saved override from config first:
           - `me_layout_mode = "compact"`  → force compact, ignore auto-detect.
-          - `me_layout_mode = "roomy"`    → force roomy, ignore auto-detect.
+          - `me_layout_mode = "roomy"`    → keep the Roomy selection, but use
+            Compact spacing when the current client height is below 913 so
+            the piano roll stays visible. The saved selection is not rewritten.
           - `me_layout_mode = "auto"` (or missing) → auto-detect via
             `_current_monitor_work_area`. Threshold broadened from
             `work_h <= 1100` to `work_h <= 1200` so 1920x1080 + 1920x1200
-            panels both fire. The auto-detect path can still fail on
+            panels both fire. A short window on a large monitor also uses
+            Compact spacing. The auto-detect path can still fail on
             multi-monitor setups where `MonitorFromWindow` at startup
             returns the primary monitor (often 1440p) before the window
             has been positioned on the secondary 1080p monitor. The
             manual override exists for those cases.
+        Evaluated at startup and when a layout is selected, not on ordinary
+        resizing. Enlarging a short window keeps Compact spacing until Layout
+        is reselected or the app restarts.
         """
         try:
             cfg_mode = (load_config().get("me_layout_mode", "auto") or "auto").lower()
@@ -12408,12 +12828,26 @@ class MidiToRlrrApp:
         if cfg_mode == "compact":
             return True
         if cfg_mode == "roomy":
+            try:
+                h = int(self.root.winfo_height() or 0)
+            except Exception:
+                h = 0
+            if h >= 100 and h < 913:
+                return True
             return False
         try:
             work_w, work_h = self._current_monitor_work_area()
-            return work_w <= 1920 or work_h <= 1200
+            if work_w <= 1920 or work_h <= 1200:
+                return True
         except Exception:
-            return False
+            pass
+        try:
+            h = int(self.root.winfo_height() or 0)
+        except Exception:
+            h = 0
+        if h >= 100 and h < 913:
+            return True
+        return False
 
     def _set_layout_mode(self, mode):
         """Save the layout-mode override to config and apply it live (Job 1).
@@ -12453,6 +12887,7 @@ class MidiToRlrrApp:
         # still applies for this session.
         new_flag = self._resolve_layout_flag(mode)
         effective = "Compact" if new_flag else "Roomy"
+        fallback = self._layout_fallback_text(mode, new_flag)
         # Coalesce: a rebuild still queued from an earlier selection is cancelled first, so
         # only the latest target ever runs and the comparison below is against the layout
         # actually on screen (codex review, finding 2).
@@ -12468,9 +12903,20 @@ class MidiToRlrrApp:
             # A fact, not a command (grok review, Job 1): "tab layouts update on the next
             # launch" read as an instruction to relaunch when a button press does the rest.
             # Job 2 removed the exemption itself: every tab follows the swap in place.
-            status = f"Layout: {mode.title()} — applied."
+            # Do not announce Roomy when Compact spacing is what was applied.
+            if fallback:
+                status = fallback
+            else:
+                status = f"Layout: {mode.title()} — applied ({effective} spacing)."
         else:
-            status = f"Layout: {mode.title()} — already in effect ({effective} on this display)."
+            if fallback:
+                status = fallback
+            else:
+                status = f"Layout: {mode.title()} — already in effect ({effective} on this display)."
+        try:
+            self._refresh_layout_disclosure(mode, new_flag, set_status=False)
+        except Exception:
+            pass
         try:
             self._set_global_status(status)
         except Exception:
@@ -12745,6 +13191,124 @@ class MidiToRlrrApp:
         for child in kids:
             self._recolor_tk_tree(child, old_app, new_app, old_log, new_log)
 
+    def _primary_action_icon(self, name, size=16):
+        """Icon tint for Hero.TButton: dark-on-pink in dark, fg-on-purple in light."""
+        tint = "dark" if getattr(self, "_theme_mode", "dark") == "dark" else "fg"
+        return fluent_icon(name, size, tint)
+
+    def _retint_primary_action_icons(self):
+        """Re-tint inventoried one-per-tab hero icons after a theme pass or toggle."""
+        pairs = []
+        cb = getattr(self, "convert_btn", None)
+        if cb is not None:
+            try:
+                pairs.append((cb, self._sc_convert_button_icon()))
+            except Exception:
+                pass
+        for attr, name in (
+            ("stem_btn", "arrow_split"),
+            ("a2m_btn", "midi"),
+            ("sm_btn", "book_open"),
+            ("yt_dl_btn", "arrow_download"),
+            ("ogg_convert_btn", "arrow_sync"),
+            ("batch_convert_btn", "music_note_2"),
+            ("tester_btn", "beaker"),
+        ):
+            w = getattr(self, attr, None)
+            if w is not None:
+                pairs.append((w, name))
+        for w, name in pairs:
+            try:
+                w.configure(image=self._primary_action_icon(name) or "")
+            except Exception:
+                pass
+
+    def _register_hero_ttkstyle(self):
+        """Put Hero.TButton in ttkbootstrap's registry so the constructor keeps the name.
+
+        ttk.Style().configure writes the Tcl table but not ttkbootstrap's
+        _style_registry. Bootstyle.override_ttk_widget_constructor then
+        rewrites style=Hero.TButton to TButton at construct. Convert.TButton
+        is intentionally NOT registered — its consumers evaluate as TButton
+        today and the owner did not ask to restyle them.
+        """
+        if not TTKBS_AVAILABLE:
+            return
+        try:
+            inst = ttk_bs.Style.get_instance()
+        except Exception:
+            return
+        if inst is None:
+            return
+        try:
+            inst._register_ttkstyle("Hero.TButton")
+        except Exception:
+            pass
+
+    def _register_me_reclass_ttkstyle(self):
+        """Define Reclass.TCheckbutton, in ttkbootstrap's registry when it runs.
+
+        Carries the MIDI Editor's cyan bold "Reclassify mode" text. The font is
+        derived from the resolved base TCheckbutton font so the label differs
+        from its four siblings only in weight and colour, never in size. The
+        base style is deliberately not touched — configuring TCheckbutton
+        itself would tint every checkbox in the app. The active-state map
+        restores the brighter cyan the classic tk widget used to show on hover.
+
+        Without ttkbootstrap the app runs plain ttk on "clam", which honours a
+        configured custom style with no registry. The classic checkbox this
+        replaced was cyan on that path too, so the style is defined there as
+        well rather than dropped.
+
+        Returns True only when the style is usable, so the caller can leave the
+        checkbox on the base style rather than pointing it at a name that was
+        never defined. Applying an undefined style does not raise; it silently
+        inherits the base, which is why the failure needs reporting here.
+        """
+        inst = None
+        if TTKBS_AVAILABLE:
+            try:
+                inst = ttk_bs.Style.get_instance()
+            except Exception:
+                return False
+            if inst is None:
+                return False
+        try:
+            from tkinter import font as tkfont
+            style = ttk.Style()
+            base = style.lookup("TCheckbutton", "font") or "TkDefaultFont"
+            fnt = tkfont.Font(font=base).actual()
+            style.configure("Reclass.TCheckbutton",
+                            foreground="#00d4d4",
+                            font=(fnt["family"], fnt["size"], "bold"))
+            style.map("Reclass.TCheckbutton",
+                      foreground=[("active", "#00ffe0")])
+            if inst is not None:
+                inst._register_ttkstyle("Reclass.TCheckbutton")
+        except Exception:
+            return False
+        return True
+
+    def _assert_hero_button_styles(self):
+        """Re-apply Hero.TButton after ttkbootstrap constructor/stagger drops it."""
+        for attr in (
+            "convert_btn",
+            "stem_btn",
+            "a2m_btn",
+            "sm_btn",
+            "yt_dl_btn",
+            "ogg_convert_btn",
+            "batch_convert_btn",
+            "tester_btn",
+        ):
+            w = getattr(self, attr, None)
+            if w is None:
+                continue
+            try:
+                w.configure(style="Hero.TButton")
+            except Exception:
+                pass
+
     def _apply_theme(self):
         """Apply dark theme custom overrides on top of ttkbootstrap darkly."""
         style = ttk.Style()
@@ -12817,6 +13381,91 @@ class MidiToRlrrApp:
                                ("!active", PURPLE)],
                   relief=[("pressed", "sunken"),
                           ("!pressed", "raised")])
+
+
+        # One-per-tab hero. Dark: tab-strip pink #ff6ec7 on #12121c so the
+        # one big button stands off the purple chrome. Light: today's
+        # evaluated TButton table (8/9 pt, button_pad) — not Convert's 12
+        # bold. Convert.TButton itself is not restyled and is not registered
+        # with ttkbootstrap, so dialogs / MIDI Editor / Asset Manager /
+        # tester extras / Convert Folder stay the TButton face they evaluate
+        # as today. Owner asked for color only on the heroes.
+        if getattr(self, "_theme_mode", "dark") == "dark":
+            _p_bg = "#ff6ec7"
+            _p_fg = "#12121c"
+            _p_hover = self._lighten(_p_bg)
+            _p_pressed = self._darken(_p_bg)
+            style.configure("Hero.TButton",
+                            background=_p_bg,
+                            foreground=_p_fg,
+                            bordercolor=_p_bg,
+                            lightcolor=_p_hover,
+                            darkcolor="#2a1235",
+                            focuscolor=_p_bg,
+                            focusthickness=1,
+                            borderwidth=1,
+                            relief="raised",
+                            padding=button_pad,
+                            font=("Segoe UI", base_font_size))
+            style.map("Hero.TButton",
+                      foreground=[("disabled", "#888888"),
+                                  ("active", _p_fg),
+                                  ("pressed", _p_fg),
+                                  ("!disabled", _p_fg)],
+                      background=[("disabled", "#2a2a30"),
+                                  ("pressed", _p_pressed),
+                                  ("active", _p_hover),
+                                  ("!disabled", _p_bg)],
+                      bordercolor=[("disabled", "#444444"),
+                                   ("active", _p_hover),
+                                   ("pressed", "#ffffff"),
+                                   ("!disabled", _p_bg)],
+                      relief=[("pressed", "sunken"),
+                              ("!pressed", "raised")])
+        else:
+            style.configure("Hero.TButton",
+                            background="#7c3aed",
+                            foreground="#ffffff",
+                            bordercolor=PURPLE,
+                            lightcolor="#8b5cf6",
+                            darkcolor="#2a1235",
+                            focuscolor=PURPLE,
+                            focusthickness=1,
+                            borderwidth=1,
+                            relief="raised",
+                            padding=button_pad,
+                            font=("Segoe UI", base_font_size))
+            style.map("Hero.TButton",
+                      foreground=[("disabled", "#888888"),
+                                  ("active", "#ffffff"),
+                                  ("pressed", "#ffffff"),
+                                  ("!disabled", "#ffffff")],
+                      background=[("disabled", "#2a2a30"),
+                                  ("pressed", "#5b21b6"),
+                                  ("active", "#8b5cf6"),
+                                  ("!disabled", "#7c3aed")],
+                      bordercolor=[("disabled", "#444444"),
+                                   ("active", "#d4b3ff"),
+                                   ("pressed", "#ffffff"),
+                                   ("!disabled", PURPLE)],
+                      relief=[("pressed", "sunken"),
+                              ("!pressed", "raised")])
+        if not TTKBS_AVAILABLE:
+            # Plain Tk: Convert.TButton actually applied (12 bold /
+            # [14, 7] roomy). Copy its live table onto Hero in BOTH
+            # theme branches so Song Creator Convert does not shrink
+            # in dark and does not change geometry on a light/dark
+            # toggle. Colors stay per branch. Under ttkbootstrap,
+            # Convert consumers already evaluate as TButton (8/9 pt).
+            _cf = style.lookup("Convert.TButton", "font")
+            _cp = style.lookup("Convert.TButton", "padding")
+            _hero_kw = {}
+            if _cf:
+                _hero_kw["font"] = _cf
+            if _cp not in (None, ""):
+                _hero_kw["padding"] = _cp
+            if _hero_kw:
+                style.configure("Hero.TButton", **_hero_kw)
 
         # v4.4.62 follow-up — The MIDI Editor "Auto Fetch Audio" button keeps the
         # DEFAULT purple ttk button look (so it matches Play/Stop) and gets its
@@ -13107,8 +13756,74 @@ class MidiToRlrrApp:
                 _st_mod.apply_theme_embedded(_st_tab)
         except Exception:
             pass
+        try:
+            self._reassert_cyan_borders()  # cyan-border: re-assert
+        except Exception:
+            pass
+
+        try:
+            self._register_hero_ttkstyle()
+        except Exception:
+            pass
+        try:
+            self._assert_hero_button_styles()
+        except Exception:
+            pass
+        try:
+            self._retint_primary_action_icons()
+        except Exception:
+            pass
 
         # Header label colors enforced via deferred _fix_header_labels call
+
+
+    def _cyan_border_frame_kwargs(self):
+        """Kwargs for a 2 px cyan tk.Frame wrap. autostyle=False only under ttkbootstrap."""
+        kw = {"bg": "#00d4d4", "bd": 0}
+        if TTKBS_AVAILABLE:
+            kw["autostyle"] = False
+        return kw
+
+    def _make_cyan_border(self, parent):
+        """Build a cyan wrapper Frame, register it, and return it.
+
+        ttkbootstrap paints Frame bg at construct; _recolor_tk_tree then remaps
+        leftover #222222 to APP_BG. The wrap is visible only if bg is re-set
+        to #00d4d4 after that. Callers pack the Frame where the button was packed.
+        """
+        border = tk.Frame(parent, **self._cyan_border_frame_kwargs())
+        self._register_cyan_border(border)
+        return border
+
+    def _register_cyan_border(self, frame):
+        lst = getattr(self, "_cyan_borders", None)
+        if lst is None:
+            self._cyan_borders = []
+            lst = self._cyan_borders
+        if frame not in lst:
+            lst.append(frame)
+
+    def _reassert_cyan_borders(self):
+        """Force every inventoried cyan wrapper back to #00d4d4."""
+        seen = []
+        for w in list(getattr(self, "_cyan_borders", []) or []):
+            seen.append(w)
+        spec = getattr(self, "_spectral_tab", None)
+        if spec is not None:
+            w = getattr(spec, "_af_border", None)
+            if w is not None:
+                seen.append(w)
+        st = getattr(self, "_song_tester_tab", None)
+        if st is not None:
+            w = getattr(st, "_af_border", None)
+            if w is not None:
+                seen.append(w)
+        for w in seen:
+            try:
+                if w.winfo_exists():
+                    w.configure(bg="#00d4d4")
+            except Exception:
+                pass
 
 
     def _build_single_tab(self, parent):
@@ -13365,7 +14080,7 @@ class MidiToRlrrApp:
         # name, fills Song Audio + Drum Audio. Purple button + cyan border + 🎵 icon.
         _sc_af_outer = ttk.Frame(files_frame)
         _sc_af_outer.grid(row=7, column=0, columnspan=4, sticky="w", pady=(4, 4))
-        _sc_af_border = tk.Frame(_sc_af_outer, bg="#00d4d4")
+        _sc_af_border = self._make_cyan_border(_sc_af_outer)  # cyan-border: sc-af
         _sc_af_border.pack(side=tk.LEFT)
         _sc_af_btn = ttk.Button(_sc_af_border, text="Auto Fetch Audio",
                                 image=fluent_icon("music_note_2") or "",
@@ -13700,7 +14415,7 @@ class MidiToRlrrApp:
                 self.sc_ch_meta_frame.pack_forget()
                 self.sc_ch_out_frame.pack_forget()
             try:
-                self.convert_btn.configure(text=self._sc_convert_button_text(), image=fluent_icon(self._sc_convert_button_icon()) or "")
+                self.convert_btn.configure(text=self._sc_convert_button_text(), image=self._primary_action_icon(self._sc_convert_button_icon()) or "")
             except Exception:
                 pass
 
@@ -13746,9 +14461,9 @@ class MidiToRlrrApp:
 
         # ?? Convert button ????????????????????????????????????????????????????
         self.convert_btn = ttk.Button(main, text=self._sc_convert_button_text(),
-                                      image=fluent_icon(self._sc_convert_button_icon()) or "",
+                                      image=self._primary_action_icon(self._sc_convert_button_icon()) or "",
                                       compound="left",
-                                      style="Convert.TButton", command=self._start_convert)
+                                      style="Hero.TButton", command=self._start_convert)
         self.convert_btn.pack(fill=tk.X, pady=(5, 4), ipady=8)
         _update_fmt_ui()
 
@@ -15509,8 +16224,8 @@ class MidiToRlrrApp:
         # ── CARD: Split ───────────────────────────────────────────────────────
         card_act = ttk.LabelFrame(top_band, text=" Split ", padding=8)
 
-        self.stem_btn = ttk.Button(card_act, text="Split Stems", image=fluent_icon("arrow_split") or "", compound="left",
-                                   style="Convert.TButton",
+        self.stem_btn = ttk.Button(card_act, text="Split Stems", image=self._primary_action_icon("arrow_split") or "", compound="left",
+                                   style="Hero.TButton",
                                    command=self._stem_start)
         self.stem_btn.pack(fill=tk.X, pady=(5, 10), ipady=8)
         if True:  # depcheck stem probe
@@ -17689,7 +18404,7 @@ class MidiToRlrrApp:
                 _upd(f"✗  {label} failed: {e} — trying next source...")
 
         _upd("✗  Download failed from all sources. Place 49469ca8.th manually in "
-             "drumsep_model\\ (next to ParaKit.exe or inside Requirements\\).")
+             "drumsep_model\\ (next to ParaKit or inside Requirements\\).")
 
     def _stem_drumsep_toggle(self):
         if self.stem_drumsep_var.get():
@@ -18816,8 +19531,8 @@ demucs.separate.main()
 
         # ── Settings ──────────────────────────────────────────────────────────
         # ── Three-column body (owner redesign 2026-07-12): left = basic
-        # settings/convert/log, middle = E.D. / N.S.I. / Settings Profiles /
-        # Output cards, right = adv/debug ──
+        # settings/convert, middle = N.S.I. / Settings Profiles / Output
+        # cards plus the expanding Log, right = adv/debug ──
         body_cols = ttk.Frame(main)
         body_cols.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         body_cols.columnconfigure(0, weight=5)   # left area: settings cols + library
@@ -19294,7 +20009,7 @@ demucs.separate.main()
         ttk.Label(self._a2m_ml_frame,
                   text="Lower = more hits detected; higher = only stronger hits. "
                        "Start at 0.50, raise it if you get false hits, lower it if real hits are missing.\n"
-                       "Place parakit_drum_model.onnx next to ParaKit.exe (or in Requirements\\), "
+                       "Place parakit_drum_model.onnx next to ParaKit (or in Requirements\\), "
                        "or click Browse / Download Model.",
                   style="Sub.TLabel", foreground="#b388ff",
                   justify=tk.LEFT, wraplength=700).pack(anchor="w", pady=(0, 6))
@@ -19317,28 +20032,14 @@ demucs.separate.main()
         # Detect model on startup if ML/Hybrid was last selected
         self.root.after(600, self._a2m_auto_detect_onnx)
 
-        # v4.7.11 — Enhanced Detection (the LarsNet "alt-detector" path) RETIRED as a
-        # user toggle. LarsNet's model was never installed, so the toggle only ever
-        # failed to load and fell back to the main detector — a verified silent no-op
-        # (enhanced=both produced byte-identical output to off). The var is kept
-        # (always "off") so the save/restore + run-flag plumbing stays intact; the
-        # enhanced pass in _a2m_do_convert is now unreachable (enhanced_mode is
-        # hard-forced "off" where _a2m_run_flags is built).
-        self.a2m_enhanced_detection_mode_var = tk.StringVar(value="off")
-
-        alt_frame = ttk.LabelFrame(mid_body,
-                                   text=" Enhanced Detection ", padding=8,
-                                   style="Card.TLabelframe")
-        alt_frame.pack(fill=tk.X, pady=(0, 10))
-        self._a2m_alt_frame = alt_frame
-        ttk.Label(
-            alt_frame,
-            text=("The experimental Enhanced Detection options have been folded into "
-                  "the default detection pipeline. The fine-tuned model plus the "
-                  "cleanup pass now handle crash and tom detection directly, so "
-                  "there's no separate toggle to enable."),
-            style="Sub.TLabel", foreground="#8888aa",
-            justify=tk.LEFT, wraplength=430).pack(anchor="w", fill=tk.X)
+        # v4.7.11 retired the Enhanced Detection toggle (LarsNet was never
+        # installed: a verified no-op). The empty tombstone frame is gone so
+        # the Log (pack expand=True) takes that height. Old profile keys
+        # enhanced_detection_mode and a2m_use_alt_detector are ignored on
+        # load and are not written. Kickoff still hard-forces
+        # _a2m_run_flags["enhanced_mode"] = "off"; the protected convert
+        # body is unchanged.
+        # a2m-ed-section: empty frame removed; Log expands
 
         # ── F-INT-001 v4.4.4: Neural Stem Isolation ───────────────────────────
         # Separator-slot. Saved a2m_separator_slot (including off) wins; with no
@@ -20018,8 +20719,9 @@ demucs.separate.main()
             self.a2m_cleanup_kick_var.set(_a2m_cfg["a2m_cleanup_kick"])
         if "a2m_cleanup_bleed" in _a2m_cfg:
             self.a2m_cleanup_bleed_var.set(_a2m_cfg["a2m_cleanup_bleed"])
-        # v4.7.11 — Enhanced Detection retired; ignore any saved mode, keep it OFF.
-        self.a2m_enhanced_detection_mode_var.set("off")
+        # v4.7.11 — Enhanced Detection retired. A saved
+        # a2m_enhanced_detection_mode is ignored (no var; kickoff hard-forces
+        # "off").
         # Apply restored engine (shows/hides ML frame, syncs dedup toggle)
         self.root.after(100, self._a2m_update_engine_ui)
 
@@ -20358,8 +21060,8 @@ demucs.separate.main()
         # ── Convert button ────────────────────────────────────────────────────
         a2m_action_row = ttk.Frame(left_body)
         a2m_action_row.pack(fill=tk.X, pady=(5, 10))
-        self.a2m_btn = ttk.Button(a2m_action_row, text="Convert Audio to MIDI", image=fluent_icon("midi") or "", compound="left",
-                                  style="Convert.TButton",
+        self.a2m_btn = ttk.Button(a2m_action_row, text="Convert Audio to MIDI", image=self._primary_action_icon("midi") or "", compound="left",
+                                  style="Hero.TButton",
                                   command=self._a2m_start)
         self.a2m_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=8, padx=(0, 4))
         self.a2m_preview_btn = ttk.Button(a2m_action_row,
@@ -20369,13 +21071,15 @@ demucs.separate.main()
         self.a2m_preview_btn.pack(side=tk.LEFT, ipady=8)
         # Check the just-made detection in Spectral Comparison (owner 2026-07-20).
         # Gated the same as the preview button (enabled once a MIDI exists).
+        _a2m_spec_border = self._make_cyan_border(a2m_action_row)  # cyan-border: a2m-spectral
+        _a2m_spec_border.pack(side=tk.LEFT, padx=(4, 0))
         self.a2m_spectral_btn = ttk.Button(
-            a2m_action_row, text="Spectral", image=fluent_icon("device_eq") or "", compound="left",
+            _a2m_spec_border, text="Spectral", image=fluent_icon("device_eq") or "", compound="left",
             command=lambda: self._send_to_spectral(
                 drums=getattr(self, "_a2m_source_file", "") or "",
                 chart=getattr(self, "_a2m_last_midi", "") or ""),
             state="disabled")
-        self.a2m_spectral_btn.pack(side=tk.LEFT, ipady=8, padx=(4, 0))
+        self.a2m_spectral_btn.pack(ipady=8, padx=2, pady=2)
         self._add_tooltip(
             self.a2m_spectral_btn,
             "Check the detection you just made in the Spectral Comparison tab.\n"
@@ -20436,7 +21140,7 @@ demucs.separate.main()
         # middle stack reads as one grouped panel set distinct from the left /
         # right columns. None of these carry a ttk scale, so no untinted patch.
         # Runs last, once every card's children exist.
-        for _tint_card in (alt_frame, sep_frame, preset_frame, out_frame):
+        for _tint_card in (sep_frame, preset_frame, out_frame):
             self._a2m_tint_card(_tint_card)
 
     # ── Audio → MIDI helpers ──────────────────────────────────────────────────
@@ -20553,12 +21257,6 @@ demucs.separate.main()
             except Exception: pass
         # Entire ML sub-frame (disables all children)
         for w in getattr(self, '_a2m_ml_frame', ttk.Frame()).winfo_children():
-            try: w.configure(state=state)
-            except Exception: pass
-        for w in getattr(self, '_a2m_alt_frame', ttk.Frame()).winfo_children():
-            try: w.configure(state=state)
-            except Exception: pass
-        for w in getattr(self, '_a2m_alt_mode_widgets', []):
             try: w.configure(state=state)
             except Exception: pass
         # Dedup mode toggle
@@ -20860,7 +21558,7 @@ demucs.separate.main()
             elif state == "missing":
                 self.a2m_onnx_status_lbl.configure(
                     text="⚠  No model found — place parakit_drum_model.onnx "
-                         "next to ParaKit.exe or in Requirements\\, or click Browse",
+                         "next to ParaKit or in Requirements\\, or click Browse",
                     foreground="#e09a3a")
             elif state == "error":
                 self.a2m_onnx_status_lbl.configure(
@@ -20989,7 +21687,7 @@ demucs.separate.main()
                 _upd(f"✗  {label} failed: {e} — trying next source...")
 
         _upd("✗  Download failed from all sources. "
-             "Place parakit_drum_model.onnx next to ParaKit.exe "
+             "Place parakit_drum_model.onnx next to ParaKit "
              "or in Requirements\\ manually.")
 
     def _a2m_run_onnx_detection(self, y, sr, model_path,
@@ -21370,7 +22068,7 @@ demucs.separate.main()
             messagebox.showerror(
                 "No Model File",
                 "ML / Hybrid detection requires a drum model file.\n\n"
-                "Place parakit_drum_model.onnx next to ParaKit.exe or in Requirements\\, "
+                "Place parakit_drum_model.onnx next to ParaKit or in Requirements\\, "
                 "or click Browse in the Detection Engine section to locate it.\n\n"
                 "Click '↓ Download Model' to download it from GitHub.")
             self.a2m_btn.configure(state="normal", text="Convert Audio to MIDI")
@@ -23894,6 +24592,22 @@ demucs.separate.main()
         {"name": "Kick",      "midi": [35, 36],     "color": "#ff69b4", "shape": "kick"},
     ]
 
+    # Chart-stats row colours. Lane colours are NOT copied here: _me_stats_lane_color
+    # reads MIDI_EDITOR_LANES. Switch the variant with the one line below; "exact" is
+    # the owner's request, "legible" is the team's (Snare/Tom 1/2/3 only).
+    _ME_STATS_LANE_COLOR_VARIANT = "exact"
+    _ME_STATS_LANE_LEGIBLE_OVERRIDES = {
+        "Snare": "#ed727c",
+        "Tom 1": "#7f97db",
+        "Tom 2": "#60a77f",
+        "Tom 3": "#b984d3",
+    }
+    _ME_STATS_LABEL_FG = "#a8a5b2"
+    _ME_STATS_VALUE_FG = "#d9dce3"
+    _ME_STATS_SEP_FG = "#6f6a7e"
+    _ME_STATS_PLAIN_FG = "#888"
+    _ME_STATS_KEEP_PAIRS = True
+
     # GM percussion the lanes can't represent, FOLDED to the closest lane on
     # load (owner 2026-07-11, R2-5 amendment: fold only the common ones —
     # clap/china/tambourine/cowbell; bongos/congas/claves/etc. stay on the
@@ -23905,7 +24619,10 @@ demucs.separate.main()
     # Manual MIDI Note Manager (owner 2026-07-09): per-lane output-note variations,
     # restricted to notes valid in BOTH Paradiddle (MIDI_MAP) and Clone Hero
     # (_CH_NOTE_MAP). First entry per lane = the current default. Descriptions are
-    # the verified General MIDI Level-1 percussion meanings. Hi-Hat is special:
+    # the verified General MIDI Level-1 percussion meanings, except note 55:
+    # Paradiddle's MIDI guide makes 55 the 13" crash (General MIDI calls it a
+    # splash; Paradiddle has no splash), and MIDI_MAP still exports it as the
+    # 15" crash, so its label says both. Hi-Hat is special:
     # the Manager sets the DEFAULT, but individual hats are set per-note in the
     # editor (Closed/Open/Pedal), so the remap EXEMPTS the Hi-Hat lane.
     MANUAL_NOTE_OPTIONS = {
@@ -23913,7 +24630,7 @@ demucs.separate.main()
         "Snare":  [(38, "Acoustic Snare"), (40, "Electric Snare (tighter / higher)"),
                    (37, "Side Stick (cross-stick click)")],
         "Hi-Hat": [(42, "Closed"), (46, "Open (washy)"), (44, "Pedal (foot chick)")],
-        "Crash":  [(49, 'Crash 15"'), (57, 'Crash 17"'), (55, "Splash")],
+        "Crash":  [(49, 'Crash 15"'), (57, 'Crash 17"'), (55, 'Crash 13" (15" in .rlrr)')],
         "Ride":   [(51, 'Ride 17"'), (59, 'Ride 20"'), (53, "Ride Bell")],
         "Tom 1":  [(48, "Hi-Mid Tom"), (50, "High Tom (higher)")],
         "Tom 2":  [(45, "Low Tom"), (47, "Low-Mid Tom (higher)")],
@@ -23927,7 +24644,7 @@ demucs.separate.main()
         35: "Deep",  36: "Tight",
         38: "Snare", 40: "E.Snr", 37: "Stick",
         42: "Closed", 46: "Open", 44: "Pedal",
-        49: 'Cr15"', 57: 'Cr17"', 55: "Splash",
+        49: 'Cr15"', 57: 'Cr17"', 55: 'Cr13"',
         51: 'Rd17"', 59: 'Rd20"', 53: "Bell",
         48: "Hi-Mid", 50: "High",
         45: "Low",   47: "Lo-Mid",
@@ -24019,8 +24736,10 @@ demucs.separate.main()
         (set per-note in the editor) so mixed open/closed charts survive. With
         ``midi_path`` the choices come from that chart's saved entry; without it
         from the editor's active in-memory set. Returns a NEW list of same-shape
-        tuples; the input is not mutated. Non-protected; run just before
-        build_rlrr / midi_notes_to_ch / MIDI save."""
+        tuples; the input is not mutated. Non-protected; Song Creator and
+        batch conversion apply it before build_rlrr. Clone Hero output is
+        derived from the resulting .rlrr events. Save MIDI does not call
+        this helper: it writes each note's stored number."""
         ov = self._get_manual_note_overrides(midi_path)
         note_to_lane = {}
         for lane in self.MIDI_EDITOR_LANES:
@@ -24071,13 +24790,31 @@ demucs.separate.main()
             f"🎩  {len(targets)} hi-hat note(s) → {label} ({new_note})")
         self._me_update_info()
 
+    def _popup_frame_allowance(self, win):
+        """(side, title) in pixels: an estimate of a popup's native frame.
+        `side` is each of the left, right and bottom borders, `title` the
+        title bar with the top border. Tk's geometry sets the client size and
+        the position of the frame's top-left corner, so a popup requested at
+        WxH+X+Y spans X to X + W + 2*side and Y to Y + title + H + side. The
+        popup is not mapped when it is first sized, so its frame cannot be
+        measured then; this scales with the screen's DPI instead."""
+        try:
+            side = max(8, int(win.winfo_fpixels("0.08i")))
+            title = max(32, int(win.winfo_fpixels("0.35i")))
+        except Exception:
+            side, title = 8, 32
+        return side, title
+
     def _me_open_manual_note_manager(self):
         """Floating 'Manual MIDI Note Manager' — pick which MIDI note each drum
-        lane writes on export (variations within the same drum piece, verified
-        GM percussion meanings). Persisted via config `manual_note_overrides`
-        and applied by _apply_manual_note_overrides just before every export.
-        Hi-Hat is PER-NOTE (right-click hats in the editor); its row here is a
-        one-time bulk setter for the currently loaded chart only."""
+        lane converts to (variations within the same drum piece, verified GM
+        percussion meanings; 55 uses Paradiddle's 13" crash name). Persisted via
+        config `manual_note_overrides_by_chart` and applied by
+        _apply_manual_note_overrides before each Song Creator / batch
+        conversion. Save MIDI (_me_write_midi) writes each note's stored
+        number unchanged. Hi-Hat values remain per-note; its dropdown saves
+        the default for new hats, while 'Set all hats now' changes the
+        currently loaded hats once."""
         existing = getattr(self, "_me_note_mgr_popup", None)
         if existing is not None:
             try:
@@ -24087,6 +24824,7 @@ demucs.separate.main()
         pop = tk.Toplevel(self.root)
         self._me_note_mgr_popup = pop
         pop.title("Manual MIDI Note Manager")
+        pop.withdraw()   # shown once sized to its content, at the end
         pop.configure(bg=APP_BG)
         pop.transient(self.root)
         pop.resizable(False, False)
@@ -24107,19 +24845,55 @@ demucs.separate.main()
                 pass
         pop.protocol("WM_DELETE_WINDOW", _close)
 
-        frame = ttk.Frame(pop, padding=14)
-        frame.pack(fill=tk.BOTH, expand=True)
+        # The content sits in a canvas so it can scroll when the work area of
+        # the main window's monitor is smaller than it; _fit (below) shows a
+        # scrollbar on each axis only when that axis needs one.
+        body_host = ttk.Frame(pop)
+        body_host.pack(fill=tk.BOTH, expand=True)
+        body = tk.Canvas(body_host, bg=APP_BG, highlightthickness=0, bd=0)
+        body_vsb = ttk.Scrollbar(body_host, orient="vertical",
+                                 command=body.yview)
+        body_hsb = ttk.Scrollbar(body_host, orient="horizontal",
+                                 command=body.xview)
+        body.configure(yscrollcommand=body_vsb.set,
+                       xscrollcommand=body_hsb.set)
+        body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        frame = ttk.Frame(body, padding=14)
+        body_win = body.create_window((0, 0), window=frame, anchor="nw")
+
+        def _body_region(_e=None):
+            try:
+                body.configure(scrollregion=body.bbox("all"))
+            except Exception:
+                pass
+        frame.bind("<Configure>", _body_region)
+
+        def _body_width(e=None):
+            # As wide as the viewport, never narrower than the content asks:
+            # a narrower viewport scrolls sideways instead of clipping it.
+            # _fit also calls this after every status message, because a
+            # wider message can widen the content without resizing the
+            # viewport, and then no <Configure> would come.
+            try:
+                vw = e.width if e is not None else body.winfo_width()
+                body.itemconfigure(body_win,
+                                   width=max(vw, frame.winfo_reqwidth()))
+            except Exception:
+                pass
+        body.bind("<Configure>", _body_width)
         ttk.Label(frame, text="🥁  Manual MIDI Note Manager",
                   font=("Segoe UI", 12, "bold"),
                   foreground="#b388ff").pack(anchor="w")
         ttk.Label(frame,
-                  text=("Choose which MIDI note each lane writes on export "
-                        "(.mid / .rlrr / .chart).\n"
-                        "Crash & Ride switch the actual drum piece in Paradiddle. "
-                        "The other lanes keep their\n"
-                        "single Paradiddle pad — their choice sets the note "
-                        "e-kits / DAWs receive from the\n"
-                        "exported MIDI. Choices are tied to the loaded MIDI: a "
+                  text=("Lane choices apply to Song Creator and batch conversion "
+                        "(.rlrr / .chart).\n"
+                        "Crash & Ride switch the actual drum piece in Paradiddle; "
+                        "Crash 55 exports as the 15\" crash\n"
+                        "in .rlrr and the green cymbal in Clone Hero. Save MIDI "
+                        "keeps each note's stored MIDI\n"
+                        "number; these choices do not remap saved .mid files. "
+                        "Hi-hats keep their per-note values.\n"
+                        "Choices are tied to the loaded MIDI: a "
                         "fresh MIDI starts at defaults,\n"
                         "and re-loading a MIDI restores the choices you saved "
                         "for it."),
@@ -24139,7 +24913,9 @@ demucs.separate.main()
                 # Update the ACTIVE (in-memory) choices for the loaded chart…
                 cur = dict(getattr(self, "_me_note_overrides", {}) or {})
                 cur[lane_name] = chosen
-                cur.pop(self.MANUAL_NOTE_HHAT_EXEMPT, None)  # hats = per-note
+                # Keep the Hi-Hat entry: it is the default for NEW hats, saved by
+                # the Hi-Hat row. Existing hats keep their own values because
+                # _apply_manual_note_overrides exempts that lane.
                 self._me_note_overrides = cur
                 # …and persist under the loaded MIDI's key (per-chart). With no
                 # MIDI loaded the choice applies this session only.
@@ -24166,7 +24942,7 @@ demucs.separate.main()
                 except Exception:
                     pass
                 status_var.set(f"✓  {lane_name}  →  {sel}    "
-                               f"({where}; applies on the next export)")
+                               f"({where}; applies to Song Creator and batch conversion)")
             return _cb
 
         rows = ttk.Frame(frame)
@@ -24271,9 +25047,10 @@ demucs.separate.main()
                         "an\nunselected hi-hat deletes it.) "
                         "Mixed open/closed charts are preserved on export. Open "
                         "hats\nshow up hollow with a yellow outline in the editor "
-                        "so you can spot them\nat a glance. The row above only "
-                        "bulk-sets the currently loaded chart (not a saved "
-                        "default)."),
+                        "so you can spot them\nat a glance. In the Hi-Hat row above, "
+                        "the dropdown sets the default for new\nhats on this chart; "
+                        "Set all hats now also applies it to every hat already "
+                        "there."),
                   style="Sub.TLabel", foreground="#00d4d4",
                   justify=tk.LEFT).pack(anchor="w", pady=(10, 0))
 
@@ -24325,9 +25102,93 @@ demucs.separate.main()
         ttk.Button(btns, text="↺  Reset to defaults",
                    command=_reset).pack(side=tk.LEFT)
         ttk.Button(btns, text="Close", command=_close).pack(side=tk.RIGHT)
-        ttk.Label(frame, textvariable=status_var, style="Sub.TLabel",
-                  foreground="#00c853", wraplength=600,
-                  justify=tk.LEFT).pack(anchor="w", pady=(8, 0))
+        status_lbl = ttk.Label(frame, textvariable=status_var,
+                               style="Sub.TLabel", foreground="#00c853",
+                               wraplength=600, justify=tk.LEFT)
+        status_lbl.pack(anchor="w", pady=(8, 0))
+
+        # Size the window to its content, inside the work area of the monitor
+        # the main window is on. The old fixed 640x580 cut off the bottom
+        # status line. When that work area is smaller than the content (large
+        # font scaling, small screens), the window takes the space there is
+        # and the content scrolls, with a scrollbar on each axis that needs
+        # one. The first sizing reserves a second status line. After that,
+        # each status message re-checks the size against the work area of the
+        # monitor the Manager is on: the window grows when the message needs
+        # more room and moves back inside that work area when it no longer
+        # fits there; otherwise it keeps its size and position (it does not
+        # shrink for a shorter message). The native frame, estimated by
+        # _popup_frame_allowance, is counted in both the size and the position
+        # so the whole outer window stays inside the work area.
+        last = [0, 0, 0, 0]   # the last requested width, height, x, y
+
+        def _fit(center=False):
+            try:
+                pop.update_idletasks()
+                side, title = self._popup_frame_allowance(pop)
+                need_w = frame.winfo_reqwidth()
+                need_h = frame.winfo_reqheight()
+                cur = None
+                if center:
+                    need_h += status_lbl.winfo_reqheight()
+                    cx = self.root.winfo_rootx() + self.root.winfo_width() // 2
+                    cy = self.root.winfo_rooty() + self.root.winfo_height() // 2
+                else:
+                    cur = list(last)
+                    if pop.winfo_ismapped():   # the user may have moved it
+                        m = re.match(r"^(\d+)x(\d+)\+?(-?\d+)\+?(-?\d+)$",
+                                     str(pop.wm_geometry()))
+                        if m:
+                            cur = [int(v) for v in m.groups()]
+                    cx = cur[2] + side + cur[0] // 2
+                    cy = cur[3] + title + cur[1] // 2
+                left, top, right, bottom = self._monitor_bounds_for_point(cx, cy)
+                avail_w = max(1, right - left - 2 * side)
+                avail_h = max(1, bottom - top - title - side)
+                vsb_w = body_vsb.winfo_reqwidth()
+                hsb_h = body_hsb.winfo_reqheight()
+                want_v = need_h > avail_h
+                want_h = need_w + (vsb_w if want_v else 0) > avail_w
+                if want_h and not want_v:
+                    want_v = need_h + hsb_h > avail_h
+                if want_v:
+                    body_vsb.pack(side=tk.RIGHT, fill=tk.Y, before=body)
+                    need_w += vsb_w
+                else:
+                    body_vsb.pack_forget()
+                if want_h:
+                    body_hsb.pack(side=tk.BOTTOM, fill=tk.X, before=body)
+                    need_h += hsb_h
+                else:
+                    body_hsb.pack_forget()
+                pw = min(max(640, need_w), avail_w)   # 640: the preferred width
+                ph = min(need_h, avail_h)
+                if center:
+                    x = cx - (pw + 2 * side) // 2
+                    y = cy - (title + ph + side) // 2
+                else:
+                    pw = min(max(pw, cur[0]), avail_w)
+                    ph = min(max(ph, cur[1]), avail_h)
+                    x, y = cur[2], cur[3]
+                x = max(left, min(x, right - 2 * side - pw))
+                y = max(top, min(y, bottom - title - side - ph))
+                if center or [pw, ph, x, y] != cur:
+                    pop.geometry(f"{pw}x{ph}+{x}+{y}")
+                last[:] = [pw, ph, x, y]
+                _body_width()
+                _body_region()
+            except Exception:
+                pass
+
+        def _on_status(*_a):
+            try:
+                pop.after_idle(_fit)
+            except Exception:
+                pass
+
+        _fit(center=True)
+        pop.deiconify()
+        status_var.trace_add("write", _on_status)
 
     def _make_stepper_control(self, parent, label_text, var, minimum, maximum,
                               step, fmt, command=None, label_width=14):
@@ -24363,7 +25224,7 @@ demucs.separate.main()
         """MIDI piano-roll editor tab — visualize and edit drum MIDI files."""
         compact = getattr(self, "_compact_layout", False)
         self._me_mode_bound = []
-        self._me_color_reasserts = []      # (tk.Checkbutton, colours) re-applied after a swap
+        self._me_style_reasserts = []      # (widget, ttk style name) re-applied after a swap
         main = ttk.Frame(parent, padding=(4 if compact else 10))
         self._me_mode_bound.append((main, "padding", 4, 10))
         main.pack(fill=tk.BOTH, expand=True)
@@ -24488,10 +25349,28 @@ demucs.separate.main()
         ttk.Button(ctrl_frame, text="✕  Clear",
                    command=self._me_clear).pack(side=tk.LEFT, padx=(0, 8))
 
-        # Info labels
+        # Chart stats — own full-width row in the left column, immediately
+        # below the file/load row. Canvas of coloured text items (not a
+        # ttk.Label: ttkbootstrap darkly overwrites tk.Label fg). Empty
+        # scrollregion so the app-wide <MouseWheel> walker skips this drawing
+        # surface. Wrap keeps every source character: atoms stay whole, a |
+        # never starts a line, and an overflowing inter-lane gap stays on the
+        # preceding line. me_info_var is still the plain-text source.
         self.me_info_var = tk.StringVar(value="No MIDI loaded")
-        ttk.Label(ctrl_frame, textvariable=self.me_info_var,
-                  style="Sub.TLabel").pack(side=tk.LEFT, padx=(10, 0))
+        self.me_info_row = ttk.Frame(lc)
+        self.me_info_row.pack(fill=tk.X, pady=(0, 2 if compact else 3))
+        self._me_mode_bound.append((self.me_info_row, "pack_pady", (0, 2), (0, 3)))
+        self.me_info_lbl = tk.Canvas(
+            self.me_info_row, bg=APP_BG, highlightthickness=0, bd=0,
+            takefocus=0, height=16)
+        self.me_info_lbl.pack(fill=tk.X, padx=(10, 0))
+        self._me_info_wrap_w = 0
+        self._me_info_wrap_forced = False
+        self._me_info_painting = False
+        self._me_info_painted_w = 0
+        self.me_info_var.trace_add("write", self._me_on_info_var)
+        self.me_info_lbl.bind("<Configure>", self._me_on_info_configure)
+        self._me_paint_info_row()
 
         # Edit mode toggles — inline, no separate frame needed
         self.me_edit_mode_var = tk.StringVar(value="copy")
@@ -24676,26 +25555,28 @@ demucs.separate.main()
             command=self._midi_show_settings_dialog)
         self.me_midi_input_btn.pack(anchor="w", pady=(0, 2 if compact else 4))
         self._me_mode_bound.append((self.me_midi_input_btn, "pack_pady", (0, 2), (0, 4)))
+        self._add_tooltip(
+            self.me_midi_input_btn,
+            "Open MIDI Controls & Learn Mode (BETA): choose your MIDI drum kit or "
+            "pad controller, use Learn to fix a pad that triggers the wrong lane, "
+            "set the MIDI input offset if recorded notes land early or late, and "
+            "watch incoming hits in the live test log.")
         options_col    = ttk.LabelFrame(options_side, text=" Display Options ", padding=(4 if compact else 6))
         self._me_mode_bound.append((options_col, "padding", 4, 6))
         options_col.pack(fill=tk.Y)
 
         # ── Display Options panel (vertical layout, lives next to playback) ──
-        # Snap to grid uses tk.Checkbutton with explicit dark-theme styling
-        # because ttk.Checkbutton without a command= parameter renders with
-        # invisible foreground under some ttkbootstrap themes (v4.3.29 fix).
-        _me_snap_cb = tk.Checkbutton(options_col, text="Snap to grid",
-                       variable=self.me_snap_var,
-                       fg="#e6edf3", selectcolor="#0d1117",
-                       activeforeground="#ffffff",
-                       bg=APP_BG, activebackground=APP_BG,
-                       font=("Segoe UI", 8 if compact else 9))
-        self._me_mode_bound.append((
-            _me_snap_cb, "font", ("Segoe UI", 8), ("Segoe UI", 9)))
+        # All five checkboxes are ttk so they share one indicator shape, one
+        # indicator width and one font; classic tk.Checkbutton draws its own
+        # indicator and reserves a different width, which left this column
+        # ragged. The v4.3.29 note that a ttk.Checkbutton built WITHOUT a
+        # command= renders with invisible foreground no longer reproduces: on
+        # darkly, two otherwise identical checkbuttons with and without a
+        # command render the same glyph colour (#ffffff) and the same ink pixel
+        # count, so neither converted widget carries a no-op command.
+        _me_snap_cb = ttk.Checkbutton(options_col, text="Snap to grid",
+                       variable=self.me_snap_var)
         _me_snap_cb.pack(anchor="w")
-        _me_snap_cb.after(50, lambda: _me_snap_cb.configure(
-            fg="#e6edf3", activeforeground="#ffffff"))
-        self._me_color_reasserts.append((_me_snap_cb, {"fg": "#e6edf3", "activeforeground": "#ffffff"}))
         ttk.Checkbutton(options_col, text="Kick - Notes/Lines",
                         variable=self.me_kick_line_var,
                         command=self._me_redraw
@@ -24704,19 +25585,19 @@ demucs.separate.main()
                         variable=self.me_uniform_note_color_var,
                         command=self._me_redraw
                         ).pack(anchor="w")
-        _me_reclassify_cb = tk.Checkbutton(options_col, text="Reclassify mode",
-                       variable=self.me_reclassify_var,
-                       fg="#00d4d4", selectcolor="#0d1117",
-                       activeforeground="#00ffe0",
-                       bg=APP_BG, activebackground=APP_BG,
-                       font=("Segoe UI", 8 if compact else 9, "bold"))
-        self._me_mode_bound.append((
-            _me_reclassify_cb, "font",
-            ("Segoe UI", 8, "bold"), ("Segoe UI", 9, "bold")))
+        # Reclassify mode stays cyan and bold, now through a named ttk style.
+        # The style has to be applied AFTER construction: ttkbootstrap's ttk
+        # constructor rewrites a style= it does not recognise back to the base
+        # name, so passing it inline is silently dropped (the same defect
+        # _register_hero_ttkstyle works around for Hero.TButton).
+        _me_reclass_styled = self._register_me_reclass_ttkstyle()
+        _me_reclassify_cb = ttk.Checkbutton(options_col, text="Reclassify mode",
+                       variable=self.me_reclassify_var)
         _me_reclassify_cb.pack(anchor="w")
-        _me_reclassify_cb.after(50, lambda: _me_reclassify_cb.configure(
-            fg="#00d4d4", activeforeground="#00ffe0"))
-        self._me_color_reasserts.append((_me_reclassify_cb, {"fg": "#00d4d4", "activeforeground": "#00ffe0"}))
+        if _me_reclass_styled:
+            _me_reclassify_cb.configure(style="Reclass.TCheckbutton")
+            self._me_style_reasserts.append(
+                (_me_reclassify_cb, "Reclass.TCheckbutton"))
         self._add_tooltip(
             _me_reclassify_cb,
             "When ON, clicking or dragging a note lets you change its instrument lane.\n\n"
@@ -24735,14 +25616,14 @@ demucs.separate.main()
             lambda v: f"{v:.1f}×",
             command=lambda: [self.me_auto_zoom_var.set(False),
                              self._me_schedule_redraw()],
-            label_width=10).pack(side=tk.LEFT)
+            label_width=15).pack(side=tk.LEFT)
         _ns_row = ttk.Frame(options_col)
         _ns_row.pack(anchor="w", fill=tk.X, pady=(2, 0))
         self._make_stepper_control(
             _ns_row, "Note size", self.me_note_size_var, 0.3, 1.0, 0.1,
             lambda v: f"{v:.1f}×",
             command=self._me_schedule_redraw,
-            label_width=14).pack(side=tk.LEFT)
+            label_width=15).pack(side=tk.LEFT)
 
         # v4.4.62-1 — "Auto Fetch Audio" (purple button + cyan border, owner QoL): sits ABOVE Play/Stop
         # and spans their combined width. From the loaded MIDI's song name it
@@ -24770,7 +25651,7 @@ demucs.separate.main()
             "detection against the audio -- sends the chart plus its Drums stem /\n"
             "Full Mix so MISS / PHANTOM disagreements show on the graph.\n"
             "Note: the source may be a full mix, so the graph can look busier than an isolated stem.")
-        af_border = tk.Frame(af_col, bg="#00d4d4")
+        af_border = self._make_cyan_border(af_col)  # cyan-border: me-af
         af_border.pack(side=tk.TOP)
         self.me_auto_fetch_btn = ttk.Button(
             af_border, text="Auto Fetch Audio", image=fluent_icon("music_note_2") or "", compound="left",
@@ -24822,21 +25703,16 @@ demucs.separate.main()
         # (Send-to-Spectral moved above the Auto Fetch Audio button -- owner
         # 2026-07-20; it used to sit here, to the right of Stop.)
 
-        # v4.4.57.4-6 — Toolbar order swapped per owner request 2026-05-17:
-        # Playback-position info (time + seek hint + Review Speed) now sits
-        # immediately after Play / Stop, and the Recording cluster (Record /
-        # Count-in / Metronome / Test) moves to the right end. Same widgets,
-        # same callbacks — only `.pack()` call order changed.
+        # Playback-position info and Review Speed follow Play / Stop.
+        # The recording cluster is packed into the latency row below.
 
         # ── Playback-position group (was after Test, now after Stop) ────────
         self.me_playhead_var = tk.StringVar(value="▶  00:00.0")
-        ttk.Label(pb_frame, textvariable=self.me_playhead_var,
-                  foreground="#00d4d4",
-                  font=("Consolas", 9)).pack(side=tk.LEFT, padx=(0, 12))
-
-        ttk.Label(pb_frame,
-                  text="Click or drag the beat ruler to seek",
-                  style="Sub.TLabel").pack(side=tk.LEFT, padx=(0, 16))
+        _me_playhead_lbl = ttk.Label(pb_frame, textvariable=self.me_playhead_var,
+                                     foreground="#00d4d4",
+                                     font=("Consolas", 9))
+        _me_playhead_lbl.pack(side=tk.LEFT, padx=(0, 12))
+        self._add_tooltip(_me_playhead_lbl, "Click or drag the beat ruler to seek.")
 
         # Speed controls
         self._me_speed = 1.0
@@ -24848,13 +25724,16 @@ demucs.separate.main()
                    command=self._me_speed_down).pack(side=tk.LEFT, padx=(0, 2))
         ttk.Button(pb_frame, text="+0.1x", width=6,
                    command=self._me_speed_up).pack(side=tk.LEFT, padx=(0, 2))
-        # Bumped right padding from 2 -> 12 to give a visual section break
-        # before the Recording cluster.
+        # Keep the existing right padding after Reset.
         ttk.Button(pb_frame, text="↺  Reset", width=8,
                    command=self._me_speed_reset).pack(side=tk.LEFT, padx=(0, 12))
 
-        # ── Recording cluster (was right after Stop, now after Reset) ──────
-        self.me_record_btn = ttk.Button(pb_frame, text="● Record",
+        # ── Recording cluster: built here, packed into the latency row below ──
+        # It used to end the Play row, which then needed more width than the
+        # default window gives it, and the Display Options column beside this
+        # one was squeezed to nothing.
+        rec_frame = ttk.Frame(playback_col)
+        self.me_record_btn = ttk.Button(rec_frame, text="● Record",
                                         command=self._midi_record_toggle)
         self.me_record_btn.pack(side=tk.LEFT, padx=(0, 4))
         self._add_tooltip(
@@ -24862,7 +25741,7 @@ demucs.separate.main()
             "Start a live MIDI recording. Count-in plays first if enabled, "
             "then audio plays while your drum hits get recorded as notes.")
 
-        countin_cb = ttk.Checkbutton(pb_frame, text="Count-in (1 bar)",
+        countin_cb = ttk.Checkbutton(rec_frame, text="Count-in (1 bar)",
                                      variable=self._midi_count_in_enabled)
         countin_cb.pack(side=tk.LEFT, padx=(0, 6))
         self._add_tooltip(
@@ -24870,9 +25749,9 @@ demucs.separate.main()
             "Play 1 bar (4 clicks) of metronome before recording starts. "
             "Turn off to start recording immediately on Record.")
 
-        ttk.Label(pb_frame, text="Metronome:").pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Label(rec_frame, text="Metronome:").pack(side=tk.LEFT, padx=(0, 3))
         self.me_metronome_combo = ttk.Combobox(
-            pb_frame, textvariable=self._midi_metronome_sound,
+            rec_frame, textvariable=self._midi_metronome_sound,
             values=list(self.MIDI_METRONOME_SOUNDS),
             state="readonly", width=14)
         self.me_metronome_combo.pack(side=tk.LEFT, padx=(0, 4))
@@ -24880,7 +25759,7 @@ demucs.separate.main()
             self.me_metronome_combo,
             "Pick the count-in click sound. Click Test to preview.")
 
-        test_btn = ttk.Button(pb_frame, text="Test", width=7, image=fluent_icon("play") or "", compound="left",
+        test_btn = ttk.Button(rec_frame, text="Test", width=7, image=fluent_icon("play") or "", compound="left",
                               command=self._metronome_test_play)
         test_btn.pack(side=tk.LEFT, padx=(0, 4))
         self._add_tooltip(
@@ -24897,8 +25776,10 @@ demucs.separate.main()
                                           font=("Consolas", 9), foreground="#ffd700")
         self.me_loop_out_lbl = ttk.Label(loop_frame, text="End: --:--",
                                           font=("Consolas", 9), foreground="#ffd700")
-        ttk.Checkbutton(loop_frame, text="Loop", image=fluent_icon("arrow_repeat_all") or "", compound="left",
-                        variable=self._me_loop_on).pack(side=tk.LEFT, padx=(0, 8))
+        _me_loop_cb = ttk.Checkbutton(loop_frame, text="Loop", image=fluent_icon("arrow_repeat_all") or "",
+                                      compound="left", variable=self._me_loop_on)
+        _me_loop_cb.pack(side=tk.LEFT, padx=(0, 8))
+        self._add_tooltip(_me_loop_cb, "Right-click the beat ruler to set loop start/end points.")
         self.me_loop_in_lbl.pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(loop_frame, text="Set Start", width=9,
                    command=self._me_loop_set_in).pack(side=tk.LEFT, padx=(0, 6))
@@ -24907,9 +25788,6 @@ demucs.separate.main()
                    command=self._me_loop_set_out).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(loop_frame, text="✕  Clear Loop", width=14,
                    command=self._me_loop_clear).pack(side=tk.LEFT)
-        ttk.Label(loop_frame,
-                  text="  Right-click the beat ruler to set loop start/end points",
-                  style="Sub.TLabel").pack(side=tk.LEFT, padx=(8, 0))
 
         # ── Offset row ────────────────────────────────────────────────────────
         offset_row = ttk.Frame(playback_col)
@@ -24917,7 +25795,10 @@ demucs.separate.main()
 
         ttk.Label(offset_row, text="Note offset:").pack(side=tk.LEFT, padx=(0, 6))
         self.me_offset_var = tk.StringVar(value="0.000")
-        ttk.Entry(offset_row, textvariable=self.me_offset_var, width=8).pack(side=tk.LEFT)
+        _me_offset_entry = ttk.Entry(offset_row, textvariable=self.me_offset_var, width=8)
+        _me_offset_entry.pack(side=tk.LEFT)
+        self._add_tooltip(_me_offset_entry,
+                          "Shifts every note by this amount. Use T key while playing to tap the offset.")
         ttk.Label(offset_row, text="seconds", style="Sub.TLabel").pack(side=tk.LEFT, padx=(4, 12))
 
         def _me_nudge_offset(delta):
@@ -24967,9 +25848,6 @@ demucs.separate.main()
         ttk.Button(offset_row, text="⟳  Apply Offset to All Notes",
                    command=_me_apply_offset,
                    style="Convert.TButton").pack(side=tk.LEFT)
-        ttk.Label(offset_row,
-                  text="  Shifts every note by this amount. Use T key while playing to tap the offset.",
-                  style="Sub.TLabel", foreground="#888").pack(side=tk.LEFT, padx=(8, 0))
 
         # ── Audio output latency row ─────────────────────────────────────────
         # Compensates for the gap between when pygame.mixer.music.play() returns
@@ -24980,7 +25858,8 @@ demucs.separate.main()
         # users can fine-tune this slider for their specific hardware.
         latency_row = ttk.Frame(playback_col)
         latency_row.pack(fill=tk.X, pady=(0, 2))
-        ttk.Label(latency_row, text="Audio output latency:").pack(side=tk.LEFT, padx=(0, 6))
+        _me_latency_lbl = ttk.Label(latency_row, text="Audio output latency:")
+        _me_latency_lbl.pack(side=tk.LEFT, padx=(0, 6))
         self.me_audio_latency_ms = tk.DoubleVar(value=self._me_estimate_audio_latency())
         self._me_latency_value_lbl = ttk.Label(
             latency_row, text=f"{self.me_audio_latency_ms.get():.0f} ms",
@@ -24998,10 +25877,13 @@ demucs.separate.main()
         _tick_strip(_lat_sf, 180)
         _lat_sf.pack(side=tk.LEFT, padx=(0, 6))
         self._me_latency_value_lbl.pack(side=tk.LEFT, padx=(0, 12))
-        ttk.Label(latency_row,
-                  text=("Compensates for audio output delay (buffer + OS + hardware). "
-                        "Auto-estimated per system; adjust if playhead drifts from what you hear."),
-                  style="Sub.TLabel", foreground="#888").pack(side=tk.LEFT, padx=(0, 0))
+        self._add_tooltip(_me_latency_lbl,
+                          "Compensates for audio output delay (buffer + OS + hardware). "
+                          "Auto-estimated per system; adjust if playhead drifts from what you hear.")
+        rec_frame.pack(in_=latency_row, side=tk.LEFT)
+        # rec_frame was created before latency_row, so it sits below it in the
+        # stacking order and latency_row's background would paint over it.
+        rec_frame.lift(latency_row)
 
         # ── Markers popup button (content for right_col sidebar) ─────────────
         self._me_marker_popup = None
@@ -26418,11 +27300,12 @@ demucs.separate.main()
                     widget.configure(**{kind: v})
             except Exception:
                 pass
-        # The two classic tk.Checkbuttons re-assert their colours 50 ms after build (ttkbootstrap
-        # re-touches new tk widgets after first paint); do the same after their font change.
-        for w, kw in getattr(self, "_me_color_reasserts", ()):
+        # Custom ttk styles re-assert 50 ms after a swap; ttkbootstrap rewrites a
+        # style it does not recognise back to the base name when it re-touches
+        # widgets after first paint (same reason _assert_hero_button_styles exists).
+        for w, style_name in getattr(self, "_me_style_reasserts", ()):
             try:
-                w.after(50, lambda w=w, kw=kw: w.configure(**kw))
+                w.after(50, lambda w=w, s=style_name: w.configure(style=s))
             except Exception:
                 pass
         show = getattr(self, "_me_header_compact" if compact else "_me_header_roomy", None)
@@ -26433,6 +27316,10 @@ demucs.separate.main()
                 hide.pack_forget()
             if show is not None and anchor is not None:
                 show.pack(fill=tk.X, before=anchor)
+        except Exception:
+            pass
+        try:
+            self._me_paint_info_row()
         except Exception:
             pass
 
@@ -30433,6 +31320,263 @@ demucs.separate.main()
         self._me_redraw()
         self._me_update_info()
 
+    def _me_stats_bg(self):
+        return APP_BG  # stats-row bg; _recolor_tk_tree swaps this
+
+    def _me_stats_font(self):
+        """8 pt Compact / 9 pt Roomy, matching Sub.TLabel."""
+        _me_stats_pt = 8 if bool(getattr(self, "_compact_layout", False)) else 9
+        return ("Segoe UI", _me_stats_pt)
+
+    def _me_stats_lane_color(self, name):
+        """Lane name+count colour. Exact variant reads MIDI_EDITOR_LANES; not a second copy."""
+        table = {ln["name"]: ln["color"] for ln in self.MIDI_EDITOR_LANES}
+        if getattr(self, "_ME_STATS_LANE_COLOR_VARIANT", "exact") == "legible":
+            table.update(self._ME_STATS_LANE_LEGIBLE_OVERRIDES)
+        return table.get(name, self._ME_STATS_PLAIN_FG)
+
+    def _me_on_info_var(self, *_a):
+        self._me_paint_info_row()
+
+    def _me_on_info_configure(self, event):
+        if getattr(self, "_me_info_painting", False):
+            return
+        if getattr(self, "_me_info_wrap_forced", False):
+            return
+        if event.widget is not getattr(self, "me_info_lbl", None):
+            return
+        allocated = int(getattr(event, "width", 0) or 0)
+        if allocated <= 1 or allocated == getattr(self, "_me_info_wrap_w", 0):
+            return
+        self._me_info_wrap_w = allocated
+        self._me_paint_info_row()
+
+    def _me_tokenize_info(self, text):
+        """Split the stats string into wrap units. Unknown text is muted. Never raises.
+
+        Units: atom (must stay on one line), sep (`  |  `, never starts a line),
+        gap (two spaces between lanes, and any extra spaces before the first
+        lane or in an empty lane section; overflowing gap stays on the
+        preceding line and is never dropped), plain.
+        Lane names are matched longest-first so `Tom 1` is not eaten as `Tom`.
+        """
+        try:
+            return self._me_tokenize_info_inner(text)
+        except Exception:
+            t = "" if text is None else str(text)
+            return [{"kind": "plain", "pieces": [(t, self._ME_STATS_PLAIN_FG)]}]
+
+    def _me_tokenize_info_inner(self, text):
+        text = "" if text is None else str(text)
+        plain = self._ME_STATS_PLAIN_FG
+        label = self._ME_STATS_LABEL_FG
+        value = self._ME_STATS_VALUE_FG
+        sep_fg = self._ME_STATS_SEP_FG
+        if "BPM:" not in text or "  |  " not in text:
+            return [{"kind": "plain", "pieces": [(text, plain)]}]
+        sep = "  |  "
+        parts = text.split(sep)
+        units = []
+
+        def add_atom(pieces):
+            units.append({"kind": "atom", "pieces": pieces})
+
+        def add_sep():
+            units.append({"kind": "sep", "pieces": [
+                ("  ", sep_fg), ("|", sep_fg), ("  ", sep_fg)]})
+
+        def add_gap():
+            units.append({"kind": "gap", "pieces": [("  ", plain)]})
+
+        p0 = parts[0]
+        if not p0.startswith("BPM:"):
+            return [{"kind": "plain", "pieces": [(text, plain)]}]
+        rest = p0[4:]
+        if rest.startswith(" "):
+            add_atom([("BPM:", label), (" ", label), (rest[1:], value)])
+        else:
+            add_atom([("BPM:", label), (rest, value)])
+        if len(parts) < 2:
+            return units
+        add_sep()
+        add_atom([(parts[1], value)])
+        if len(parts) < 3:
+            return units
+        add_sep()
+        p2 = parts[2]
+        if p2.startswith("Duration:"):
+            rest = p2[len("Duration:"):]
+            if rest.startswith(" "):
+                add_atom([("Duration:", label), (" ", label), (rest[1:], value)])
+            else:
+                add_atom([("Duration:", label), (rest, value)])
+        else:
+            add_atom([(p2, plain)])
+        if len(parts) == 3:
+            return units
+        add_sep()
+        if len(parts) > 4:
+            add_atom([(sep.join(parts[3:]), plain)])
+            return units
+        names = sorted((ln["name"] for ln in self.MIDI_EDITOR_LANES),
+                       key=len, reverse=True)
+        s = parts[3]
+        while s:
+            if s.startswith("  "):
+                # emit every consumed space, including before the first lane
+                add_gap()
+                s = s[2:]
+                continue
+            if s.startswith(" "):
+                units.append({"kind": "gap", "pieces": [(" ", plain)]})
+                s = s[1:]
+                continue
+            matched = False
+            for name in names:
+                prefix = name + ": "
+                if s.startswith(prefix):
+                    i = len(prefix)
+                    j = i
+                    while j < len(s) and s[j].isdigit():
+                        j += 1
+                    if j > i:
+                        add_atom([(s[:j], self._me_stats_lane_color(name))])
+                        s = s[j:]
+                        matched = True
+                        break
+            if not matched:
+                add_atom([(s, plain)])
+                break
+        return units
+
+    def _me_info_units(self, text):
+        units = self._me_tokenize_info(text)
+        if getattr(self, "_ME_STATS_KEEP_PAIRS", True):
+            return units
+        exploded = []
+        for unit in units:
+            if unit["kind"] != "atom":
+                exploded.append(unit)
+                continue
+            for substr, fg in unit["pieces"]:
+                words = substr.split(" ")
+                for i, word in enumerate(words):
+                    if i:
+                        exploded.append({"kind": "gap", "pieces": [(" ", fg)]})
+                    if word:
+                        exploded.append({"kind": "atom", "pieces": [(word, fg)]})
+        return exploded
+
+    def _me_paint_info_row(self):
+        """Rebuild the stats Canvas text items from me_info_var.
+
+        The Canvas has no scrollregion, so the app-wide mouse-wheel walker
+        skips it. Wrap keeps every source character: atoms stay whole (an
+        atom wider than the row overflows on one line), a separator never
+        starts a line, and an overflowing inter-lane gap stays on the
+        preceding line. Concatenated item text equals me_info_var.
+        """
+        lbl = getattr(self, "me_info_lbl", None)
+        if lbl is None:
+            return
+        try:
+            if str(lbl.winfo_class()) in ("TLabel", "Label"):
+                return
+        except Exception:
+            return
+        if getattr(self, "_me_info_painting", False):
+            return
+        self._me_info_painting = True
+        try:
+            import tkinter.font as tkfont
+            text = ""
+            try:
+                text = self.me_info_var.get()
+            except Exception:
+                text = ""
+            bg = self._me_stats_bg()
+            fnt = self._me_stats_font()
+            try:
+                lbl.configure(bg=bg, takefocus=0, highlightthickness=0,
+                              borderwidth=0)
+            except Exception:
+                pass
+            try:
+                lbl.delete("all")
+            except Exception:
+                pass
+            units = self._me_info_units(text)
+            try:
+                font = tkfont.Font(root=lbl, font=fnt)
+            except Exception:
+                font = None
+            width = int(getattr(self, "_me_info_wrap_w", 0) or 0)
+            try:
+                mapped_w = int(lbl.winfo_width() or 0)
+            except Exception:
+                mapped_w = 0
+            if not getattr(self, "_me_info_wrap_forced", False) and mapped_w > 1:
+                width = mapped_w
+                self._me_info_wrap_w = mapped_w
+            if width <= 1:
+                width = 10000
+            self._me_info_painted_w = width
+            rows = [[]]
+            row_w = 0
+            for unit in units:
+                if font is None:
+                    unit_w = 8 * sum(len(p[0]) for p in unit["pieces"])
+                else:
+                    unit_w = sum(font.measure(p[0]) for p in unit["pieces"])
+                kind = unit["kind"]
+                if kind == "sep":
+                    if not rows[-1]:
+                        if len(rows) > 1:
+                            rows[-2].append(unit)
+                        else:
+                            rows[-1].append(unit)
+                            row_w += unit_w
+                    else:
+                        rows[-1].append(unit)
+                        row_w += unit_w
+                    continue
+                if kind == "gap":
+                    # overflowing gap stays on the preceding line; never dropped
+                    if rows[-1]:
+                        rows[-1].append(unit)
+                        row_w += unit_w
+                    elif len(rows) > 1:
+                        rows[-2].append(unit)
+                    else:
+                        rows[-1].append(unit)
+                        row_w += unit_w
+                    continue
+                # INV214 wrap: atoms stay whole; seps/gaps never start a line
+                if rows[-1] and row_w + unit_w > width:
+                    rows.append([])
+                    row_w = 0
+                rows[-1].append(unit)
+                row_w += unit_w
+            line_h = 14 if font is None else int(font.metrics("linespace") or 14)
+            y = 0
+            for row in rows:
+                if not row:
+                    continue
+                x = 0
+                for unit in row:
+                    for substr, fg in unit["pieces"]:
+                        lbl.create_text(
+                            x, y, text=substr, fill=fg, font=fnt,
+                            anchor="nw", tags=("stats",))
+                        x += (8 * len(substr)) if font is None else font.measure(substr)
+                y += line_h
+            try:
+                lbl.configure(height=max(line_h, y or line_h))
+            except Exception:
+                pass
+        finally:
+            self._me_info_painting = False
+
     def _me_fmt_time(self, secs):
         """Format seconds as Xm Ys or just Ys if under a minute."""
         m = int(secs // 60)
@@ -33157,9 +34301,6 @@ demucs.separate.main()
             "separator_slot": getattr(self, "a2m_separator_slot_var",
                                       tk.StringVar(value="off")).get(),
             "debug": getattr(self, "a2m_debug_var", tk.BooleanVar(value=False)).get(),
-            "enhanced_detection_mode": getattr(
-                self, "a2m_enhanced_detection_mode_var",
-                tk.StringVar(value="off")).get(),
             "tom_sensitivity": getattr(
                 self, "a2m_tom_sensitivity_var",
                 tk.StringVar(value="Moderate")).get(),
@@ -33193,7 +34334,6 @@ demucs.separate.main()
             ("a2m_cleanup_cymbal_var", "cleanup_cymbal"),
             ("a2m_cleanup_kick_var", "cleanup_kick"),
             ("a2m_cleanup_bleed_var", "cleanup_bleed"),
-            ("a2m_enhanced_detection_mode_var", "enhanced_detection_mode"),
             ("a2m_tom_sensitivity_var", "tom_sensitivity"),
             # 2026-08-03 — the four the capture was missing (see the note there).
             ("a2m_ride_var", "ride"),
@@ -33206,14 +34346,7 @@ demucs.separate.main()
                     getattr(self, attr).set(settings[key])
                 except Exception:
                     pass
-        if ("enhanced_detection_mode" not in settings
-                and "a2m_use_alt_detector" in settings
-                and hasattr(self, "a2m_enhanced_detection_mode_var")):
-            try:
-                self.a2m_enhanced_detection_mode_var.set(
-                    "both" if settings.get("a2m_use_alt_detector") else "off")
-            except Exception:
-                pass
+        # a2m-ed-section: old enhanced keys ignored
         if hasattr(self, "_a2m_dedup_stored"):
             for mode_key, cfg_key in (("spectral", "dedup_spectral"), ("hybrid", "dedup_hybrid")):
                 if isinstance(settings.get(cfg_key), dict):
@@ -33870,11 +35003,27 @@ demucs.separate.main()
                 "Couldn't read a song name from the chart file name.")
             return (None, None)
         found = []
+        rec_warn = []
         if drums:
             found.append("Drums:     " + os.path.basename(drums))
+            try:
+                self._add_recent_file("recent_spec_drums", drums)
+            except Exception:
+                rec_warn.append("drums")
         if mix:
             found.append("Full Mix:  " + os.path.basename(mix))
+            try:
+                self._add_recent_file("recent_spec_mix", mix)
+            except Exception:
+                rec_warn.append("mix")
         self._auto_fetch_show_result(song, drums, mix, used_recursive, found)
+        if rec_warn:
+            try:
+                self._set_global_status(
+                    "Auto Fetch Audio found files — recent-list update failed.",
+                    5000)
+            except Exception:
+                pass
         return (drums, mix)
 
     def _creator_auto_fetch_audio(self):
@@ -36335,8 +37484,8 @@ demucs.separate.main()
                   justify=tk.LEFT, wraplength=340).pack(anchor="w")
 
         # ── Convert button (sheet music tab) ──────────────────────────────────
-        self.sm_btn = ttk.Button(body, text="Convert Sheet Music to MIDI", image=fluent_icon("book_open") or "", compound="left",
-                                 style="Convert.TButton",
+        self.sm_btn = ttk.Button(body, text="Convert Sheet Music to MIDI", image=self._primary_action_icon("book_open") or "", compound="left",
+                                 style="Hero.TButton",
                                  command=self._sm_convert)
         self.sm_btn.pack(fill=tk.X, pady=(10, 6), ipady=8)
 
@@ -38336,8 +39485,8 @@ demucs.separate.main()
         # Download button
         dl_row = ttk.Frame(main)
         dl_row.pack(anchor="w", pady=(0, 8))
-        self.yt_dl_btn = ttk.Button(dl_row, text="Download & Convert", image=fluent_icon("arrow_download") or "", compound="left",
-                                     style="Convert.TButton",
+        self.yt_dl_btn = ttk.Button(dl_row, text="Download & Convert", image=self._primary_action_icon("arrow_download") or "", compound="left",
+                                     style="Hero.TButton",
                                      command=self._yt_start_download)
         self.yt_dl_btn.pack(side=tk.LEFT, padx=(0, 12))
         self._yt_cancel_event = threading.Event()
@@ -41727,12 +42876,16 @@ demucs.separate.main()
 
         apply_row = ttk.Frame(meta_frame)
         apply_row.pack(fill=tk.X, pady=(6, 0))
-        ttk.Button(apply_row, text="✓  Apply Metadata to Song Creator",
+        _am_meta_border = self._make_cyan_border(apply_row)  # cyan-border: am-meta
+        _am_meta_border.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(_am_meta_border, text="✓  Apply Metadata to Song Creator",
                    style="Convert.TButton",
-                   command=self._am_apply_metadata).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(apply_row, text="Apply art from thumbnail to Song Creator", image=fluent_icon("image") or "", compound="left",
+                   command=self._am_apply_metadata).pack(padx=2, pady=2)
+        _am_art_border = self._make_cyan_border(apply_row)  # cyan-border: am-art
+        _am_art_border.pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(_am_art_border, text="Apply art from thumbnail to Song Creator", image=fluent_icon("image") or "", compound="left",
                    style="Convert.TButton",
-                   command=self._am_apply_art).pack(side=tk.LEFT, padx=(0, 8))
+                   command=self._am_apply_art).pack(padx=2, pady=2)
         ttk.Button(apply_row, text="Save Image...", image=fluent_icon("save") or "", compound="left",
                    style="Convert.TButton",
                    command=self._am_save_image).pack(side=tk.LEFT, padx=(0, 8))
@@ -42717,6 +43870,8 @@ demucs.separate.main()
             # Auto Fetch Audio button: resolve the drums stem + full mix that
             # match the loaded chart's file name (same search as the MIDI Editor).
             "auto_fetch_audio": self._spec_auto_fetch_audio,
+            "make_recent_btn": self._make_recent_btn,
+            "add_recent_file": self._add_recent_file,
             # Overwrite/Export MIDI just rewrote a file on disk. The MIDI Editor
             # may be holding that same path in memory (breaker H6, 2026-07-29).
             "midi_written": self._spec_on_midi_written,
@@ -44328,8 +45483,7 @@ demucs.separate.main()
               "  Use .flac or .wav for best quality (see Audio Format below).\n\n"
               "STEP 2 →  Audio → MIDI  (skip if you have a MIDI already)\n"
               "  Convert the drums-only stem into a MIDI file.\n"
-              "  Why: this is the rough draft — it won't be perfect, and that's okay.\n"
-              "  Pick the Genre closest to your song.\n\n"
+              "  Why: this is the rough draft — it won't be perfect, and that's okay.\n\n"
               "STEP 3 →  MIDI Editor  (always do this)\n"
               "  Review and clean up the generated MIDI.\n"
               "  Why: the auto-detector will always have some mistakes. This is where\n"
@@ -44456,7 +45610,7 @@ demucs.separate.main()
               "    1.  Enable DrumSep in the Stem Splitter\n"
               "    2.  Click '↓ Download Model' (~200MB, one-time download)\n"
               "    3.  Wait for '✓ Model ready' status\n"
-              "    Model is stored in drumsep_model\\ next to ParaKit.exe,\n"
+              "    Model is stored in drumsep_model\\ next to ParaKit,\n"
               "    or in Requirements\\drumsep_model\\ when Requirements\\ exists.\n"
               "    GitHub is tried first, Google Drive as fallback.\n\n"
               "  How to use:\n"
@@ -44609,7 +45763,7 @@ demucs.separate.main()
               "    default.json    \u2014  Expert difficulty, complexity 3\n"
               "    fast_rock.json  \u2014  Hard difficulty, complexity 4, reduction on\n"
               "    metal.json      \u2014  Expert difficulty, complexity 5\n"
-              "  Templates live in the templates\\ folder next to ParaKit.exe.\n"
+              "  Templates live in the templates\\ folder next to ParaKit.\n"
               "  Click New... to create a copy you can edit.\n\n"
               "File matching rules\n"
               "  Flat scan only \u2014 subfolders are not searched.\n"
@@ -44943,10 +46097,10 @@ demucs.separate.main()
               "How to set up ML / Hybrid mode:\n"
               "  1.  In the Detection Engine section, select ML or Hybrid\n"
               "  2.  Click '↓ Download Model' — parakit_drum_model.onnx (~1.7 MB) downloads\n"
-              "      automatically to Requirements\\ if present, otherwise next to ParaKit.exe\n"
+              "      automatically to Requirements\\ if present, otherwise next to ParaKit\n"
               "  3.  Status should change to ✓ Model ready\n"
               "  4.  Convert as normal\n"
-              "  Or: place parakit_drum_model.onnx manually next to ParaKit.exe\n"
+              "  Or: place parakit_drum_model.onnx manually next to ParaKit\n"
               "      or in Requirements\\, then click Check\n\n"
               "ML Confidence Threshold  (default: 0.50)\n"
               "  Controls how certain the model must be before counting a hit.\n"
@@ -44956,7 +46110,7 @@ demucs.separate.main()
               "Troubleshooting:\n"
               "  'No model found' — model file is missing or in the wrong location.\n"
               "    Fix: click ↓ Download Model, or place parakit_drum_model.onnx next to\n"
-              "    ParaKit.exe or in Requirements\\, then click Check.\n\n"
+              "    ParaKit or in Requirements\\, then click Check.\n\n"
               "  'Model error' — the file is corrupt or incompatible.\n"
               "    Fix: delete parakit_drum_model.onnx and click ↓ Download Model to\n"
               "    re-download a fresh copy.\n\n"
@@ -45140,7 +46294,7 @@ demucs.separate.main()
         tip(s, "Use 'Extract MIDI & Send to Editor' to go straight from a chart file to "
                "editing — one click extracts and opens. Great for creating alternate "
                "difficulties or cleaning up auto-detected charts.")
-        note(s, "Requires the 'Extractor Mini App' folder alongside ParaKit.exe. "
+        note(s, "Requires the 'Extractor Mini App' folder alongside ParaKit. "
                 "If the panel shows an error message instead of the extractor UI, "
                 "that folder is missing or has been renamed.")
 
@@ -45214,22 +46368,26 @@ demucs.separate.main()
         divider(s)
         entry(s,
               "Manual MIDI Note Manager  (button next to Tempo Map):\n\n"
-              "  Choose which MIDI note each drum lane writes on export\n"
-              "  (.mid / .rlrr / .chart). Every choice is restricted to notes\n"
-              "  that are valid for that piece in both Paradiddle and Clone Hero,\n"
-              "  with the General MIDI sound named in the dropdown.\n\n"
+              "  Choose which MIDI note each drum lane converts to in Song\n"
+              "  Creator and batch conversion (.rlrr / .chart). Save MIDI keeps\n"
+              "  each note's stored MIDI number; these choices do not remap\n"
+              "  saved .mid files. Every choice is restricted to notes that are\n"
+              "  valid for that piece in both Paradiddle and Clone Hero.\n"
+              "  Dropdown names follow General MIDI except note 55, which uses\n"
+              "  Paradiddle's 13-inch crash name; its .rlrr caveat states the\n"
+              "  actual exported piece.\n\n"
               "    • Crash & Ride actually switch the drum piece in Paradiddle\n"
-              "      (e.g. Crash 15\" vs 17\", Ride 17\" vs 20\" vs Bell).\n"
-              "    • The other lanes keep their single Paradiddle pad — the\n"
-              "      choice sets the note that e-kits / DAWs receive from the\n"
-              "      exported MIDI.\n\n"
+              "      (e.g. Crash 15\" vs 17\", Ride 17\" vs 20\" vs Bell). Crash 55\n"
+              "      exports as the 15\" crash in .rlrr and the green cymbal in\n"
+              "      Clone Hero.\n"
+              "    • The other lanes keep their single Paradiddle pad.\n\n"
               "  Tied to the loaded MIDI (per-chart, NOT global): a fresh MIDI\n"
               "  starts at the defaults, and re-loading a MIDI you tuned before\n"
               "  restores the choices you saved for it — so you never have to\n"
               "  re-tune the same chart twice. 'Reset to defaults' clears just\n"
               "  the loaded chart. Each lane's current note is shown under its\n"
               "  name in the editor's left lane strip so you can see at a glance\n"
-              "  what every lane will export.\n\n"
+              "  the selected conversion note for each lane.\n\n"
               "  Hi-Hat works like the other lanes — pick its MIDI note in the\n"
               "  Manager (Closed 42 / Open 46 / Pedal 44) and new hats you place\n"
               "  use it. But hi-hats can ALSO be changed individually, because a\n"
@@ -46249,7 +47407,7 @@ demucs.separate.main()
               "  in one of these locations:\n"
               "    - inside Requirements\\platform-tools\\ (recommended), or\n"
               "    - directly inside Requirements\\ (flat), or\n"
-              "    - directly next to ParaKit.exe (legacy layout).\n\n"
+              "    - directly next to ParaKit (legacy layout).\n\n"
               "Quest setup (one-time):\n"
               "  1.  Enable Developer Mode on your Quest:\n"
               "      Meta app → Menu → Devices → [headset] → Developer Mode → On\n"
@@ -46328,14 +47486,14 @@ demucs.separate.main()
                  "  → If drag and drop is consistently unavailable, try reinstalling ParaKit.")
         entry(s, "Push to Quest failed — 'No Quest Found'\n"
                  "  → Check that adb.exe (with its .dll files) is in one of the\n"
-                 "    supported locations: next to ParaKit.exe, inside\n"
+                 "    supported locations: next to ParaKit, inside\n"
                  "    Requirements\\platform-tools\\, or directly inside Requirements\\.\n"
                  "  → Plug Quest in via USB and put on the headset — accept the\n"
                  "    USB debugging prompt that appears inside the headset.\n"
                  "  → Enable Developer Mode in the Meta app on your phone first.")
         entry(s, "App crashed and disappeared\n"
                  "  → A crash report file (parakit_crash.txt) and debug log\n"
-                 "    (parakit_debug.log) are saved next to ParaKit.exe automatically.\n"
+                 "    (parakit_debug.log) are saved next to ParaKit automatically.\n"
                  "  → Send parakit_crash.txt when reporting the issue.")
         entry(s, "Zip output is empty or missing files\n"
                  "  → Make sure the song converted successfully before the zip runs.\n"
@@ -46424,9 +47582,21 @@ demucs.separate.main()
               "    Auto / Compact / Roomy), or\n"
               "  - Tools menu > Layout Mode (1080p / 1440p). Three options:\n"
               "      Auto (detect monitor size)   - default; ParaKit picks based\n"
-              "                                     on the monitor's work area.\n"
+              "                                     on the monitor's work area\n"
+              "                                     and the current window height.\n"
+              "                                     A short window uses Compact\n"
+              "                                     spacing so the piano roll stays\n"
+              "                                     visible. The layout is not\n"
+              "                                     re-resolved while resizing;\n"
+              "                                     reselect Layout or restart.\n"
               "      Compact (1080p / smaller)    - force the compact layout.\n"
-              "      Roomy (1440p / larger)       - force the roomy layout.\n"
+              "      Roomy (1440p / larger)       - prefer the roomy layout.\n"
+              "                                     If the window is too short,\n"
+              "                                     Compact spacing is used and the\n"
+              "                                     Layout button still reads Roomy.\n"
+              "                                     Enlarging the window keeps\n"
+              "                                     Compact spacing until Layout is\n"
+              "                                     reselected or the app restarts.\n"
               "  - Selection is saved and applies now, to every tab. If the setting\n"
               "    cannot be saved, ParaKit says so and keeps the layout for this\n"
               "    session only.\n\n"
@@ -46452,8 +47622,9 @@ demucs.separate.main()
               "MIDI 45/47   Low Tom\n"
               "MIDI 46      Open Hi-Hat\n"
               "MIDI 48/50   Mid Tom\n"
-              "MIDI 49/55   Crash / Splash Cymbal\n"
+              "MIDI 49      Crash Cymbal (15\")\n"
               "MIDI 51/53   Ride Cymbal / Bell\n"
+              "MIDI 55      Crash Cymbal (13\"; .rlrr export uses the 15\")\n"
               "MIDI 57      Crash Cymbal (17\")\n"
               "MIDI 59      Ride Cymbal (20\")\n\n"
               "Notes not in this list are silently ignored during conversion.")
@@ -51545,6 +52716,7 @@ demucs.separate.main()
             "get_cfg":            _st_get_cfg,
             "set_cfg":            _st_set_cfg,
             "fluent_icon":        fluent_icon,
+            "primary_fluent_icon": lambda name: self._primary_action_icon(name),
             "labelframe_title":   _fluent_labelframe_title,
             "browse":             self._tester_browse,
             "make_recent_btn":    self._make_recent_btn,
@@ -52514,7 +53686,7 @@ demucs.separate.main()
 
         # --- Convert button ---
         self.ogg_convert_btn = ttk.Button(
-            main, text="Convert to .ogg", image=fluent_icon("arrow_sync") or "", compound="left", style="Convert.TButton",
+            main, text="Convert to .ogg", image=self._primary_action_icon("arrow_sync") or "", compound="left", style="Hero.TButton",
             command=self._ogg_start_convert
         )
         self.ogg_convert_btn.pack(fill=tk.X, pady=(5, 10), ipady=8)
@@ -52905,7 +54077,7 @@ demucs.separate.main()
                    ).pack(fill=tk.X, pady=(10, 4), ipady=4)
 
         self.batch_convert_btn = ttk.Button(
-            main, text="Convert All Songs", image=fluent_icon("music_note_2") or "", compound="left", style="Convert.TButton",
+            main, text="Convert All Songs", image=self._primary_action_icon("music_note_2") or "", compound="left", style="Hero.TButton",
             command=self._batch_start_convert)
         self.batch_convert_btn.pack(fill=tk.X, pady=(0, 8), ipady=8)
 
@@ -53085,11 +54257,11 @@ demucs.separate.main()
         # 10-11) so the existing slot grid above is untouched.
         extras = ttk.Frame(frame)
         extras.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(6, 2))
-        af_border = tk.Frame(extras, bg="#00e5ff", bd=0)   # cyan outline, app style
+        af_border = self._make_cyan_border(extras)  # cyan-border: batch-af
         af_border.pack(side=tk.LEFT, padx=(0, 12), anchor="n")
         ttk.Button(af_border, text="Auto Fetch Audio", image=fluent_icon("music_note_2") or "", compound="left", width=21,
                    command=lambda s=slot: self._batch_auto_fetch_audio(s)
-                   ).pack(padx=1, pady=1)
+                   ).pack(padx=2, pady=2)
 
         art_box = tk.Frame(extras, width=80, height=80, bg="#17172d",
                            highlightthickness=1, highlightbackground="#2a2a44")
@@ -56023,8 +57195,23 @@ def main():
         missing.append("pydub")
     # demucs is optional. Stem Splitter disables Split Stems when it is absent.
 
+    global DND_AVAILABLE
+    _dnd_load_error = None
     if DND_AVAILABLE:
-        root = TkinterDnD.Tk()
+        try:
+            root = TkinterDnD.Tk()
+        except RuntimeError as _dnd_exc:
+            # Tk.__init__ already ran; destroy the leftover default root
+            # so the fallback is the same plain tk.Tk() as the else branch.
+            DND_AVAILABLE = False
+            _dnd_load_error = _dnd_exc
+            _leftover = getattr(tk, "_default_root", None)
+            if _leftover is not None:
+                try:
+                    _leftover.destroy()
+                except tk.TclError:
+                    pass
+            root = tk.Tk()
     else:
         root = tk.Tk()
 
@@ -56053,6 +57240,24 @@ def main():
         sys.exit(1)
 
     app = MidiToRlrrApp(root)
+    if _dnd_load_error is not None:
+        _dnd_detail = "%s: %s" % (type(_dnd_load_error).__name__, _dnd_load_error)
+        try:
+            import logging as _dnd_logging
+            _dnd_logging.warning("Drag-and-drop unavailable: %s", _dnd_detail)
+        except Exception:
+            pass
+        try:
+            print("[ParaKit] Drag-and-drop unavailable: %s" % _dnd_detail)
+        except Exception:
+            pass
+        try:
+            app._set_global_status(
+                "Drag-and-drop is unavailable - use the Browse buttons. "
+                "Details in parakit_debug.log.",
+                0)
+        except Exception:
+            pass
     root.mainloop()
 
 

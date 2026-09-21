@@ -901,20 +901,23 @@ class PracticeHomeScreen(ttk.Frame):
 
         play_row = tk.Frame(pad, background=PANEL)
         play_row.pack(fill=tk.X)
-        # Filled primary gradient (deep purple) -- starts disabled until a
-        # chart loads; _update_play_loaded toggles via .set_enabled().
+        # Filled primary gradient. Owner 2026-09-17: Play Loaded Song takes
+        # tab-strip pink; the demo groove keeps the purple 3-stop. Practice is
+        # always a dark panel, so this is pink regardless of host theme.
+        # Stops are the existing purple triple's RGB deltas from its mid stop
+        # (#7A3BE8), applied to tab pink #ff6ec7 (r clamped on the left stop).
         self.play_loaded_btn = GradientButton(
             play_row, "▶  Play Loaded Song",
             command=self._on_play_loaded,
-            stops=("#8B4DF7", "#7A3BE8", "#6D2BD9"),
+            stops=("#ff80d6", "#ff6ec7", "#f25eb8"),
             height=36,
+            fg="#12121c",
             tooltip="Play the selected library song at your chosen "
                     "difficulty -- or the loaded single chart if no library "
                     "song is selected.")
         self.play_loaded_btn.set_enabled(False)
         self.play_loaded_btn.pack(side=tk.LEFT)
-        # Matches Play Loaded Song's face exactly (owner-directed 2026-07-23):
-        # same purple gradient stops + height, so the two buttons read as a pair.
+        # Demo groove keeps the pre-change purple 3-stop (owner 2026-09-17).
         self.demo_btn = GradientButton(
             play_row, "▶ Play the demo groove",
             command=self._on_demo,

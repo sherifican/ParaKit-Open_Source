@@ -71,6 +71,24 @@ import json
 import os
 import re
 import sys
+# A diagnostic should not be able to kill the run on a fixed legacy console; see the note in
+# bundle_draft_apply.py. This repository's source is not cp1252-encodable by house style (74 of 167
+# files under tools/, on 319 lines), and this script echoes repository text, so an unencodable
+# character used to raise UnicodeEncodeError from print and exit 1 -- indistinguishable from a real
+# refusal. backslashreplace rather than forcing encoding="utf-8" (containment_validate.py's choice),
+# because a consumer decoding this output as cp1252 would see mojibake where an escape is at least
+# visibly an escape. Corrected after review, because the stronger version of that claim is false:
+# an escape is NOT unambiguous however the output is decoded -- an already-encodable character such
+# as an e-acute stays codec-dependent, escape text is itself ambiguous, and a character emitted as
+# UTF-8 is never escaped at all. The transport between fleet processes is UTF-8 and stated as such
+# where it is read; this handler is the human-diagnostic fallback, not the contract. A machine
+# verdict belongs in structured data, not reconstructed from console text.
+# This comment is ASCII-only on purpose -- reading a file never executes the guard.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="backslashreplace")
+    except Exception:
+        pass
 
 DEFAULT_ROOT = r"C:/Users/micah/ParaKit-Open_Source"
 # The extractor mirror check needs the UPSTREAM, which lives only in the dev tree.

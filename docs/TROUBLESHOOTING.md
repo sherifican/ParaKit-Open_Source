@@ -22,8 +22,7 @@ specific song needs a different gap:
      **50–65 ms**.
 
    (Leave the other instruments at their defaults unless you have a reason to change them.)
-4. Make sure your **Detection Engine** (Spectral / ML / Hybrid) and **Genre** are set to the best
-   match for the song, then press **Convert**.
+4. Make sure your **Detection Engine** (Spectral / ML / Hybrid) is set, then press **Convert**.
 
 Steps 1–2 — open **Advanced / Debug → Note Deduplication Gap** and tick **Enable per-instrument dedup gaps**:
 

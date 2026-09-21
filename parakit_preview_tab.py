@@ -94,6 +94,17 @@ TEXT = "#e0e0e0"          # body text
 MUTED = "#7e7e96"         # muted/secondary text
 GREEN = "#00c853"         # success green
 AMBER = "#e09a3a"         # warning amber
+STALE_SOURCE_TITLE = "Source file changed"
+STALE_SOURCE_BODY = (
+    "The loaded MIDI has changed on disk since this chart was opened.\n"
+    "\n"
+    "Reload from disk keeps the file as it is now.\n"
+    "Overwrite with this chart replaces the file with this tab's notes.\n"
+    "Cancel leaves the file unchanged."
+)
+STALE_SOURCE_RELOAD = "Reload from disk"
+STALE_SOURCE_OVERWRITE = "Overwrite with this chart"
+STALE_SOURCE_CANCEL = "Cancel"
 RED = "#e5484d"           # Stop / Record accent (Preview-local; spectral has
                            # no red primitive of its own)
 CHIP_OFF_EDGE = "#3a3a55"
@@ -3593,7 +3604,15 @@ class PreviewTab(ttk.Frame):
     def import_chart(self, path):
         """Load a .mid / .rlrr / .json chart into the preview (smoke-callable)."""
         try:
-            notes, bpm = eng.load_chart_as_notes(path)
+            if str(path).lower().endswith((".mid", ".midi")):
+                with open(path, "rb") as fh:
+                    raw = fh.read()
+                notes, bpm = eng.load_midi_as_notes_from_bytes(raw)
+                end_kind, end_secs = eng.read_chart_end_state_from_bytes(raw)
+                midi_sig = eng.midi_bytes_signature(raw)
+            else:
+                notes, bpm = eng.load_chart_as_notes(path)
+                end_kind, end_secs, midi_sig = None, None, None
         except Exception as exc:
             self._status("Import failed — %s" % exc, AMBER)
             return False
@@ -3604,11 +3623,16 @@ class PreviewTab(ttk.Frame):
         self._before_chart_swap()
         self.canvas.set_chart(notes, bpm)
         self.canvas.model.chart_end_secs = (
-            eng.read_chart_end_secs(path)
-            if str(path).lower().endswith((".mid", ".midi")) else None)
+            end_secs if str(path).lower().endswith((".mid", ".midi"))
+            and end_kind == "marker" else None)
         self.canvas.model.midi_source_path = (
             os.path.normcase(os.path.abspath(path))
             if str(path).lower().endswith((".mid", ".midi")) else None)
+        self.canvas.model.midi_source_sig = (
+            midi_sig if self.canvas.model.midi_source_path else None)
+        self.canvas.model.midi_source_id = (
+            eng.midi_path_identity(path)
+            if self.canvas.model.midi_source_path else None)
         self.seek_t1.configure(text=fmt_short(self.canvas.duration))
         self._update_seek_from_view(0.0)
         self._sync_bpm_label()
@@ -3646,6 +3670,130 @@ class PreviewTab(ttk.Frame):
         self.import_chart(path)
 
     # ----- export (parakit-chart .json / GM .mid) ---------------------------
+    def _decide_stale_source(self, path):
+        """reload / overwrite / cancel. Tests replace _stale_source_ask."""
+        model = getattr(self.canvas, "model", None)
+        sig = getattr(model, "midi_source_sig", None) if model is not None else None
+        self._stale_approved_dest = None
+        dest_state = eng.midi_dest_expectation(path)
+        if dest_state[0] == "unreadable":  # unreadable-refused: no overwrite
+            return "unreadable"
+        if sig and eng.midi_signatures_match(path, sig):
+            self._stale_approved_dest = ("bytes", sig)
+            return "overwrite"
+        ask = getattr(self, "_stale_source_ask", None)
+        if callable(ask):
+            choice = ask(path)
+            if choice in ("reload", "overwrite", "cancel"):
+                if choice == "overwrite":
+                    expected = eng.midi_dest_expectation(path)
+                    if expected[0] == "unreadable":
+                        return "unreadable"
+                    self._stale_approved_dest = expected
+                return choice
+            return "cancel"
+        choice = getattr(self, "_stale_source_choice", None)
+        if choice in ("reload", "overwrite", "cancel"):
+            if choice == "overwrite":
+                expected = eng.midi_dest_expectation(path)
+                if expected[0] == "unreadable":
+                    return "unreadable"
+                self._stale_approved_dest = expected
+            return choice
+        result = self._ask_stale_source_dialog(path)
+        if result == "overwrite":
+            expected = eng.midi_dest_expectation(path)
+            if expected[0] == "unreadable":
+                return "unreadable"
+            self._stale_approved_dest = expected
+        return result
+
+    def _ask_stale_source_dialog(self, path):
+        result = ["cancel"]
+        dlg = tk.Toplevel(self)
+        dlg.title(STALE_SOURCE_TITLE)
+        dlg.resizable(False, False)
+        try:
+            dlg.transient(self.winfo_toplevel())
+        except Exception:
+            pass
+        body = tk.Label(dlg, text=STALE_SOURCE_BODY, justify=tk.LEFT,
+                        background=PANEL, foreground=TEXT, wraplength=420)
+        body.pack(padx=16, pady=(14, 8), anchor=tk.W)
+        name = tk.Label(dlg, text=os.path.basename(path), justify=tk.LEFT,
+                        background=PANEL, foreground=MUTED)
+        name.pack(padx=16, pady=(0, 8), anchor=tk.W)
+        btnf = tk.Frame(dlg, background=PANEL)
+        btnf.pack(padx=16, pady=(0, 14), anchor=tk.E)
+
+        def choose(choice):
+            result[0] = choice
+            dlg.destroy()
+
+        tk.Button(btnf, text=STALE_SOURCE_RELOAD,
+                  command=lambda: choose("reload")).pack(side=tk.LEFT, padx=4)
+        tk.Button(btnf, text=STALE_SOURCE_OVERWRITE,
+                  command=lambda: choose("overwrite")).pack(side=tk.LEFT, padx=4)
+        tk.Button(btnf, text=STALE_SOURCE_CANCEL,
+                  command=lambda: choose("cancel")).pack(side=tk.LEFT, padx=4)
+        dlg.protocol("WM_DELETE_WINDOW", lambda: choose("cancel"))
+        dlg.bind("<Escape>", lambda e: choose("cancel"))
+        try:
+            parent = self.winfo_toplevel()
+            dlg.update_idletasks()
+            pw = dlg.winfo_reqwidth()
+            ph = dlg.winfo_reqheight()
+            px = parent.winfo_rootx() + (parent.winfo_width() - pw) // 2
+            py = parent.winfo_rooty() + (parent.winfo_height() - ph) // 2
+            dlg.geometry("+%d+%d" % (int(px), int(py)))
+        except Exception:
+            pass
+        try:
+            dlg.grab_set()
+        except Exception:
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+            return "cancel"
+        try:
+            dlg.focus_set()
+        except Exception:
+            pass
+        try:
+            dlg.wait_window()
+        except Exception:
+            return "cancel"
+        return result[0]
+
+    def _reload_midi_source(self):
+        path = getattr(self.canvas.model, "midi_source_path", None)
+        if not path or not os.path.isfile(path):
+            self._status("Reload failed — the source MIDI is not available.", AMBER)
+            return False
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            notes, bpm = eng.load_midi_as_notes_from_bytes(raw)
+            kind, secs = eng.read_chart_end_state_from_bytes(raw)
+            sig = eng.midi_bytes_signature(raw)
+            bpm = eng.safe_bpm(bpm)
+        except Exception:
+            self._status("Reload failed — the source MIDI is not available.", AMBER)
+            return False
+        self._before_chart_swap()
+        self.canvas.set_chart(notes, bpm)
+        self.canvas.model.chart_end_secs = secs if kind == "marker" else None
+        self.canvas.model.midi_source_path = os.path.normcase(os.path.abspath(path))
+        self.canvas.model.midi_source_sig = sig
+        self.canvas.model.midi_source_id = eng.midi_path_identity(path)
+        self.seek_t1.configure(text=fmt_short(self.canvas.duration))
+        self._update_seek_from_view(0.0)
+        self._sync_bpm_label()
+        self._chart_dirty = False
+        self._status("Reloaded %d notes from disk." % len(notes))
+        return True
+
     def export_chart(self, path):
         """Write the current chart to path by extension (smoke-callable)."""
         notes = self.canvas.model.notes
@@ -3655,15 +3803,53 @@ class PreviewTab(ttk.Frame):
         try:
             if path.lower().endswith((".mid", ".midi")):
                 source_path = getattr(self.canvas.model, "midi_source_path", None)
-                same_file = (source_path is not None and
-                    os.path.normcase(os.path.abspath(path)) ==
-                    os.path.normcase(os.path.abspath(source_path)))
-                disk_end = (eng.read_chart_end_secs(path)
-                            if same_file and os.path.isfile(path) else None)
-                chart_end = (disk_end if disk_end is not None
-                             else getattr(self.canvas.model, "chart_end_secs", None))
-                count = eng.write_smf0(notes, self.canvas.model.bpm, path,
-                                       chart_end_secs=chart_end)
+                source_id = getattr(self.canvas.model, "midi_source_id", None)
+                relation = (eng.same_midi_path(path, source_path, source_id=source_id)
+                            if source_path is not None else False)
+                same_file = relation is True or relation == "unknown"
+                expected_dest = None
+                decide = getattr(self, "_decide_stale_source", None)
+                dest_retries = 0
+                while True:
+                    if same_file and callable(decide):
+                        decision = decide(path)
+                        if decision == "cancel":
+                            self._status("Export canceled — the file was left unchanged.")
+                            return False
+                        if decision == "unreadable":
+                            self._status("Export stopped — the destination file cannot be read. Save to another path.")
+                            return False
+                        if decision == "reload":
+                            self._reload_midi_source()
+                            return False
+                        expected_dest = getattr(self, "_stale_approved_dest", None)
+                    state, disk_end = (eng.read_chart_end_state(path)
+                                if same_file and os.path.isfile(path) else ("other", None))
+                    if state == "marker":
+                        chart_end = disk_end
+                    elif state == "absent":
+                        chart_end = None
+                    else:
+                        chart_end = getattr(self.canvas.model, "chart_end_secs", None)
+                    try:
+                        emitted = []
+                        count = eng.write_smf0(
+                            notes, self.canvas.model.bpm, path,
+                            chart_end_secs=chart_end,
+                            expected_dest=(expected_dest if same_file else None),
+                            emitted=emitted)
+                        break
+                    except eng.MidiDestinationChanged:
+                        if not same_file:
+                            raise
+                        dest_retries += 1
+                        if dest_retries >= 2:
+                            raise
+                        continue
+                if same_file:
+                    self.canvas.model.chart_end_secs = chart_end
+                    self.canvas.model.midi_source_sig = eng.midi_bytes_signature(
+                        emitted[0])
             else:
                 if getattr(self.canvas.model, "chart_end_secs", None) is not None:
                     if not messagebox.askyesno(
@@ -3718,7 +3904,10 @@ class PreviewTab(ttk.Frame):
     # ----- cross-tab handoff (inbound from the MIDI Editor) -----------------
     def receive(self, action, payload):
         """Host-callable inbound handoff. ``action == "load_chart"`` with
-        ``payload = {"notes": [...], "bpm": float, "source": str}``. Any
+        ``payload = {"notes": [...], "bpm": float, "source": str,
+        "midi_bytes": bytes}``. ``midi_bytes`` is the baseline snapshot
+        for the notes handed in (``bytes`` or ``bytearray``). Absent →
+        baseline ``None`` → the next same-source save asks. Any
         exception is swallowed with a status note -- never crashes the host."""
         try:
             if action != "load_chart":
@@ -3726,11 +3915,10 @@ class PreviewTab(ttk.Frame):
             # A cross-tab send replaces the chart exactly like a local import, so it
             # gets the same warning (2026-08-01). Without this, every LOCAL swap path
             # prompted while a send from the MIDI Editor / Song Tester / Creator
-            # silently destroyed edited work -- and the H7 hand-off ends in precisely
-            # this method, so "save your editor edits and send to Preview" was the
-            # one flow that could still lose Preview-side edits without asking.
-            # Costs nothing on a clean or demo chart, so the selftest and any
-            # programmatic caller are unaffected.
+            # silently destroyed edited work -- and those host flows end in
+            # import_chart, not this method. receive remains the programmatic
+            # inbound API (selftest and any payload caller). Costs nothing on a
+            # clean or demo chart, so those callers are unaffected.
             if not self._confirm_discard_edits("Loading the received chart"):
                 self._status("Kept the current chart — the incoming chart was "
                              "not loaded.")
@@ -3769,6 +3957,16 @@ class PreviewTab(ttk.Frame):
                                             vel=max(1, min(127, vel))))
                 except Exception:
                     skipped += 1
+            raw = payload.get("midi_bytes")
+            snapshot = bytes(raw) if isinstance(raw, (bytes, bytearray)) else None
+            snap_kind, snap_secs = None, None
+            if snapshot is not None:
+                snap_kind, snap_secs = eng.read_chart_end_state_from_bytes(snapshot)
+                try:
+                    _ignored, snap_bpm = eng.load_midi_as_notes_from_bytes(snapshot)
+                    bpm = eng.safe_bpm(snap_bpm)
+                except Exception:
+                    pass
             self._before_chart_swap()
             self.canvas.set_chart(notes, bpm)
             self.seek_t1.configure(text=fmt_short(self.canvas.duration))
@@ -3780,12 +3978,19 @@ class PreviewTab(ttk.Frame):
             self._chart_dirty = False   # a freshly installed chart is clean
             self._chart_title = payload.get("title") or source
             p = payload.get("path") or ""
+            is_mid = str(p).lower().endswith((".mid", ".midi"))
             self.canvas.model.chart_end_secs = (
-                eng.read_chart_end_secs(p)
-                if str(p).lower().endswith((".mid", ".midi")) else None)
+                snap_secs if snapshot is not None and snap_kind == "marker" else None)
             self.canvas.model.midi_source_path = (
-                os.path.normcase(os.path.abspath(p))
-                if str(p).lower().endswith((".mid", ".midi")) else None)
+                os.path.normcase(os.path.abspath(p)) if is_mid else None)
+            if snapshot is not None and self.canvas.model.midi_source_path:
+                self.canvas.model.midi_source_sig = eng.midi_bytes_signature(snapshot)  # receive-disk-change: hash the payload
+                self.canvas.model.midi_source_id = eng.midi_path_identity(p)
+            else:
+                self.canvas.model.midi_source_sig = None  # receive-no-bytes: baseline unknown
+                self.canvas.model.midi_source_id = (
+                    eng.midi_path_identity(p)
+                    if self.canvas.model.midi_source_path else None)
             self._chart_file_basename = (os.path.basename(str(p)) if p
                                          else str(self._chart_title or ""))
             self._set_song_readout()

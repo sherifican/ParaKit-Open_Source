@@ -32,7 +32,7 @@ Pillow>=10             # album art + image handling
 mutagen>=1.47          # read / write audio tags (FLAC / MP3 / MP4 / OGG)
 
 # --- Stem splitter (HEAVY — optional) --------------------------------------
-# demucs pulls in torch + torchaudio (~2-3 GB download). Only needed for the
+# demucs pulls in torch. Only needed for the
 # Stem Splitter tab; skip this line if you will not split stems.
 # GPU: on Windows this line installs the PyPI build of PyTorch, which has NO CUDA in it
 # (~116 MB; a CUDA build is over 2 GB) - so the splitter runs on CPU on EVERY card, not

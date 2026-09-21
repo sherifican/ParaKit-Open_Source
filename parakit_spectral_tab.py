@@ -54,7 +54,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 try:
     import parakit_preview_sprites as _spr
@@ -81,6 +81,17 @@ TEXT = "#e0e0e0"          # body text
 MUTED = "#7e7e96"         # muted/secondary text
 GREEN = "#00c853"         # success green
 AMBER = "#e09a3a"         # warning amber
+STALE_SOURCE_TITLE = "Source file changed"
+STALE_SOURCE_BODY = (
+    "The loaded MIDI has changed on disk since this chart was opened.\n"
+    "\n"
+    "Reload from disk keeps the file as it is now.\n"
+    "Overwrite with this chart replaces the file with this tab's notes.\n"
+    "Cancel leaves the file unchanged."
+)
+STALE_SOURCE_RELOAD = "Reload from disk"
+STALE_SOURCE_OVERWRITE = "Overwrite with this chart"
+STALE_SOURCE_CANCEL = "Cancel"
 
 # Canvas-specific colours (match the v5 views so the two apps read alike).
 CANVAS_BG = "#070710"
@@ -189,6 +200,26 @@ AXIS_W = 58           # Spectrogram freq-axis gutter width
 ZOOM_DEFAULT = 200.0  # px per second (v5 SPEC_ZOOM_DEFAULT)
 ZOOM_MIN = 30.0
 ZOOM_MAX = 1200.0
+# Owner 2026-09-18: Compare must read as the same rectangle in every layout
+# mode. This supersedes the 2026-09-17 rule that grew Compare leftward until
+# its left edge met fit_btn: that produced a slab roughly 750 px wide in
+# compact while roomy stayed at its ~88 px natural size, so the two modes
+# looked nothing alike. Width is now a single target, mode-independent.
+SPEC_COMPARE_TARGET_W = 360
+# Floor for a source entry, in pixels. winfo_reqwidth() on the entry is
+# captured before the widget is realized and returns 1, so the entry's own
+# request cannot serve as the floor -- measured 2026-09-18.
+SPEC_SOURCE_ENTRY_MIN_PX = 180
+SPEC_COMPARE_ALIGN_DEBOUNCE_MS = 16
+# Per-field recent-files lists. Chart filetypes must not share a list with
+# MIDI Editor recents (those are MIDI-only); drums/mix stay tab-local too.
+SPEC_RECENT_CHART_KEY = "recent_spec_chart"
+SPEC_RECENT_DRUMS_KEY = "recent_spec_drums"
+SPEC_RECENT_MIX_KEY = "recent_spec_mix"
+SPEC_CHART_FILETYPES = (("Chart files", "*.mid *.midi *.json *.rlrr"),
+                        ("All files", "*.*"))
+SPEC_AUDIO_FILETYPES = (("Audio files", "*.ogg *.mp3 *.wav *.flac *.m4a *.aac"),
+                        ("All files", "*.*"))
 
 
 def px_span(dur, pps):
@@ -551,6 +582,16 @@ def apply_theme_embedded(widget: tk.Widget) -> ttk.Style:
     option_add -- the parent application owns those."""
     style = ttk.Style(widget)
     _configure_spec_styles(style)
+    try:
+        btn = getattr(widget, "compare_btn", None)
+        if btn is not None:
+            btn._restyle()  # pink-hero: re-assert Compare fill
+        for attr in ("cand_recent_btn", "ref_recent_btn", "stem_recent_btn"):
+            rbtn = getattr(widget, attr, None)
+            if rbtn is not None:
+                rbtn.configure(style="SpecRecent.TButton")
+    except Exception:
+        pass
     return style
 
 
@@ -671,6 +712,12 @@ def _configure_spec_styles(style: ttk.Style):
                     bordercolor=SEPARATOR, lightcolor=ROW_ALT,
                     darkcolor=ROW_ALT, padding=(8, 3))
     style.map("Spec.TButton", background=[("active", "#232344")])
+    # Host TButton padding is [6, 1] Compact / [10, 5] Roomy. OutlineButton
+    # (Load) is a tk.Label at F_SMALL pady=2 and stays 23 px in both layouts.
+    # SpecRecent is the Compact-font caret sized to that Load height so Roomy
+    # cannot tower over it. Other tabs keep TButton; only Spectral applies
+    # this style to its recent-file buttons.
+    style.configure("SpecRecent.TButton", padding=(6, 2), font=F_SMALL)
 
 # ---------------------------------------------------------------------------
 # Small widgets ------------------------------------------------------------
@@ -873,6 +920,34 @@ class Chip(tk.Label):
         self._restyle()
 
 
+def _neon_resource_path(*parts):
+    """Sidecar copy of the host helper of the same name.
+
+    The sidecar does not import the host, so Compare cannot call fluent_icon.
+    Honours sys._MEIPASS when frozen. Same name as the host helper so
+    ship-parity treats the body as a known resource root.
+    """
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, *parts)
+
+
+def _spec_fluent_png(name, size=16, tint="dark"):
+    """Load icons/<name>_<size>_<tint>.png next to this sidecar.
+
+    Missing or unreadable files return None. Never raises.
+    """
+    try:
+        if tint == "muted":
+            path = _neon_resource_path("icons", "device_eq_16_muted.png")
+        else:
+            path = _neon_resource_path("icons", "device_eq_16_dark.png")
+        if not os.path.isfile(path):
+            return None
+        return tk.PhotoImage(file=path)
+    except Exception:
+        return None
+
+
 class PrimaryButton(tk.Label):
     """Filled purple primary-action button. A tk.Label (not ttk.Button) because
     ttk on Windows/ttkbootstrap ignores `background` on buttons unless the whole
@@ -881,32 +956,60 @@ class PrimaryButton(tk.Label):
     fill control on any host theme (2026-07-20)."""
 
     def __init__(self, parent, text, command=None, tooltip=None):
+        _pb_kw = {}
+        if "ttkbootstrap" in sys.modules:
+            _pb_kw["autostyle"] = False
         super().__init__(parent, text=text, font=F_BOLD, padx=16, pady=6,
-                         cursor="hand2", background=PURPLE, foreground="#ffffff",
-                         highlightthickness=1, highlightbackground=PURPLE_EDGE,
-                         highlightcolor=PURPLE_EDGE)
+                         cursor="hand2", background="#ff6ec7", foreground="#12121c",
+                         highlightthickness=1, highlightbackground="#ff6ec7",
+                         highlightcolor="#ff6ec7", **_pb_kw)
+        self.configure(background="#ff6ec7", foreground="#12121c",
+                       highlightbackground="#ff6ec7", highlightcolor="#ff6ec7")
         self._command = command
         self._enabled = True
+        self._hover = False
+        self._label_text = str(text)
+        self._img_dark = _spec_fluent_png("device_eq", 16, "dark")
+        self._img_muted = _spec_fluent_png("device_eq", 16, "muted")
+        if self._img_muted is None:
+            self._img_muted = self._img_dark
         self.bind("<Button-1>", self._clicked)
         self.bind("<Enter>", lambda _e: self._restyle(hover=True))
         self.bind("<Leave>", lambda _e: self._restyle(hover=False))
         if tooltip:
             Tooltip(self, tooltip)
+        self._restyle()
 
     def _clicked(self, _event=None):
         if self._enabled and self._command:
             self._command()
 
-    def _restyle(self, hover=False):
+    def _restyle(self, hover=None):
+        if hover is None:
+            hover = bool(getattr(self, "_hover", False))
+        else:
+            self._hover = bool(hover)
         if not self._enabled:
             self.configure(background="#241a38", foreground=MUTED,
                            highlightbackground="#2c2c42")
+            img = getattr(self, "_img_muted", None) or getattr(self, "_img_dark", None)
         else:
-            self.configure(background="#8b5cf6" if hover else PURPLE,
-                           foreground="#ffffff", highlightbackground=PURPLE_EDGE)
+            self.configure(background="#ff90d4" if hover else "#ff6ec7",
+                           foreground="#12121c", highlightbackground="#ff6ec7")
+            img = getattr(self, "_img_dark", None)
+        label = getattr(self, "_label_text", None)
+        if label is None:
+            label = str(self.cget("text") or "")
+        if img:
+            # Tk Label has no compound-gap option. padx=16 is the edge pad;
+            # a leading space is the small gap between glyph and text.
+            self.configure(image=img, compound="left", text=" " + label)
+        else:
+            self.configure(image="", compound="none", text=label)
 
     def set_text(self, text):
-        self.configure(text=text)
+        self._label_text = str(text)
+        self._restyle()
 
     def set_enabled(self, enabled: bool):
         self._enabled = bool(enabled)
@@ -1000,6 +1103,30 @@ class OutlineButton(tk.Label):
         self._restyle()
 
 
+def _outline_group_pixel_width(buttons):
+    """Pixel width that fits every button's label at that button's font.
+
+    Uses tkinter.font.Font.measure on the live label, then adds the chrome
+    already in the widget (reqwidth minus measured text). Not a guessed
+    character count -- a later label change or a different DPI keeps the
+    group equal.
+    """
+    widest = 0
+    for btn in buttons:
+        f = tkfont.Font(font=btn.cget("font"))
+        text_px = int(f.measure(btn.cget("text")))
+        extra = int(btn.winfo_reqwidth()) - text_px
+        widest = max(widest, text_px + extra)
+    return widest
+
+
+def _grid_padx_sum(widget):
+    padx = widget.grid_info().get("padx", 0)
+    if isinstance(padx, (tuple, list)):
+        return int(padx[0]) + int(padx[1])
+    return int(padx) * 2
+
+
 class PlaceholderEntry(ttk.Frame):
     """ttk.Entry with placeholder text (ttk has none). Uses the Spec.* styles
     so it is safe inside an embedded tab."""
@@ -1061,6 +1188,8 @@ class MockSpectralModel:
     def __init__(self, seed: int = 20260719):
         self.chart_end_secs = None
         self.midi_source_path = None
+        self.midi_source_sig = None
+        self.midi_source_id = None
         rng = random.Random(seed)
         self.bpm = 120.0
         beat = 60.0 / self.bpm
@@ -1373,6 +1502,8 @@ class _SpectralModel:
                  chart_end_secs=None, midi_source_path=None):
         self.chart_end_secs = chart_end_secs
         self.midi_source_path = midi_source_path
+        self.midi_source_sig = None
+        self.midi_source_id = None
         self._spec = spec
         # Optional: (top, bot) amplitude envelopes for the Waveform render
         # style. None is a supported state -- GramView falls back to deriving a
@@ -2934,6 +3065,10 @@ class SpectralTab(ttk.Frame):
         # browse and only used to seed the file-dialog's initial directory.)
         self._update_readout()
         self._update_transport()
+        self.bind("<Configure>", self._schedule_compare_align)
+        self.bind("<Destroy>", self._cancel_compare_align)
+        self.compare_btn.bind("<Map>", self._on_compare_mapped, add="+")
+        self._compare_align_job = self.after_idle(self._align_compare_to_ref)
 
     # ----- hook helpers ------------------------------------------------------
     def _cfg_get(self, key: str, default=""):
@@ -3068,15 +3203,22 @@ class SpectralTab(ttk.Frame):
             tooltip="The candidate chart whose notes are overlaid on the "
                     "audio's energy and mapped to drum lanes.")
         self.candidate_field.grid(row=0, column=1, sticky=tk.EW, pady=(6, 2))
+        self.cand_load_cell = ttk.Frame(box, style="Spec.Panel.TFrame")
+        self.cand_load_cell.grid(row=0, column=2, padx=(6, 2), pady=(6, 2),
+                                 sticky=tk.EW)
         self.cand_load_btn = OutlineButton(
-            box, "Load chart", accent=PURPLE_EDGE,
+            self.cand_load_cell, "Load chart", accent=PURPLE_EDGE,
             command=self._on_cand_browse,
             tooltip="Choose the candidate chart file.")
-        self.cand_load_btn.grid(row=0, column=2, padx=(6, 2), pady=(6, 2))
+        self.cand_load_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.cand_recent_btn = self._install_recent(
+            self.cand_load_cell, SPEC_RECENT_CHART_KEY,
+            self._apply_cand_path, SPEC_CHART_FILETYPES)
         self.cand_clear_btn = OutlineButton(
             box, "Clear", accent=MUTED, command=self._on_cand_clear,
             tooltip="Clear the chart field.")
-        self.cand_clear_btn.grid(row=0, column=3, padx=(2, 8), pady=(6, 2))
+        self.cand_clear_btn.grid(row=0, column=3, padx=(2, 8), pady=(6, 2),
+                                 sticky=tk.EW)
 
         ttk.Label(box, text="Drums stem:",
                   style="Spec.Panel.TLabel").grid(row=1, column=0, sticky=tk.E,
@@ -3088,14 +3230,22 @@ class SpectralTab(ttk.Frame):
                     "mix pollutes the view with every other instrument, so the "
                     "drums stem reads cleanest -- it is the important file here.")
         self.reference_field.grid(row=1, column=1, sticky=tk.EW, pady=(2, 2))
+        self.ref_load_cell = ttk.Frame(box, style="Spec.Panel.TFrame")
+        self.ref_load_cell.grid(row=1, column=2, padx=(6, 2), pady=(2, 2),
+                                sticky=tk.EW)
         self.ref_load_btn = OutlineButton(
-            box, "Load drums", accent=PURPLE_EDGE, command=self._on_ref_browse,
+            self.ref_load_cell, "Load drums", accent=PURPLE_EDGE,
+            command=self._on_ref_browse,
             tooltip="Choose the drums-only stem.")
-        self.ref_load_btn.grid(row=1, column=2, padx=(6, 2), pady=(2, 2))
+        self.ref_load_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.ref_recent_btn = self._install_recent(
+            self.ref_load_cell, SPEC_RECENT_DRUMS_KEY,
+            self._apply_ref_path, SPEC_AUDIO_FILETYPES)
         self.ref_clear_btn = OutlineButton(
             box, "Clear", accent=MUTED, command=self._on_ref_clear,
             tooltip="Clear the drums-stem field.")
-        self.ref_clear_btn.grid(row=1, column=3, padx=(2, 8), pady=(2, 2))
+        self.ref_clear_btn.grid(row=1, column=3, padx=(2, 8), pady=(2, 2),
+                                sticky=tk.EW)
 
         # Optional FULL MIX: the drums stem above is the important file; the
         # full mix is optional. When loaded, the Play-source toggle can hear it
@@ -3111,14 +3261,22 @@ class SpectralTab(ttk.Frame):
                     "lets you view the Full Mix for masking context. The graph "
                     "still analyzes the drums stem by default.")
         self.stem_field.grid(row=2, column=1, sticky=tk.EW, pady=(0, 8))
+        self.stem_load_cell = ttk.Frame(box, style="Spec.Panel.TFrame")
+        self.stem_load_cell.grid(row=2, column=2, padx=(6, 2), pady=(0, 8),
+                                 sticky=tk.EW)
         self.stem_load_btn = OutlineButton(
-            box, "Load mix", accent=PURPLE_EDGE, command=self._on_stem_browse,
+            self.stem_load_cell, "Load mix", accent=PURPLE_EDGE,
+            command=self._on_stem_browse,
             tooltip="Choose the full-mix audio (optional).")
-        self.stem_load_btn.grid(row=2, column=2, padx=(6, 2), pady=(0, 8))
+        self.stem_load_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.stem_recent_btn = self._install_recent(
+            self.stem_load_cell, SPEC_RECENT_MIX_KEY,
+            self._apply_stem_path, SPEC_AUDIO_FILETYPES)
         self.stem_clear_btn = OutlineButton(
             box, "Clear", accent=MUTED, command=self._on_stem_clear,
             tooltip="Clear the full-mix field.")
-        self.stem_clear_btn.grid(row=2, column=3, padx=(2, 8), pady=(0, 8))
+        self.stem_clear_btn.grid(row=2, column=3, padx=(2, 8), pady=(0, 8),
+                                 sticky=tk.EW)
 
         # Analyze toggle: which audio the VISUAL/flags use. Default Drums (clean
         # -- the stem above); Full Mix is available for masking context. Only
@@ -3143,7 +3301,215 @@ class SpectralTab(ttk.Frame):
                     "notes + MISS/PHANTOM flags on both views.\n(standalone "
                     "demo: generates synthetic data, no files needed)")
         self.compare_btn.grid(row=0, column=4, rowspan=3, padx=(4, 10),
-                              pady=6, sticky=tk.NS)
+                              pady=6, sticky=tk.NSEW)
+        self._sources_box = box
+        self._compare_align_job = None
+        self._compare_aligning = False
+        # 4.14.1 Compare reqwidth (88 px here) is the floor; captured before
+        # the column is stretched so a later align cannot shrink it.
+        self._compare_min_px = int(self.compare_btn.winfo_reqwidth())
+        # winfo_reqwidth() here is 1: the entry is not realized yet, so its own
+        # request cannot be the floor. Measured 2026-09-18 -- the old capture
+        # left the entries with no effective protection at all.
+        self._source_entry_min_px = max(
+            int(self.candidate_field.winfo_reqwidth()),
+            SPEC_SOURCE_ENTRY_MIN_PX)
+        self._lock_outline_column(
+            box, 2,
+            (self.cand_load_btn, self.ref_load_btn, self.stem_load_btn),
+            pad_widget=self.cand_load_cell,
+        )
+        self._lock_outline_column(
+            box, 3,
+            (self.cand_clear_btn, self.ref_clear_btn, self.stem_clear_btn),
+        )
+
+    def _lock_outline_column(self, box, column, buttons, pad_widget=None):
+        """Equal-width OutlineButtons: column minsize from font metrics."""
+        widget_w = _outline_group_pixel_width(buttons)
+        src = pad_widget if pad_widget is not None else buttons[0]
+        box.columnconfigure(column, minsize=widget_w + _grid_padx_sum(src))
+
+    def _install_recent(self, parent, config_key, apply_fn, filetypes):
+        """Pack the host recent-files button after Load. Absent with no hook.
+
+        Spectral policy: a recent pick only calls apply_fn (the same Load
+        side effects). It does not promote the path in the recent list.
+        MIDI Editor MIDI may autoload-and-record on var.set; this tab does
+        not. Recording is Browse / Auto Fetch / Send only.
+        """
+        class _Pick:
+            def set(_self, path):
+                apply_fn(path)
+        ok, btn = self._hook_call(
+            "make_recent_btn", parent, config_key, _Pick(), filetypes)
+        if not ok or btn is None:
+            return None
+        try:
+            btn.pack(side=tk.LEFT, padx=(2, 0))
+            btn.configure(style="SpecRecent.TButton")
+        except tk.TclError:
+            return None
+        return btn
+
+    def _remember_recent(self, config_key, path):
+        if not path:
+            return
+        self._hook_call("add_recent_file", config_key, path)
+
+    def _apply_cand_path(self, path):
+        if not path:
+            return
+        self.candidate_field.set(path)
+        self._status("Chart: %s" % os.path.basename(path))
+        self._cfg_set("spec_last_candidate", path)   # last: see R2B2-5
+
+    def _apply_ref_path(self, path):
+        if not path:
+            return
+        self.reference_field.set(path)
+        # status BEFORE _cfg_set (breaker R2B2-5, 2026-07-20): a raising
+        # set_cfg posts "config save failed" — writing our info line
+        # AFTER it made that contract-mandated note invisible.
+        self._status("Drums stem: %s" % os.path.basename(path))
+        self._cfg_set("spec_last_reference", path)
+
+    def _apply_stem_path(self, path):
+        if not path:
+            return
+        _prev_src = self._play_source()      # R7E-2: rebuild only on change
+        self.stem_field.set(path)
+        if getattr(self, "_stem_seg", None) is not None:
+            # Auto-select the just-loaded Full Mix for PLAYBACK so you can
+            # confirm it loaded (ANALYSIS still stays on the drums). fire=
+            # False (breaker R6E-2, 2026-07-20): Segmented.set fires its
+            # command on a CHANGED value and _on_stem_toggle rebuilds the
+            # stream — one click would restart playback twice. The explicit
+            # rebuild below must stay: it runs AFTER the info line, which is
+            # what keeps a failed rebuild's AMBER warning visible (R3E-3a).
+            self._stem_seg.set(1, fire=False)   # 1 = Full Mix
+        self._sync_analyze_toggle()        # reveal the Analyze toggle
+        # info line BEFORE the rebuild (breaker R3E-3a): a failed rebuild's
+        # AMBER warning must survive; cfg_set stays last (R2B2-5).
+        self._status("Full mix loaded (optional) — now playing the mix; "
+                     "the graph still analyzes the drums.")
+        self._rebuild_if_source_changed(_prev_src)
+        self._cfg_set("spec_last_stem", path)
+
+    def _on_compare_mapped(self, _event=None):
+        # Selecting the tab maps Compare after the unmapped align pass has
+        # already pinned column 4 at req+pad and stopped (stored minsize
+        # already equals that minimum, so _apply_compare_align returns
+        # False). A size-changing Configure is not guaranteed on select.
+        # Cancel a pending unmapped job and align now that the button is
+        # mapped.
+        self._cancel_compare_align()
+        try:
+            # Debounce, not after_idle: Map can fire before the source
+            # entries have a real width, and an immediate align then sees
+            # entry_w <= 1, treats that as under the floor, and stops at
+            # the button minimum.
+            self._compare_align_job = self.after(
+                SPEC_COMPARE_ALIGN_DEBOUNCE_MS, self._align_compare_to_ref)
+        except tk.TclError:
+            pass
+
+    def _schedule_compare_align(self, _event=None):
+        # Debounce Configure bursts so a resize does not thrash column
+        # minsize. A pending job is not queued twice; Compare width
+        # changes cannot move Fit (different geometry manager).
+        if self._compare_align_job is not None:
+            return
+        self._compare_align_job = self.after(
+            SPEC_COMPARE_ALIGN_DEBOUNCE_MS, self._align_compare_to_ref)
+
+    def _cancel_compare_align(self, _event=None):
+        job = self._compare_align_job
+        self._compare_align_job = None
+        if job is not None:
+            try:
+                self.after_cancel(job)
+            except tk.TclError:
+                pass
+
+    def _align_compare_to_ref(self):
+        """Drive Compare toward SPEC_COMPARE_TARGET_W in every layout mode.
+
+        Debounced from <Configure>. Converges: each pass moves the column
+        minsize toward the target and reports whether it moved, and the
+        caller reschedules only while something changed. Never so wide that
+        a source entry drops below SPEC_SOURCE_ENTRY_MIN_PX.
+        """
+        job = self._compare_align_job
+        self._compare_align_job = None
+        if job is not None:
+            try:
+                self.after_cancel(job)
+            except tk.TclError:
+                pass
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        if self._compare_aligning:
+            return
+        self._compare_aligning = True
+        try:
+            changed = self._apply_compare_align()
+        finally:
+            self._compare_aligning = False
+        if changed:
+            try:
+                self._cancel_compare_align()
+                self._compare_align_job = self.after_idle(self._align_compare_to_ref)
+            except tk.TclError:
+                pass
+
+    def _apply_compare_align(self):
+        btn = self.compare_btn
+        box = self._sources_box
+        pad_sum = _grid_padx_sum(btn)
+        min_cell = int(self._compare_min_px) + pad_sum
+        info = box.grid_columnconfigure(4)
+        # Compare the STORED minsize, not a normalized copy. Normalizing first
+        # and then testing against the minimum makes the unmapped branch
+        # unable to fire: a stored 0 reads as min_cell and the write is
+        # skipped, leaving the column with no minimum at all.
+        stored = int(float(info.get("minsize") or 0))
+        cur = max(stored, min_cell)
+        if not btn.winfo_ismapped():
+            if stored != min_cell:
+                box.columnconfigure(4, minsize=min_cell)
+                return True
+            return False
+        self.update_idletasks()
+        entry_w = int(self.candidate_field.winfo_width())
+        if entry_w <= 1:
+            # Mapped but not realized. Retry rather than treat 1 px as a
+            # crushed entry and freeze Compare at the floor.
+            tries = int(getattr(self, "_compare_realize_tries", 0)) + 1
+            self._compare_realize_tries = tries
+            return tries <= 8
+        self._compare_realize_tries = 0
+        floor = int(self._source_entry_min_px)
+        want = max(min_cell, int(SPEC_COMPARE_TARGET_W) + pad_sum)
+        if entry_w < floor:
+            # The entry is already under its floor -- a wide-to-narrow resize
+            # gets here. Hand width back rather than hold the target, down to
+            # the button's own minimum. Without this the floor is only a
+            # growth budget and nothing ever restores a crushed entry.
+            give = min(cur - min_cell, floor - entry_w)
+            want = cur - give if give > 0 else min_cell
+        elif want > cur:
+            # Growing costs the entries width; stop at their floor.
+            want = min(want, cur + max(0, entry_w - floor))
+        if want < min_cell:
+            want = min_cell
+        if abs(want - stored) <= 1:
+            return False
+        box.columnconfigure(4, minsize=want)
+        return True
 
     # ----- view bar ---------------------------------------------------------------
     def _build_viewbar(self):
@@ -3279,14 +3645,20 @@ class SpectralTab(ttk.Frame):
             inner, "Fit", accent=PURPLE_EDGE, command=self._on_zoom_fit,
             tooltip="Zoom so the whole song fits in the window.")
         self.fit_btn.pack(side=tk.LEFT, padx=(4, 0))
-        # Auto Fetch Audio -- MAGENTA (matches Play) so it stands out: finds the
-        # drums stem + full mix that match the loaded chart's file name.
+        # Auto Fetch Audio -- MAGENTA inner (matches Play) inside the same 2 px
+        # cyan wrap the other Auto Fetch buttons use. Separable from the host
+        # helper: dropping this hunk leaves the magenta OutlineButton as today.
+        _af_kw = {"bg": CYAN, "bd": 0}
+        if "ttkbootstrap" in sys.modules:
+            _af_kw["autostyle"] = False
+        self._af_border = tk.Frame(inner, **_af_kw)  # cyan-border: spec-af
+        self._af_border.pack(side=tk.LEFT, padx=(6, 0))
         self.autofetch_btn = OutlineButton(
-            inner, "Auto Fetch Audio", accent=MAGENTA,
+            self._af_border, "Auto Fetch Audio", accent=MAGENTA,
             command=self._on_auto_fetch,
             tooltip="Find the drums stem + full mix that match the loaded "
                     "chart's file name and load them automatically.")
-        self.autofetch_btn.pack(side=tk.LEFT, padx=(6, 0))
+        self.autofetch_btn.pack(padx=2, pady=2)
         # Load demo -- a short built-in synthetic comparison so a first-time user
         # can see the view working before loading their own files.
         self.demo_btn = OutlineButton(
@@ -3729,15 +4101,10 @@ class SpectralTab(ttk.Frame):
         path = filedialog.askopenfilename(
             parent=self, title="Select the drums-only stem",
             initialdir=os.path.dirname(initial) if initial else "",
-            filetypes=(("Audio files", "*.ogg *.mp3 *.wav *.flac *.m4a *.aac"),
-                       ("All files", "*.*")))
+            filetypes=SPEC_AUDIO_FILETYPES)
         if path:
-            self.reference_field.set(path)
-            # status BEFORE _cfg_set (breaker R2B2-5, 2026-07-20): a raising
-            # set_cfg posts "config save failed" — writing our info line
-            # AFTER it made that contract-mandated note invisible.
-            self._status("Drums stem: %s" % os.path.basename(path))
-            self._cfg_set("spec_last_reference", path)
+            self._apply_ref_path(path)
+            self._remember_recent(SPEC_RECENT_DRUMS_KEY, path)
 
     def _on_ref_clear(self):
         self.reference_field.clear()
@@ -3751,12 +4118,10 @@ class SpectralTab(ttk.Frame):
         path = filedialog.askopenfilename(
             parent=self, title="Select the candidate chart",
             initialdir=os.path.dirname(initial) if initial else "",
-            filetypes=(("Chart files", "*.mid *.midi *.json *.rlrr"),
-                       ("All files", "*.*")))
+            filetypes=SPEC_CHART_FILETYPES)
         if path:
-            self.candidate_field.set(path)
-            self._status("Chart: %s" % os.path.basename(path))
-            self._cfg_set("spec_last_candidate", path)   # last: see R2B2-5
+            self._apply_cand_path(path)
+            self._remember_recent(SPEC_RECENT_CHART_KEY, path)
 
     def _on_cand_clear(self):
         self.candidate_field.clear()
@@ -3770,27 +4135,10 @@ class SpectralTab(ttk.Frame):
         path = filedialog.askopenfilename(
             parent=self, title="Select the full mix (optional)",
             initialdir=os.path.dirname(initial) if initial else "",
-            filetypes=(("Audio files", "*.ogg *.mp3 *.wav *.flac *.m4a *.aac"),
-                       ("All files", "*.*")))
+            filetypes=SPEC_AUDIO_FILETYPES)
         if path:
-            _prev_src = self._play_source()      # R7E-2: rebuild only on change
-            self.stem_field.set(path)
-            if getattr(self, "_stem_seg", None) is not None:
-                # Auto-select the just-loaded Full Mix for PLAYBACK so you can
-                # confirm it loaded (ANALYSIS still stays on the drums). fire=
-                # False (breaker R6E-2, 2026-07-20): Segmented.set fires its
-                # command on a CHANGED value and _on_stem_toggle rebuilds the
-                # stream — one click would restart playback twice. The explicit
-                # rebuild below must stay: it runs AFTER the info line, which is
-                # what keeps a failed rebuild's AMBER warning visible (R3E-3a).
-                self._stem_seg.set(1, fire=False)   # 1 = Full Mix
-            self._sync_analyze_toggle()        # reveal the Analyze toggle
-            # info line BEFORE the rebuild (breaker R3E-3a): a failed rebuild's
-            # AMBER warning must survive; cfg_set stays last (R2B2-5).
-            self._status("Full mix loaded (optional) — now playing the mix; "
-                         "the graph still analyzes the drums.")
-            self._rebuild_if_source_changed(_prev_src)
-            self._cfg_set("spec_last_stem", path)
+            self._apply_stem_path(path)
+            self._remember_recent(SPEC_RECENT_MIX_KEY, path)
 
     def _on_stem_clear(self):
         _prev_src = self._play_source()         # R7E-2: rebuild only on change
@@ -4054,8 +4402,20 @@ class SpectralTab(ttk.Frame):
             import parakit_spectral_engine as eng
             samples, sr = decode_audio(ref)
             spec = eng.compute_spectral(samples, sr)
-            notes = eng.load_chart_notes(cand)
-            bpm = eng.chart_bpm(cand)
+            midi_source_sig = None
+            chart_end_secs = None
+            ext = os.path.splitext(cand)[1].lower()
+            if ext in (".mid", ".midi"):
+                with open(cand, "rb") as _fh:
+                    _raw = _fh.read()
+                notes = eng.load_chart_notes_from_bytes(_raw)
+                bpm = eng.chart_bpm_from_bytes(_raw)
+                _kind, _secs = eng.read_chart_end_state_from_bytes(_raw)
+                chart_end_secs = _secs if _kind == "marker" else None
+                midi_source_sig = eng.midi_bytes_signature(_raw)
+            else:
+                notes = eng.load_chart_notes(cand)
+                bpm = eng.chart_bpm(cand)
             issues = eng.find_issues(spec, notes)
             # Waveform-view envelope. Built HERE because this is the worker
             # thread where the heavy lifting belongs, and because `ref` (the
@@ -4083,7 +4443,9 @@ class SpectralTab(ttk.Frame):
                     "midi_source_path": (os.path.normcase(os.path.abspath(cand))
                         if os.path.splitext(cand)[1].lower() in (".mid", ".midi")
                         else None),
-                    "chart_end_secs": (eng.read_chart_end_secs(cand)
+                    "chart_end_secs": chart_end_secs,
+                    "midi_source_sig": midi_source_sig,
+                    "midi_source_id": (eng.midi_path_identity(cand)
                         if os.path.splitext(cand)[1].lower() in (".mid", ".midi")
                         else None),
                     "wave_env": wave_env,
@@ -4139,6 +4501,8 @@ class SpectralTab(ttk.Frame):
                                      wave_env=data.get("wave_env"),
                                      chart_end_secs=data.get("chart_end_secs"),
                                      midi_source_path=data.get("midi_source_path"))
+        self._model.midi_source_sig = data.get("midi_source_sig")
+        self._model.midi_source_id = data.get("midi_source_id")
         # Provenance was captured when THIS job started and travelled on
         # data["mix_as_drums"]. Do not re-query the host: a later conversion
         # may have rewritten `_a2m_source_file` while the worker ran.
@@ -4966,20 +5330,181 @@ class SpectralTab(ttk.Frame):
         self._apply_notes(self._redo_stack.pop())
 
     # ----- MIDI out (hooks-aware; standalone stubs) ----------------------------
+    def _decide_stale_source(self, path):
+        """reload / overwrite / cancel. Tests replace _stale_source_ask."""
+        import parakit_spectral_engine as eng
+        model = getattr(self, "_model", None)
+        sig = getattr(model, "midi_source_sig", None) if model is not None else None
+        self._stale_approved_dest = None
+        dest_state = eng.midi_dest_expectation(path)
+        if dest_state[0] == "unreadable":  # unreadable-refused: no overwrite
+            return "unreadable"
+        if sig and eng.midi_signatures_match(path, sig):
+            self._stale_approved_dest = ("bytes", sig)
+            return "overwrite"
+        ask = getattr(self, "_stale_source_ask", None)
+        if callable(ask):
+            choice = ask(path)
+            if choice in ("reload", "overwrite", "cancel"):
+                if choice == "overwrite":
+                    expected = eng.midi_dest_expectation(path)
+                    if expected[0] == "unreadable":
+                        return "unreadable"
+                    self._stale_approved_dest = expected
+                return choice
+            return "cancel"
+        choice = getattr(self, "_stale_source_choice", None)
+        if choice in ("reload", "overwrite", "cancel"):
+            if choice == "overwrite":
+                expected = eng.midi_dest_expectation(path)
+                if expected[0] == "unreadable":
+                    return "unreadable"
+                self._stale_approved_dest = expected
+            return choice
+        result = self._ask_stale_source_dialog(path)
+        if result == "overwrite":
+            expected = eng.midi_dest_expectation(path)
+            if expected[0] == "unreadable":
+                return "unreadable"
+            self._stale_approved_dest = expected
+        return result
+
+    def _ask_stale_source_dialog(self, path):
+        result = ["cancel"]
+        dlg = tk.Toplevel(self)
+        dlg.title(STALE_SOURCE_TITLE)
+        dlg.resizable(False, False)
+        try:
+            dlg.transient(self.winfo_toplevel())
+        except Exception:
+            pass
+        body = tk.Label(dlg, text=STALE_SOURCE_BODY, justify=tk.LEFT,
+                        background=PANEL, foreground=TEXT, wraplength=420)
+        body.pack(padx=16, pady=(14, 8), anchor=tk.W)
+        name = tk.Label(dlg, text=os.path.basename(path), justify=tk.LEFT,
+                        background=PANEL, foreground=MUTED)
+        name.pack(padx=16, pady=(0, 8), anchor=tk.W)
+        btnf = tk.Frame(dlg, background=PANEL)
+        btnf.pack(padx=16, pady=(0, 14), anchor=tk.E)
+
+        def choose(choice):
+            result[0] = choice
+            dlg.destroy()
+
+        tk.Button(btnf, text=STALE_SOURCE_RELOAD,
+                  command=lambda: choose("reload")).pack(side=tk.LEFT, padx=4)
+        tk.Button(btnf, text=STALE_SOURCE_OVERWRITE,
+                  command=lambda: choose("overwrite")).pack(side=tk.LEFT, padx=4)
+        tk.Button(btnf, text=STALE_SOURCE_CANCEL,
+                  command=lambda: choose("cancel")).pack(side=tk.LEFT, padx=4)
+        dlg.protocol("WM_DELETE_WINDOW", lambda: choose("cancel"))
+        dlg.bind("<Escape>", lambda e: choose("cancel"))
+        try:
+            parent = self.winfo_toplevel()
+            dlg.update_idletasks()
+            pw = dlg.winfo_reqwidth()
+            ph = dlg.winfo_reqheight()
+            px = parent.winfo_rootx() + (parent.winfo_width() - pw) // 2
+            py = parent.winfo_rooty() + (parent.winfo_height() - ph) // 2
+            dlg.geometry("+%d+%d" % (int(px), int(py)))
+        except Exception:
+            pass
+        try:
+            dlg.grab_set()
+        except Exception:
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+            return "cancel"
+        try:
+            dlg.focus_set()
+        except Exception:
+            pass
+        try:
+            dlg.wait_window()
+        except Exception:
+            return "cancel"
+        return result[0]
+
+    def _reload_midi_source(self):
+        import parakit_spectral_engine as eng
+        model = getattr(self, "_model", None)
+        path = getattr(model, "midi_source_path", None) if model is not None else None
+        if not path or not os.path.isfile(path):
+            self._status("Reload failed — the source MIDI is not available.", AMBER)
+            return False
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            notes = eng.load_chart_notes_from_bytes(raw)
+            kind, secs = eng.read_chart_end_state_from_bytes(raw)
+            disk_bpm = eng.chart_bpm_from_bytes(raw)
+            model.midi_source_sig = eng.midi_bytes_signature(raw)
+            model.midi_source_id = eng.midi_path_identity(path)
+        except Exception:
+            self._status("Reload failed — the source MIDI is not available.", AMBER)
+            return False
+        model.chart_end_secs = secs if kind == "marker" else None
+        if disk_bpm is not None:
+            model.bpm = _safe_bpm(disk_bpm)
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._apply_notes(list(notes))
+        self._status("Reloaded %d notes from disk." % len(notes))
+        return True
+
     def _write_midi(self, path: str):
         try:
             import parakit_spectral_engine as eng
             # Only the loaded MIDI source may supply a fresher saved end.
             source_path = getattr(self._model, "midi_source_path", None)
-            same_file = (source_path is not None and
-                os.path.normcase(os.path.abspath(path)) ==
-                os.path.normcase(os.path.abspath(source_path)))
-            disk_end = (eng.read_chart_end_secs(path)
-                        if same_file and os.path.isfile(path) else None)
-            chart_end = (disk_end if disk_end is not None
-                         else getattr(self._model, "chart_end_secs", None))
-            eng.write_chart_midi(self._model.notes, self._model.bpm, path,
-                                 chart_end_secs=chart_end)
+            source_id = getattr(self._model, "midi_source_id", None)
+            relation = (eng.same_midi_path(path, source_path, source_id=source_id)
+                        if source_path is not None else False)
+            same_file = relation is True or relation == "unknown"
+            expected_dest = None
+            decide = getattr(self, "_decide_stale_source", None)
+            dest_retries = 0
+            while True:
+                if same_file and callable(decide):
+                    decision = decide(path)
+                    if decision == "cancel":
+                        self._status("MIDI write canceled — the file was left unchanged.")
+                        return
+                    if decision == "unreadable":
+                        self._status("MIDI write stopped — the destination file cannot be read. Save to another path.")
+                        return
+                    if decision == "reload":
+                        self._reload_midi_source()
+                        return
+                    expected_dest = getattr(self, "_stale_approved_dest", None)
+                state, disk_end = (eng.read_chart_end_state(path)
+                            if same_file and os.path.isfile(path) else ("other", None))
+                if state == "marker":
+                    chart_end = disk_end
+                elif state == "absent":
+                    chart_end = None
+                else:
+                    chart_end = getattr(self._model, "chart_end_secs", None)
+                try:
+                    emitted = []
+                    eng.write_chart_midi(
+                        self._model.notes, self._model.bpm, path,
+                        chart_end_secs=chart_end,
+                        expected_dest=(expected_dest if same_file else None),
+                        emitted=emitted)
+                    break
+                except eng.MidiDestinationChanged:
+                    if not same_file:
+                        raise
+                    dest_retries += 1
+                    if dest_retries >= 2:
+                        raise
+                    continue
+            if same_file:
+                self._model.chart_end_secs = chart_end
+                self._model.midi_source_sig = eng.midi_bytes_signature(emitted[0])
             self._status("Wrote %d notes to %s"
                          % (len(self._model.notes), os.path.basename(path)),
                          GREEN)
@@ -5126,7 +5651,7 @@ class SpectralTab(ttk.Frame):
         # callbacks on a destroyed tab raise "invalid command name" bgerrors,
         # and the chained binds leaked every destroyed instance.
         for attr in ("_tick_job", "_zoom_job", "_bright_job",
-                     "_poll_compare_job", "_synth_job"):
+                     "_poll_compare_job", "_synth_job", "_compare_align_job"):
             job = getattr(self, attr, None)
             if job is not None:
                 try:
@@ -5134,6 +5659,7 @@ class SpectralTab(ttk.Frame):
                 except Exception:
                     pass
                 setattr(self, attr, None)
+        self._cancel_compare_align()
         self._unbind_keys()
         super().destroy()
 
