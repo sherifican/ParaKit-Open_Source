@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.14.2  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.14.3  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -26,6 +26,174 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.14.3   --   2026-09-26
+------------------------------------------------------------------------------
+  This release regroups the MIDI Editor playback controls and closes the gap
+  between the stem columns in Compact. Preview can reopen a chart it
+  imported. Practice Home lays out Song, Setup, and Input to the window,
+  captures lane keys, and refreshes its MIDI device count. At the documented
+  1600x900 and 2000x1050 window sizes, the collapsed Sheet Music page fits
+  without scrolling. When its contents require more height, the page can
+  scroll.
+
+  .mxl files open again in Sheet Music to MIDI.
+
+  MIDI EDITOR STEMS
+  In Compact, the two stem columns sit at the width they need, with no gap
+  between them. Roomy keeps the Mixer and Switch Stem widths it already had.
+  Hovering Single track says: Plays one stem at a time. Switch Stem cycles
+  to the next loaded stem. Hovering Layered says: Plays every loaded stem
+  together. Layered playback is slower than Single track, demands more
+  processing power, and on slower systems is not recommended for a smooth
+  experience.
+
+  MIDI EDITOR PLAYBACK
+  Spectral and Auto Fetch Audio sit on one row, with the song title to their
+  right. A horizontal line separates that row from the playback controls.
+  That group holds Play and Stop, the playhead, Review Speed, the Loop row,
+  and the audio output latency row. Record, Count-in (1 bar), Metronome, and
+  Test sit on their own row inside the group, not on the latency row. Note
+  offset sits in a second group under its own horizontal line. Neither group
+  has a title. Every control keeps its action and its hover text. The stem
+  area is unchanged. Compact and Roomy differ by the spacing of these rows.
+
+  PREVIEW RECENT CHARTS
+  On the Preview transport's second row, a square Recent charts button sits
+  directly to the right of the song name. It uses the Import button's orange
+  and the same dropdown caret the recent-file buttons use, and it is as tall
+  as the Record and Count-in chips. Hovering it says: Recent charts: reopen
+  a chart imported into Preview before. A chart imported into Preview is
+  added to that list. Loading the built-in demo is not. If the file is
+  missing, the status line says: That chart is no longer on disk: and then
+  the file name. If the imported chart has unsaved edits, choosing a recent
+  chart asks before discarding them. Opening the chart remembers its folder
+  for the next import, then imports the chart. In the standalone preview,
+  clicking the button does not open a menu. The status line says: Recent
+  charts are available inside ParaKit (not in the standalone preview).
+
+  PRACTICE HOME LAYOUT
+  Practice Home keeps a fixed top bar. Song is on the left. Setup is above
+  Input on the right. The two columns are 58/42. When the Home area is
+  narrower than 1100 pixels, the columns stack. A two-column page that fits
+  is held to the window and does not scroll into blank space. A stacked
+  page, or a page that does not fit, can scroll. The song library does not
+  set the page height. The mouse wheel over Practice Home is handled once by
+  Home. The app's other wheel scrolling is not modified. An in-app update
+  includes the extra program file Practice Home uses. Practice Home status
+  and hint text rewraps as the available width changes. Its green and amber
+  status indicators now use the shared Practice colors.
+
+  PRACTICE HOME SONG CARD
+  The Song card is a frame titled SONG. Play Loaded Song and Play the demo
+  groove use the same button style as the app's Convert buttons, including a
+  disabled state. Play Loaded Song starts disabled. Selecting a library song
+  enables it, and so does loading a single chart. A selected library song
+  takes priority, and the single-chart action keeps its own source. The
+  reasons for a scan problem are listed in the song library. Opening a
+  reason grows that list only. The play buttons and the single-chart footer
+  stay put while the library scrolls. Search, sort, duplicate handling,
+  recency, and the song selected for playback are unchanged.
+
+  PRACTICE HOME SETUP
+  The Setup card is a frame titled SETUP. Auto-kick, Square notes, Kick as
+  full-width line, and Beat-grid lines each have their own full-width row.
+  Fall time runs from 0.8 to 8.0 and Note size runs from 0.5 to 2.0. Each
+  scale shows its number and can be reset to 1.0. Calibrate latency and Kit
+  Studio remain. Setup writes and Settings stay in step for the lane
+  bindings and the keyboard preset. Choosing a preset still replaces the
+  binding table. Saved preferences that Setup does not show, and stored
+  bindings it does not draw, are kept.
+
+  PRACTICE HOME INPUT AND KEY CAPTURE
+  The Input card is a frame titled INPUT. Eight lanes are listed in a
+  scrolling area whose height starts at 160 pixels and grows into spare
+  space in the right column. Each row shows the lane name in that lane's
+  color, the keys that actually apply, and the word unbound when the lane
+  has none. Hovering a key badge says that the key fires at that velocity,
+  when the binding has one. Clicking a key badge, or unbound, listens for a
+  key that replaces that lane's keys. + adds a key. +ghost adds a key that
+  fires at velocity 32. The + hover text says: Add another key for this lane
+  (Settings). The +ghost hover text says: Add a ghost-note key (fires at
+  velocity 32). The card says: Click a key badge to replace that lane's
+  keys; + adds a key; +ghost adds a velocity-32 key. The badges, unbound, +,
+  and +ghost take focus, show a bright focus ring, and respond to a click,
+  Return, or space. The key that starts the capture is not itself captured.
+  Settings takes focus while it is listening. The listening note names the
+  lane, identifies add-key and ghost captures, and says that Esc or moving
+  focus away cancels. Moving focus to another Settings control or outside
+  Settings cancels capture and reports: Key capture canceled. Leaving the
+  Practice tab also cancels capture and reports that message. A key that
+  cannot be bound reports: That key can't be bound. While Settings is open,
+  Home's / search shortcut does not run. Closing Settings while Home is
+  showing turns / back on and does not put the cursor in search. Closing
+  Settings over Play or Kit Studio leaves Home hidden. The standalone
+  Practice tab also supports these capture actions. Input badges update
+  after Settings rebinds, preset changes, and Setup saves. Only changed
+  lanes are refreshed, preserving the list's scroll position and unaffected
+  controls. A saved velocity is retained only when stored as an integer
+  from 1 to 127. Other velocity values, including
+  decimal and text values, are discarded without removing an otherwise valid
+  binding. If a key appears more than once anywhere in the binding list,
+  only its last structurally valid entry is retained. A malformed later
+  entry does not erase an earlier valid one. Capturing a key removes its
+  previous assignment, including an assignment on another lane. A retained
+  velocity is kept across a restart.
+
+  PRACTICE HOME SPACING
+  Practice Home takes Compact or Roomy spacing before it first appears, and
+  it updates that spacing when the layout changes. Column padding is 10
+  pixels in Compact and 14 pixels in Roomy. A live change keeps the open
+  song, the search text, the scroll position, and the cards that are already
+  on screen.
+
+  PRACTICE HOME MIDI DEVICE COUNT
+  Both MIDI device-count chips refresh when Practice is entered, when it is
+  initially selected, when Home returns after Play, Results, or Settings,
+  and when Enable MIDI is selected. Requests made before a pending refresh
+  runs share one check. Leaving Practice cancels a pending refresh and any
+  active key capture. Resizing or changing Compact or Roomy does not refresh
+  the count. Standalone Practice refreshes the count through Enable MIDI.
+  The chips read MIDI: N device(s). An empty device list reads MIDI: 0
+  device(s). In ParaKit, unavailable MIDI support or an error while listing
+  devices also produces MIDI: 0 device(s).
+
+  SHEET MUSIC
+  At the documented 1600x900 and 2000x1050 window sizes, the collapsed Sheet
+  Music page fits without scrolling. When its contents require more height,
+  the page can scroll. Find Sheet Music Online and Input sit side by side.
+  Drum Part and Scan File move from Advanced into Input. Scanning no longer
+  opens Advanced. Convert sits below Find and Input, above the progress row
+  and the bottom cards. The three output checkboxes stack vertically. Audio
+  Sync joins How It Works inside Advanced. High accuracy and Basic use
+  shorter labels, with their explanations available on hover. The header
+  keeps one sentence: Convert a MusicXML drum chart into a Paradiddle-ready
+  MIDI file. How It Works, inside Advanced, holds the other two sentences:
+  it accepts .mxl (a direct download from MuseScore.com) or .xml (exported
+  from notation software), and it works with full band sheet music, finding
+  and extracting only the drum part and ignoring the other instruments. The
+  Sheet Music heading uses the shared book icon. Input, Output and Audio
+  Offset, Advanced, and Log gain shared card-title icons. The Instrument
+  Filter explanation moves below the selector. How to find your offset moves
+  into the Audio Offset area. The Advanced toggle now names only tempo and
+  time-signature overrides.
+
+  In those collapsed-page layouts, the timer sits on the progress bar's row,
+  to the right of the bar. The bottom row comes within 24 pixels of the
+  bottom of the page. Left to right, that row is the Output and Audio Offset
+  card, Advanced, and the Log. The Log is the third column and is at least
+  80 pixels tall. Convert is on the page. Nothing on the page is clipped.
+  On the page, in Compact and in Roomy, are the output folder field, Browse,
+  clear, the three output checkboxes, the offset field, the -100 ms, -10 ms,
+  +10 ms, and +100 ms buttons, Reset, Auto-align, and the first-note action.
+  The Quality choices are inside Advanced. Export Log is on the page.
+
+  Changing Compact or Roomy updates the open Sheet Music page's card spacing
+  and help-text wrapping. Sheet Music labels use the app's shared label
+  colors, which are reapplied when the theme changes. The Log stays in
+  place. Layout changes also update Sheet Music while its tab is hidden.
+  Opening and closing help refits the page.
 
 ------------------------------------------------------------------------------
   v4.14.2   --   2026-09-19

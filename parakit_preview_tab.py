@@ -61,6 +61,7 @@ import os
 import sys
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
 
 import parakit_preview_engine as eng
@@ -2003,6 +2004,7 @@ T9_SNAP_KEY = "t9_snap_on"
 T9_HIDE_PASSED_KEY = "t9_hide_passed"
 T9_AUDIO_DIR_KEY = "t9_audio_dir"
 T9_IMPORT_DIR_KEY = "t9_import_dir"
+T9_RECENT_CHART_KEY = "recent_preview_chart"
 T9_MODE_KEY = "t9_source_mode"
 T9_OFFSET_KEY = "t9_stem_offset_ms"
 T9_COUNTIN_KEY = "t9_countin"
@@ -2481,6 +2483,13 @@ class PreviewTab(ttk.Frame):
         self.song_label = tk.Label(bar, text="", background=PANEL,
                                     foreground=CYAN, font=F_SMALL)
         self.song_label.pack(side=tk.LEFT, padx=(4, 8), pady=6)
+        self.recent_btn = OutlineButton(
+            bar, "▾", accent="#e09a3a", command=self._on_recent_clicked,
+            tooltip="Recent charts: reopen a chart imported into Preview before.")
+        _f = tkfont.Font(font=F_SMALL)
+        _pad = max(0, (_f.metrics("linespace") + 2 * 2 - _f.measure("▾") + 1) // 2)
+        self.recent_btn.configure(padx=_pad)
+        self.recent_btn.pack(side=tk.LEFT, padx=(0, 6), pady=6)
         # (v4.9.0 — MIDI input device dropdown removed; see note by the old
         # _fill_midi_combo. This tab is for watching + spot-editing, not playing.)
 
@@ -3645,6 +3654,7 @@ class PreviewTab(ttk.Frame):
         self._update_demo_ui()
         self._status("Imported %d notes from %s (bpm %.0f). Press Play."
                      % (len(notes), os.path.basename(path), bpm))
+        self._hook_call("recent_add", T9_RECENT_CHART_KEY, os.path.abspath(path))
         ok, result = self._hook_call("auto_fetch_audio", path)
         if ok and isinstance(result, dict):
             mix = result.get("mix")
@@ -3665,6 +3675,30 @@ class PreviewTab(ttk.Frame):
                        ("MIDI", "*.mid *.midi"), ("Paradiddle", "*.rlrr"),
                        ("ParaKit chart", "*.json"), ("All files", "*.*")])
         if not path:
+            return
+        self._cfg_set(T9_IMPORT_DIR_KEY, os.path.dirname(path))
+        self.import_chart(path)
+
+    def _on_recent_clicked(self):
+        filetypes = [("Charts", "*.mid *.midi *.rlrr *.json"),
+                     ("MIDI", "*.mid *.midi"), ("Paradiddle", "*.rlrr"),
+                     ("ParaKit chart", "*.json"), ("All files", "*.*")]
+        ok, _ = self._hook_call("recent_menu", self.recent_btn,
+                                 T9_RECENT_CHART_KEY, filetypes,
+                                 self._on_recent_pick)
+        if not ok:
+            self._status("Recent charts are available inside ParaKit "
+                         "(not in the standalone preview).", AMBER)
+
+    def _on_recent_pick(self, path):
+        self.after(10, lambda: self._open_recent_chart(path))
+
+    def _open_recent_chart(self, path):
+        if not os.path.isfile(path):
+            self._status("That chart is no longer on disk: %s."
+                         % os.path.basename(path), AMBER)
+            return
+        if not self._confirm_discard_edits("Opening a recent chart"):
             return
         self._cfg_set(T9_IMPORT_DIR_KEY, os.path.dirname(path))
         self.import_chart(path)

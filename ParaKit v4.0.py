@@ -6820,6 +6820,82 @@ def _parakit_theme_tokens():
     }
 
 
+def _sheet_music_saved_option(widget, option, fallback):
+    if option == "pack_pady":
+        raw = widget.pack_info().get("pady")
+    else:
+        raw = widget.cget(option)
+
+    if raw is None:
+        return fallback
+
+    try:
+        if isinstance(raw, (tuple, list)):
+            parts = tuple(raw)
+        else:
+            parts = tuple(widget.tk.splitlist(str(raw)))
+
+        allowed_lengths = {
+            "padding": (1, 2, 3, 4),
+            "pack_pady": (1, 2),
+            "wraplength": (1,),
+        }
+        if len(parts) not in allowed_lengths[option]:
+            return fallback
+
+        pixels = tuple(widget.winfo_pixels(str(part)) for part in parts)
+        if option == "wraplength":
+            if pixels[0] <= 0:
+                return fallback
+        elif any(value < 0 for value in pixels):
+            return fallback
+
+        return raw
+    except Exception:
+        return fallback
+
+
+def _sheet_music_write_option(widget, option, value):
+    if option == "pack_pady":
+        widget.pack_configure(pady=value)
+    else:
+        widget.configure(**{option: value})
+
+
+_SM_LEGACY_LABEL_COLORS = {
+    "purple": "#b388ff",
+    "muted555": "#555",
+    "muted888": "#888",
+    "muted": "#aaaaaa",
+    "success": "#00d4d4",
+    "warning": "#e09a3a",
+}
+
+
+def _sheet_music_theme_colors():
+    legacy = dict(_SM_LEGACY_LABEL_COLORS)
+    try:
+        tokens = _parakit_theme_tokens()
+        purple = tokens["purple"]
+        muted = tokens["muted_fg"]
+    except Exception:
+        return legacy
+
+    try:
+        from parakit_spectral_tab import CYAN, AMBER
+    except Exception:
+        CYAN, AMBER = legacy["success"], legacy["warning"]
+
+    return {
+        "purple": purple,
+        "muted555": muted,
+        "muted888": muted,
+        "muted": muted,
+        "success": CYAN,
+        "warning": AMBER,
+    }
+
+
 def _neon_visual_defaults():
     """Default sizing and animation values for ParaKit's neon progress bars."""
     return {
@@ -8123,7 +8199,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.14.2"
+    VERSION = "4.14.3"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -8921,7 +8997,8 @@ class MidiToRlrrApp:
         flag apply the new mode in place. A tab that was never built is a no-op (missing
         attribute), and each callee is isolated so one failure cannot stop the others."""
         compact = bool(compact)
-        for name in ("_relayout_audio_to_midi", "_relayout_midi_editor"):
+        for name in ("_relayout_audio_to_midi", "_relayout_midi_editor",
+                     "_relayout_sheet_music", "_relayout_practice"):
             fn = getattr(self, name, None)
             if fn is None:
                 continue
@@ -8951,6 +9028,18 @@ class MidiToRlrrApp:
                 pass
         self._pk_scroll_hosts = hosts
 
+    def _relayout_practice(self, compact):
+        """Job 2, Step E (Practice): forward density to the Practice tab."""
+        tab = getattr(self, "_practice_tab", None)
+        if tab is None:
+            return
+        try:
+            if not tab.winfo_exists():
+                return
+            tab.relayout(bool(compact))
+        except tk.TclError:
+            pass
+
     def _relayout_audio_to_midi(self, compact):
         """Job 2, Step E (Audio→MIDI): the tab has two mode-bound values and both are
         attributes. The Download Model button carries a narrower style in compact only (the
@@ -8967,6 +9056,79 @@ class MidiToRlrrApp:
         lbl = getattr(self, "_adv_tuning_lbl", None)
         if lbl is not None:
             lbl.configure(font=("Segoe UI", 8 if compact else 9, "bold"))
+
+    def _relayout_sheet_music(self, compact):
+        attempted = []
+        try:
+            compact = bool(compact)
+            recorded = getattr(self, "_sm_density_applied", compact)
+            previous = recorded if recorded is True or recorded is False else (not compact)
+            bindings = (
+                tuple(getattr(self, "_sm_padding_bound", ()))
+                + tuple(getattr(self, "_sm_wrap_bound", ()))
+            )
+
+            targets = tuple(
+                (
+                    widget,
+                    option,
+                    cval if compact else rval,
+                    cval if previous else rval,
+                )
+                for widget, option, cval, rval in bindings
+            )
+
+            prepared = tuple(
+                (
+                    widget,
+                    option,
+                    target,
+                    _sheet_music_saved_option(widget, option, fallback),
+                )
+                for widget, option, target, fallback in targets
+            )
+
+            try:
+                for widget, option, target, saved in prepared:
+                    attempted.append((widget, option, saved))
+                    _sheet_music_write_option(widget, option, target)
+            except Exception:
+                restore_errors = []
+                for widget, option, saved in reversed(attempted):
+                    try:
+                        _sheet_music_write_option(widget, option, saved)
+                    except Exception as exc:
+                        restore_errors.append(exc)
+                if restore_errors:
+                    self._sm_density_applied = "unknown"
+                    raise RuntimeError(
+                        "Sheet Music density restoration failed"
+                    ) from restore_errors[0]
+                raise
+            else:
+                if bindings:
+                    self._sm_density_applied = compact
+        finally:
+            refit = getattr(self, "_sm_refit", None)
+            if callable(refit):
+                refit()
+
+    def _apply_sheet_music_theme(self):
+        colors = dict(_SM_LEGACY_LABEL_COLORS)
+        try:
+            resolved = _sheet_music_theme_colors()
+            candidate = {role: resolved[role] for role in colors}
+            for color in candidate.values():
+                self.root.winfo_rgb(color)
+            colors = candidate
+        except Exception:
+            pass
+
+        for label, role in getattr(self, "_sm_theme_labels", ()):
+            try:
+                label.configure(foreground=colors[role])
+            except Exception:
+                pass
 
     def _cycle_layout_mode(self):
         """Header Layout button: Auto -> Compact -> Roomy -> Auto."""
@@ -13712,6 +13874,11 @@ class MidiToRlrrApp:
                 self._setup_pretty_log_widget(w, bg=LOG_BG)
             except Exception:
                 pass
+
+        try:
+            self._apply_sheet_music_theme()
+        except Exception:
+            pass
 
         # Re-assert the Spectral tab's Spec.* ttk styles on every theme pass
         # (owner 2026-07-20). ttkbootstrap's own re-apply passes (on widget
@@ -25625,26 +25792,29 @@ demucs.separate.main()
             command=self._me_schedule_redraw,
             label_width=15).pack(side=tk.LEFT)
 
-        # v4.4.62-1 — "Auto Fetch Audio" (purple button + cyan border, owner QoL): sits ABOVE Play/Stop
-        # and spans their combined width. From the loaded MIDI's song name it
-        # finds the Drums stem + Full Mix from the configured Stem/YouTube output
-        # folders (and next to the MIDI) and fills ONLY the Drums + Full Mix
-        # fields — never Stem 3/4.
+        # v4.4.62-1 — "Auto Fetch Audio" (purple button + cyan border, owner QoL).
+        # From the loaded MIDI's song name it finds the Drums stem + Full Mix
+        # from the configured Stem/YouTube output folders (and next to the MIDI)
+        # and fills ONLY the Drums + Full Mix fields — never Stem 3/4.
+        # 4.14.3 (owner 2026-09-21, playback-cluster regroup): the song strip is
+        # ONE row — Spectral and Auto Fetch Audio sit SIDE BY SIDE (af_col is the
+        # pair row; the cyan-border guard pins both constructors to af_col, so
+        # the frame stays) and the song-title readout packs to their right.
+        # Spectral has sat with Auto Fetch since owner 2026-07-20 (moved here
+        # from beside the Stop button); only the stacking changed.
         af_row = ttk.Frame(playback_col)
         af_row.pack(fill=tk.X, pady=(0, 3))
         # v4.4.62 follow-up — Owner spec: keep the button PURPLE (matching the
         # Play/Stop buttons) but wrap it in a CYAN BORDER so it still stands out.
         # The border is a 2px cyan tk.Frame around a default-purple ttk.Button;
         # this renders reliably, whereas a cyan ttk style / tk.Button bg did not.
-        # Send-to-Spectral now sits directly ABOVE Auto Fetch Audio (owner
-        # 2026-07-20; moved here from beside the Stop button).
         af_col = ttk.Frame(af_row)
         af_col.pack(side=tk.LEFT)
         self.me_spectral_btn = ttk.Button(
             af_col, text="Spectral", image=fluent_icon("device_eq") or "", compound="left",
             command=lambda: self._send_to_spectral(*self._me_spectral_args()),
             width=21)
-        self.me_spectral_btn.pack(side=tk.TOP, fill=tk.X, pady=(0, 3))
+        self.me_spectral_btn.pack(side=tk.LEFT)
         self._add_tooltip(
             self.me_spectral_btn,
             "Open the loaded chart in the Spectral Comparison tab to check the\n"
@@ -25652,7 +25822,7 @@ demucs.separate.main()
             "Full Mix so MISS / PHANTOM disagreements show on the graph.\n"
             "Note: the source may be a full mix, so the graph can look busier than an isolated stem.")
         af_border = self._make_cyan_border(af_col)  # cyan-border: me-af
-        af_border.pack(side=tk.TOP)
+        af_border.pack(side=tk.LEFT, padx=(6, 0))
         self.me_auto_fetch_btn = ttk.Button(
             af_border, text="Auto Fetch Audio", image=fluent_icon("music_note_2") or "", compound="left",
             command=self._me_auto_fetch_audio, width=21)
@@ -25663,10 +25833,10 @@ demucs.separate.main()
             "(from your Stem Splitter / YouTube output folders and next to the\n"
             "MIDI) and fills the Drums and Full Mix fields. Never touches Stem 3/4.")
 
-        # v4.5.2-1 — Song-title readout. Lives in af_row's EXISTING empty space to
-        # the right of Auto Fetch. LAYOUT-SAFE BY CONSTRUCTION: af_row is a single
-        # row whose height is the button's, and the much wider playback row
-        # (pb_frame, below) already fixes playback_col's width — so this label can
+        # v4.5.2-1 — Song-title readout. Lives in af_row's empty space to the
+        # right of the Spectral / Auto Fetch pair. LAYOUT-SAFE BY CONSTRUCTION:
+        # af_row is a single row whose height is the buttons', and the much wider
+        # playback rows below already fix playback_col's width — so this label can
         # never grow the column or add a row, i.e. it cannot reflow / smush the
         # editor canvas or velocity lane. Shows the loaded song's title/artist (from
         # the Full Mix tags, then Drums tags, then a cleaned file name); kept short
@@ -25687,8 +25857,18 @@ demucs.separate.main()
         except Exception:
             pass
 
+        # ── Playback group (4.14.3 playback-cluster regroup, variant E) ───
+        # Play/Stop/playhead/Review Speed, Loop, audio-output latency, and the
+        # recording cluster share one plain frame. A horizontal separator sits
+        # on top of the group. Compact and Roomy differ by pack pady registered
+        # through _me_mode_bound, the same way playback_split is bound.
+        playback_panel = ttk.Frame(playback_col)
+        playback_panel.pack(fill=tk.X, pady=(0, 1 if compact else 4))
+        self._me_mode_bound.append((playback_panel, "pack_pady", (0, 1), (0, 4)))
+        ttk.Separator(playback_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(0, 2))
+
         # ── Playback controls ─────────────────────────────────────────────────
-        pb_frame = ttk.Frame(playback_col)
+        pb_frame = ttk.Frame(playback_panel)
         pb_frame.pack(fill=tk.X, pady=(0, 2))
 
         self.me_play_btn = ttk.Button(pb_frame, text="Play",
@@ -25700,11 +25880,12 @@ demucs.separate.main()
         ttk.Button(pb_frame, text="Stop", image=fluent_icon("stop") or "", compound="left",
                    command=self._me_stop).pack(side=tk.LEFT, padx=(0, 6))
 
-        # (Send-to-Spectral moved above the Auto Fetch Audio button -- owner
-        # 2026-07-20; it used to sit here, to the right of Stop.)
+        # Spectral sits beside Auto Fetch Audio on the song strip, not on
+        # this Play/Stop row. It used to sit here, to the right of Stop.
 
         # Playback-position info and Review Speed follow Play / Stop.
-        # The recording cluster is packed into the latency row below.
+        # The recording cluster is a later row of this same Playback group;
+        # before 4.14.3 it was parked on the latency row.
 
         # ── Playback-position group (was after Test, now after Stop) ────────
         self.me_playhead_var = tk.StringVar(value="▶  00:00.0")
@@ -25728,46 +25909,8 @@ demucs.separate.main()
         ttk.Button(pb_frame, text="↺  Reset", width=8,
                    command=self._me_speed_reset).pack(side=tk.LEFT, padx=(0, 12))
 
-        # ── Recording cluster: built here, packed into the latency row below ──
-        # It used to end the Play row, which then needed more width than the
-        # default window gives it, and the Display Options column beside this
-        # one was squeezed to nothing.
-        rec_frame = ttk.Frame(playback_col)
-        self.me_record_btn = ttk.Button(rec_frame, text="● Record",
-                                        command=self._midi_record_toggle)
-        self.me_record_btn.pack(side=tk.LEFT, padx=(0, 4))
-        self._add_tooltip(
-            self.me_record_btn,
-            "Start a live MIDI recording. Count-in plays first if enabled, "
-            "then audio plays while your drum hits get recorded as notes.")
-
-        countin_cb = ttk.Checkbutton(rec_frame, text="Count-in (1 bar)",
-                                     variable=self._midi_count_in_enabled)
-        countin_cb.pack(side=tk.LEFT, padx=(0, 6))
-        self._add_tooltip(
-            countin_cb,
-            "Play 1 bar (4 clicks) of metronome before recording starts. "
-            "Turn off to start recording immediately on Record.")
-
-        ttk.Label(rec_frame, text="Metronome:").pack(side=tk.LEFT, padx=(0, 3))
-        self.me_metronome_combo = ttk.Combobox(
-            rec_frame, textvariable=self._midi_metronome_sound,
-            values=list(self.MIDI_METRONOME_SOUNDS),
-            state="readonly", width=14)
-        self.me_metronome_combo.pack(side=tk.LEFT, padx=(0, 4))
-        self._add_tooltip(
-            self.me_metronome_combo,
-            "Pick the count-in click sound. Click Test to preview.")
-
-        test_btn = ttk.Button(rec_frame, text="Test", width=7, image=fluent_icon("play") or "", compound="left",
-                              command=self._metronome_test_play)
-        test_btn.pack(side=tk.LEFT, padx=(0, 4))
-        self._add_tooltip(
-            test_btn,
-            "Play the selected metronome sound once at normal volume.")
-
-        # Loop controls row
-        loop_frame = ttk.Frame(playback_col)
+        # Loop controls row (inside the Playback group since 4.14.3)
+        loop_frame = ttk.Frame(playback_panel)
         loop_frame.pack(fill=tk.X, pady=(0, 2))
         self._me_loop_on   = tk.BooleanVar(value=False)
         self._me_loop_in   = 0.0
@@ -25789,8 +25932,17 @@ demucs.separate.main()
         ttk.Button(loop_frame, text="✕  Clear Loop", width=14,
                    command=self._me_loop_clear).pack(side=tk.LEFT)
 
-        # ── Offset row ────────────────────────────────────────────────────────
-        offset_row = ttk.Frame(playback_col)
+        # ── Note offset group (4.14.3 playback-cluster regroup, variant E) ─
+        # A chart-wide timing edit, not a playback setting, so it gets its own
+        # plain frame with a horizontal separator on top. The inline
+        # "Note offset:" label stays — INV210's inventory keys that exact
+        # TLabel text. Compact and Roomy differ by pack pady through
+        # _me_mode_bound.
+        offset_panel = ttk.Frame(playback_col)
+        offset_panel.pack(fill=tk.X, pady=(0, 1 if compact else 4))
+        self._me_mode_bound.append((offset_panel, "pack_pady", (0, 1), (0, 4)))
+        ttk.Separator(offset_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(0, 2))
+        offset_row = ttk.Frame(offset_panel)
         offset_row.pack(fill=tk.X, pady=(0, 2))
 
         ttk.Label(offset_row, text="Note offset:").pack(side=tk.LEFT, padx=(0, 6))
@@ -25856,7 +26008,7 @@ demucs.separate.main()
         # ahead of the audio you hear, which makes the editor feel misaligned.
         # Initial value is auto-estimated per OS in _me_estimate_audio_latency();
         # users can fine-tune this slider for their specific hardware.
-        latency_row = ttk.Frame(playback_col)
+        latency_row = ttk.Frame(playback_panel)
         latency_row.pack(fill=tk.X, pady=(0, 2))
         _me_latency_lbl = ttk.Label(latency_row, text="Audio output latency:")
         _me_latency_lbl.pack(side=tk.LEFT, padx=(0, 6))
@@ -25880,10 +26032,50 @@ demucs.separate.main()
         self._add_tooltip(_me_latency_lbl,
                           "Compensates for audio output delay (buffer + OS + hardware). "
                           "Auto-estimated per system; adjust if playhead drifts from what you hear.")
-        rec_frame.pack(in_=latency_row, side=tk.LEFT)
-        # rec_frame was created before latency_row, so it sits below it in the
-        # stacking order and latency_row's background would paint over it.
-        rec_frame.lift(latency_row)
+        # ── Recording cluster (inside the Playback group, variant E) ───
+        # Recording is capturing a take, not listening calibration, so the
+        # cluster leaves the latency row (where it was parked for width) and
+        # packs as its own row inside the Playback group. rec_frame is created
+        # with that group as its parent, so the old pack(in_=...) plus lift()
+        # stacking workaround is gone.
+
+        # Record, Count-in, Metronome, Test. It used to end the Play row, which
+        # then needed more width than the default window gives it, and the
+        # Display Options column beside this one was squeezed to nothing.
+        rec_frame = ttk.Frame(playback_panel)
+        rec_frame.pack(fill=tk.X)
+        self.me_record_btn = ttk.Button(rec_frame, text="● Record",
+                                        command=self._midi_record_toggle)
+        self.me_record_btn.pack(side=tk.LEFT, padx=(0, 4))
+        self._add_tooltip(
+            self.me_record_btn,
+            "Start a live MIDI recording. Count-in plays first if enabled, "
+            "then audio plays while your drum hits get recorded as notes.")
+
+        countin_cb = ttk.Checkbutton(rec_frame, text="Count-in (1 bar)",
+                                     variable=self._midi_count_in_enabled)
+        countin_cb.pack(side=tk.LEFT, padx=(0, 6))
+        self._add_tooltip(
+            countin_cb,
+            "Play 1 bar (4 clicks) of metronome before recording starts. "
+            "Turn off to start recording immediately on Record.")
+
+        ttk.Label(rec_frame, text="Metronome:").pack(side=tk.LEFT, padx=(0, 3))
+        self.me_metronome_combo = ttk.Combobox(
+            rec_frame, textvariable=self._midi_metronome_sound,
+            values=list(self.MIDI_METRONOME_SOUNDS),
+            state="readonly", width=14)
+        self.me_metronome_combo.pack(side=tk.LEFT, padx=(0, 4))
+        self._add_tooltip(
+            self.me_metronome_combo,
+            "Pick the count-in click sound. Click Test to preview.")
+
+        test_btn = ttk.Button(rec_frame, text="Test", width=7, image=fluent_icon("play") or "", compound="left",
+                              command=self._metronome_test_play)
+        test_btn.pack(side=tk.LEFT, padx=(0, 4))
+        self._add_tooltip(
+            test_btn,
+            "Play the selected metronome sound once at normal volume.")
 
         # ── Markers popup button (content for right_col sidebar) ─────────────
         self._me_marker_popup = None
@@ -26371,9 +26563,9 @@ demucs.separate.main()
         stems_area.pack(fill=tk.BOTH, expand=True)
 
         stems_left  = ttk.Frame(stems_area)
-        stems_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        stems_left.pack(side=tk.LEFT, fill=tk.Y)
         stems_right = ttk.Frame(stems_area)
-        stems_right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        stems_right.pack(side=tk.LEFT, fill=tk.Y)
 
         STEM_DEFS = [
             ("Drums",    "recent_me_drums",  stems_left),
@@ -26524,10 +26716,22 @@ demucs.separate.main()
             if i == 0:   # Drums: Single track / Layered radio toggles
                 _mode_f = ttk.Frame(row)
                 _mode_f.pack(side=tk.LEFT, padx=(8, 0))
-                ttk.Radiobutton(_mode_f, text="Single track",
-                                variable=self.me_layered_var, value=False).pack(anchor="w")
-                ttk.Radiobutton(_mode_f, text="Layered",
-                                variable=self.me_layered_var, value=True).pack(anchor="w")
+                _me_single_rb = ttk.Radiobutton(
+                    _mode_f, text="Single track",
+                    variable=self.me_layered_var, value=False)
+                _me_single_rb.pack(anchor="w")
+                self._add_tooltip(
+                    _me_single_rb,
+                    "Plays one stem at a time. Switch Stem cycles to the next loaded stem.")
+                _me_layered_rb = ttk.Radiobutton(
+                    _mode_f, text="Layered",
+                    variable=self.me_layered_var, value=True)
+                _me_layered_rb.pack(anchor="w")
+                self._add_tooltip(
+                    _me_layered_rb,
+                    "Plays every loaded stem together. Layered playback is slower than "
+                    "Single track, demands more processing power, and on slower systems "
+                    "is not recommended for a smooth experience.")
             elif i == 2:  # Stem 3: Switch Stem button
                 ttk.Button(row, text="⇄  Switch Stem",
                            command=_me_cycle_stem).pack(side=tk.LEFT, padx=(8, 0))
@@ -37075,86 +37279,283 @@ demucs.separate.main()
 
     def _build_sheet_music_tab(self, parent):
         """Tab 7 — Sheet Music (MusicXML) → MIDI converter."""
+        # Compact vertical padding tightened (header and card gaps)
+        # so the Convert button sits at least 16 px inside the fold at the 1480x930 gate size.
+        # Roomy paddings stay the mode-bound values.
         canvas = tk.Canvas(parent, bg=APP_BG, highlightthickness=0)
         self._tab9_canvas = canvas
+        self._sm_canvas = canvas
         sb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.pack(fill=tk.BOTH, expand=True)
         main = ttk.Frame(canvas)
         win = canvas.create_window((0, 0), window=main, anchor="nw")
+        self._sm_win = win
+        self._sm_inner = main
 
-        def _on_configure(e):
-            canvas.configure(scrollregion=canvas.bbox("all"))
-            canvas.itemconfig(win, width=canvas.winfo_width())
-        main.bind("<Configure>", _on_configure)
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
+        _pending = {"id": None, "n": 0}
+        _SM_MIN_LOG = 80
+        _SM_BODY_PAD_Y = 6
+        _SM_LOG_PAD = 5
+        _SM_MAX_REPASS = 3
+
+        def _fit_width():
+            """Phase A: write width-derived values (canvas item width, header wraplength)."""
+            wrote = False
+            canvas_w = int(canvas.winfo_width())
+            canvas_h = int(canvas.winfo_height())
+            if canvas_w <= 1 or canvas_h <= 1:
+                return False
+            if str(canvas.itemcget(win, "width")) != str(canvas_w):
+                canvas.itemconfigure(win, width=canvas_w)
+                wrote = True
+            hdr_sub = getattr(self, "_sm_hdr_sub", None)
+            if hdr_sub is not None:
+                wrap = max(200, canvas_w - 48)
+                if str(hdr_sub.cget("wraplength")) != str(wrap):
+                    hdr_sub.configure(wraplength=wrap)
+                    wrote = True
+            filter_desc = getattr(self, "_sm_filter_desc", None)
+            if filter_desc is not None:
+                wrap_half = max(180, (canvas_w - 60) // 2 - 20)
+                if str(filter_desc.cget("wraplength")) != str(wrap_half):
+                    filter_desc.configure(wraplength=wrap_half)
+                    wrote = True
+            return wrote
+
+        def _fit_fill():
+            """Phase B: measure chrome and allocate the bottom row, Log viewport, and page item.
+
+            Changing the bottom row height, Log viewport height, and page item height leaves the
+            positions of the widgets above the bottom row unchanged, which is why the
+            measurement is taken after the width flush. Returning True would mean
+            a chrome-moving write and would schedule one more bounded settlement.
+            """
+            try:
+                canvas_w = int(canvas.winfo_width())
+                canvas_h = int(canvas.winfo_height())
+                if canvas_w <= 1 or canvas_h <= 1:
+                    return False
+                bottom_row = getattr(self, "_sm_bottom_row", None) or getattr(self, "_sm_row3", None)
+                log_vp = getattr(self, "_sm_log_vp", None)
+                comb_frame = getattr(self, "_sm_comb_frame", None)
+                adv_card = getattr(self, "_sm_adv_card", None)
+                log_frame = getattr(self, "_sm_log_frame", None)
+                if bottom_row is None or log_vp is None:
+                    return False
+                y = 0
+                wdg = bottom_row
+                while wdg is not None and wdg is not main:
+                    y += int(wdg.winfo_y())
+                    wdg = wdg.master
+                chrome_above_h = y + _SM_BODY_PAD_Y
+                avail_row_h = canvas_h - chrome_above_h
+
+                log_chrome = 0
+                wdg = log_vp
+                while wdg is not None and wdg is not log_frame and wdg is not bottom_row:
+                    log_chrome += int(wdg.winfo_y())
+                    wdg = wdg.master
+                log_chrome += _SM_LOG_PAD
+                if log_chrome < 20:
+                    log_chrome = 35
+
+                comb_req = int(comb_frame.winfo_reqheight() or 0) if comb_frame else 0
+                adv_req = int(adv_card.winfo_reqheight() or 0) if adv_card else 0
+                min_log_box = log_chrome + _SM_MIN_LOG
+                floor_row_h = max(comb_req, adv_req, min_log_box)
+
+                if avail_row_h >= floor_row_h:
+                    row_h = avail_row_h
+                    page_h = canvas_h
+                    fits = True
+                else:
+                    row_h = floor_row_h
+                    page_h = chrome_above_h + floor_row_h
+                    fits = False
+
+                log_h = max(_SM_MIN_LOG, row_h - log_chrome)
+
+                try:
+                    cur_log = int(float(str(log_vp.cget("height") or 0)))
+                except Exception:
+                    cur_log = 0
+                if cur_log != int(log_h):
+                    log_vp.configure(height=int(log_h))
+                if str(canvas.itemcget(win, "height")) != str(int(page_h)):
+                    canvas.itemconfigure(win, height=int(page_h))
+                new_sr = (0, 0, int(canvas_w), int(page_h))
+                target_sr_f = (0.0, 0.0, float(canvas_w), float(page_h))
+                cur_sr_f = None
+                try:
+                    raw = canvas.cget("scrollregion")
+                    if isinstance(raw, str) and raw.strip():
+                        cur_sr_f = tuple(float(p) for p in raw.replace(",", " ").split())
+                    elif isinstance(raw, (tuple, list)) and len(raw) == 4:
+                        cur_sr_f = tuple(float(p) for p in raw)
+                except Exception:
+                    cur_sr_f = None
+                if cur_sr_f != target_sr_f:
+                    canvas.configure(scrollregion=new_sr)
+                try:
+                    xv = canvas.xview()
+                    if not (len(xv) == 2 and float(xv[0]) == 0.0 and float(xv[1]) == 1.0):
+                        canvas.xview_moveto(0)
+                except Exception:
+                    pass
+                if fits:
+                    try:
+                        yv = canvas.yview()
+                        if not (len(yv) == 2 and float(yv[0]) == 0.0 and float(yv[1]) == 1.0):
+                            canvas.yview_moveto(0)
+                    except Exception:
+                        pass
+                return False
+            except Exception:
+                return False
+
+        def _refit_now():
+            _pending["id"] = None
+            wrote_a = False
+            chrome_moved = False
+            try:
+                wrote_a = bool(_fit_width())
+            except Exception:
+                wrote_a = False
+            try:
+                main.update_idletasks()
+            except Exception:
+                pass
+            try:
+                chrome_moved = bool(_fit_fill())
+            except Exception:
+                chrome_moved = False
+            if (not wrote_a) and (not chrome_moved):
+                _pending["n"] = 0
+                return
+            if chrome_moved:
+                n = int(_pending.get("n") or 0)
+                if n < _SM_MAX_REPASS:
+                    _pending["n"] = n + 1
+                    _refit()
+                    return
+            _pending["n"] = 0
+
+        def _refit():
+            if _pending["id"] is not None:
+                return
+            try:
+                _pending["id"] = main.after_idle(_refit_now)
+            except Exception:
+                _pending["id"] = None
+
+        self._sm_refit = _refit
+
+        def _on_canvas(e):
+            try:
+                w = int(e.width)
+                if w > 1 and str(canvas.itemcget(win, "width")) != str(w):
+                    canvas.itemconfigure(win, width=w)
+            except Exception:
+                pass
+            _refit()
+
+        canvas.bind("<Configure>", _on_canvas)
+
+        _sm_compact = bool(getattr(self, "_compact_layout", False))
+        _sm_card_pad = (6, 6) if _sm_compact else (10, 6)
+        _sm_top_pady = (0, 4) if _sm_compact else (0, 6)
+        _sm_wrap_388 = 388 if _sm_compact else 380
+        _sm_wrap_368 = 368 if _sm_compact else 360
+        _sm_wrap_348 = 348 if _sm_compact else 340
+        sm_colors = dict(_SM_LEGACY_LABEL_COLORS)
+        try:
+            resolved = _sheet_music_theme_colors()
+            candidate = {role: resolved[role] for role in sm_colors}
+            for color in candidate.values():
+                parent.winfo_rgb(color)
+            sm_colors = candidate
+        except Exception:
+            pass
 
         # ── Header ────────────────────────────────────────────────────────────
         hdr = ttk.Frame(main)
-        hdr.pack(fill=tk.X, padx=20, pady=(14, 4))
-        ttk.Label(hdr, text="🎼  Sheet Music → MIDI",
+        hdr.pack(fill=tk.X, padx=20, pady=(8, 2))
+        _sm_title_lbl = ttk.Label(hdr, text="Sheet Music → MIDI",
+                  image=fluent_icon("book_open") or "",
+                  compound="left",
                   style="Header.TLabel",
-                  font=("Segoe UI", 14, "bold")).pack(anchor="w")
+                  foreground=sm_colors["purple"])
+        _sm_title_lbl.pack(anchor="w")
 
         sm_hdr_tips = ttk.Frame(hdr)
-        sm_hdr_tips.pack(fill=tk.X, pady=(4, 0))
-        ttk.Label(sm_hdr_tips,
-                  text="Convert a MusicXML drum chart into a Paradiddle-ready MIDI file.\n"
-                       "Accepts .mxl (direct download from MuseScore.com) or .xml (exported from notation software).\n"
-                       "Works with full band sheet music too — ParaKit automatically finds\n"
-                       "and extracts only the drum part, ignoring all other instruments.",
-                  style="Sub.TLabel", foreground="#b388ff",
-                  wraplength=900, justify=tk.LEFT).pack(anchor="w")
+        sm_hdr_tips.pack(fill=tk.X, pady=(2, 0))
+        self._sm_hdr_sub = ttk.Label(sm_hdr_tips,
+                  text="Convert a MusicXML drum chart into a Paradiddle-ready MIDI file.",
+                  style="Sub.TLabel", foreground=sm_colors["purple"],
+                  wraplength=900, justify=tk.LEFT)
+        self._sm_hdr_sub.pack(anchor="w")
 
-        body = ttk.Frame(main, padding=(20, 10))
+        body = ttk.Frame(main, padding=(20, 6))
         body.pack(fill=tk.BOTH, expand=True)
+        self._sm_body = body
 
-        # ── Find sheet music helper ───────────────────────────────────────────
-        find_frame = ttk.LabelFrame(body, text=" Find Sheet Music Online ", padding=10)
+        # ── Find sheet music + Input file (side by side) ──────────────────────
+        row_top = ttk.Frame(body)
+        row_top.pack(fill=tk.X, pady=_sm_top_pady)
+        row_top.columnconfigure(0, weight=1, uniform="sm_top")
+        row_top.columnconfigure(1, weight=1, uniform="sm_top")
+        self._sm_row_top = row_top
+
+        # Left: Find sheet music helper
+        find_frame = ttk.LabelFrame(row_top, text=" Find Sheet Music Online ", padding=_sm_card_pad)
         _fluent_labelframe_title(find_frame, " Find Sheet Music Online ", "search")
-        find_frame.pack(fill=tk.X, pady=(0, 10))
+        find_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
+        find_frame.columnconfigure(0, minsize=110)
         find_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(find_frame,
+        _sm_search_help_lbl = ttk.Label(find_frame,
                   text="Search MuseScore.com for sheet music. The selected instrument filter is\n"
                        "appended to your search query to narrow results. Results open in your browser.",
-                  style="Sub.TLabel", foreground="#888",
-                  justify=tk.LEFT).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+                  style="Sub.TLabel", foreground=sm_colors["muted888"],
+                  justify=tk.LEFT)
+        _sm_search_help_lbl.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
 
         ttk.Label(find_frame, text="Song / Artist:").grid(row=1, column=0, sticky="w", padx=(0, 8))
         self.sm_search_var = tk.StringVar()
-        sm_search_entry = ttk.Entry(find_frame, textvariable=self.sm_search_var, width=50)
+        sm_search_entry = ttk.Entry(find_frame, textvariable=self.sm_search_var)
         sm_search_entry.grid(row=1, column=1, sticky="ew", padx=(0, 8))
         sm_search_entry.bind("<Return>", lambda e: self._sm_open_search())
 
         ttk.Button(find_frame, text="Search on MuseScore.com", image=fluent_icon("search") or "", compound="left",
                    command=self._sm_open_search).grid(row=1, column=2, sticky="w")
 
-        ttk.Label(find_frame, text="Instrument Filter:").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
+        ttk.Label(find_frame, text="Instrument Filter:").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(4, 0))
         self.sm_search_filter_var = tk.StringVar(value="Drums")
         sm_filter_combo = ttk.Combobox(find_frame, textvariable=self.sm_search_filter_var,
                                        width=16, state="readonly")
         sm_filter_combo["values"] = ["Drums", "Full Mix"]
-        sm_filter_combo.grid(row=2, column=1, sticky="w", padx=(0, 8), pady=(6, 0))
-        ttk.Label(find_frame,
+        sm_filter_combo.grid(row=2, column=1, sticky="w", padx=(0, 8), pady=(4, 0))
+        self._sm_filter_desc = ttk.Label(find_frame,
                   text="Drums — searches for drum-only sheets.  Full Mix — searches for full band scores.",
-                  style="Sub.TLabel", foreground="#555").grid(
-                  row=2, column=2, sticky="w", pady=(6, 0))
+                  style="Sub.TLabel", foreground=sm_colors["muted555"], justify=tk.LEFT)
+        self._sm_filter_desc.grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
-        # Collapsible tips for the find frame
         tips_cell = ttk.Frame(find_frame)
-        tips_cell.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        tips_cell.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(4, 0))
         _, sm_find_tips = self._make_collapsible_tips(
-            tips_cell, title="Click for Tips & Notes", start_open=False)
-        ttk.Label(sm_find_tips,
+            tips_cell, title="Click for Tips & Notes", start_open=False,
+            on_toggle=_refit)
+        _sm_download_help_lbl = ttk.Label(sm_find_tips,
                   text="ℹ  Once you find a sheet on MuseScore.com you can download the .mxl file\n"
                        "directly and load it straight into ParaKit — no extra steps needed.\n"
                        "If you're exporting from MuseScore desktop or another notation app instead,\n"
                        "use File → Export → MusicXML and you'll get an .xml file, which also works.",
-                  style="Sub.TLabel", foreground="#555",
-                  wraplength=860, justify=tk.LEFT).pack(anchor="w")
-        ttk.Label(sm_find_tips,
+                  style="Sub.TLabel", foreground=sm_colors["muted555"],
+                  wraplength=_sm_wrap_388, justify=tk.LEFT)
+        _sm_download_help_lbl.pack(anchor="w")
+        _sm_sub_note_lbl = ttk.Label(sm_find_tips,
                   text="💳  Note on MuseScore.com downloads:\n"
                        "MuseScore.com is one of the best sources for accurate, community-verified drum\n"
                        "sheets — however many scores require a MuseScore Pro subscription to download\n"
@@ -37163,17 +37564,22 @@ demucs.separate.main()
                        "sheets. Free scores are also available and will be marked as such on the site.\n"
                        "The MuseScore app itself (musescore.org) is always free — only downloads\n"
                        "from MuseScore.com require a subscription.",
-                  style="Sub.TLabel", foreground="#b388ff",
-                  justify=tk.LEFT, wraplength=860).pack(anchor="w", pady=(8, 0))
+                  style="Sub.TLabel", foreground=sm_colors["purple"],
+                  justify=tk.LEFT, wraplength=_sm_wrap_388)
+        _sm_sub_note_lbl.pack(anchor="w", pady=(8, 0))
+        self._sm_find_frame = find_frame
 
-        # ── Input file ────────────────────────────────────────────────────────
-        in_frame = ttk.LabelFrame(body, text=" Input — MusicXML File ", padding=10)
-        in_frame.pack(fill=tk.X, pady=(0, 10))
+        # Right: Input file
+        in_frame = ttk.LabelFrame(row_top, text=" Input — MusicXML File ", padding=_sm_card_pad)
+        _fluent_labelframe_title(in_frame, " Input — MusicXML File ", "folder_open")
+        in_frame.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
+        in_frame.columnconfigure(0, minsize=110)
         in_frame.columnconfigure(1, weight=1)
+        self._sm_in_frame = in_frame
 
         ttk.Label(in_frame, text="MusicXML File:").grid(row=0, column=0, sticky="w", padx=(0, 8))
         self.sm_input_var = tk.StringVar()
-        sm_entry = ttk.Entry(in_frame, textvariable=self.sm_input_var, width=60)
+        sm_entry = ttk.Entry(in_frame, textvariable=self.sm_input_var)
         sm_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
         self._enable_drop(sm_entry, self.sm_input_var, config_key="recent_sm_input")
 
@@ -37188,12 +37594,27 @@ demucs.separate.main()
         ttk.Button(sm_btn_frame, text="✕", width=2,
                    command=lambda: self.sm_input_var.set("")).pack(side=tk.LEFT, padx=(4, 0))
 
+        ttk.Label(in_frame, text="Drum Part:").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=(4, 0))
+        self.sm_part_var = tk.StringVar(value="Auto-detect (recommended)")
+        self.sm_part_combo = ttk.Combobox(in_frame, textvariable=self.sm_part_var,
+                                          state="readonly")
+        self.sm_part_combo["values"] = ["Auto-detect (recommended)"]
+        self.sm_part_combo.grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(4, 0))
+        ttk.Button(in_frame, text="Scan File", image=fluent_icon("scan") or "", compound="left",
+                   command=self._sm_scan_parts).grid(row=1, column=2, sticky="w", pady=(4, 0))
+        _sm_scan_help_lbl = ttk.Label(in_frame,
+                  text="  Click 'Scan File' to read the parts from your MusicXML file and pick one\n"
+                       "  manually. Use this if auto-detect picks the wrong drum part.",
+                  style="Sub.TLabel", foreground=sm_colors["muted888"],
+                  justify=tk.LEFT)
+        _sm_scan_help_lbl.grid(row=2, column=0, columnspan=3, sticky="w", pady=(2, 0))
+
         _sm_ft_cell = ttk.Frame(in_frame)
-        _sm_ft_cell.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        _sm_ft_cell.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(4, 0))
         _, sm_filetypes_tips = self._make_collapsible_tips(
             _sm_ft_cell, title="Accepted file types & sources",
-            start_open=False)
-        ttk.Label(sm_filetypes_tips,
+            start_open=False, on_toggle=_refit)
+        _sm_types_lbl = ttk.Label(sm_filetypes_tips,
                   text="Accepted file types:\n"
                        "  .mxl       —  Compressed MusicXML. Same data as .xml but smaller file size.\n"
                        "                This is what MuseScore.com gives you on download. Load it directly.\n"
@@ -37204,23 +37625,57 @@ demucs.separate.main()
                        "There is no quality difference between these formats — .mxl and .xml contain\n"
                        "exactly the same notation data. Use whichever your source gives you.\n"
                        "Full band scores are supported — ParaKit finds the drum part automatically.",
-                  style="Sub.TLabel", foreground="#888",
-                  wraplength=860).pack(anchor="w")
+                  style="Sub.TLabel", foreground=sm_colors["muted888"],
+                  wraplength=_sm_wrap_388)
+        _sm_types_lbl.pack(anchor="w")
 
-        # ── Output ────────────────────────────────────────────────────────────
-        out_frame = ttk.LabelFrame(body, text=" Output ", padding=10)
-        out_frame.pack(fill=tk.X, pady=(0, 10))
+        # ── Convert button (sheet music tab) ──────────────────────────────────
+        self.sm_btn = ttk.Button(body, text="Convert Sheet Music to MIDI", image=self._primary_action_icon("book_open") or "", compound="left",
+                                 style="Hero.TButton",
+                                 command=self._sm_convert)
+        self.sm_btn.pack(fill=tk.X, pady=(8, 4), ipady=8)
+
+        # Progress bar + elapsed timer — mirrors the Stem Splitter
+        sm_prog_row = ttk.Frame(body)
+        sm_prog_row.pack(fill=tk.X, pady=(0, 4))
+        self.sm_progress = _G85AltSnareProgressBar(sm_prog_row, mode="indeterminate", width=400, height=30)
+        self.sm_progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+        self.sm_timer_lbl = ttk.Label(sm_prog_row, text="", style="Sub.TLabel")
+        self.sm_timer_lbl.pack(side=tk.RIGHT)
+
+        # ── Bottom Row: Combined Output & Audio Offset | Advanced | Log ──────
+        bottom_row = ttk.Frame(body)
+        bottom_row.pack(fill=tk.BOTH, expand=True)
+        bottom_row.columnconfigure(0, weight=5, uniform="sm_bottom")
+        bottom_row.columnconfigure(1, weight=3, uniform="sm_bottom")
+        bottom_row.columnconfigure(2, weight=3, uniform="sm_bottom")
+        bottom_row.rowconfigure(0, weight=1)
+        self._sm_row3 = bottom_row
+        self._sm_bottom_row = bottom_row
+
+        # ── Combined Output & Audio Offset (Column 0) ────────────────────────
+        comb_frame = ttk.LabelFrame(bottom_row, text=" Output & Audio Offset ", padding=_sm_card_pad)
+        _fluent_labelframe_title(comb_frame, " Output & Audio Offset ", "save")
+        comb_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        comb_frame.columnconfigure(0, weight=1)
+        comb_frame.columnconfigure(1, weight=1)
+        comb_frame.rowconfigure(0, weight=1)
+        self._sm_comb_frame = comb_frame
+
+        out_frame = ttk.Frame(comb_frame)
+        out_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         out_frame.columnconfigure(1, weight=1)
+        self._sm_out_frame = out_frame
 
-        ttk.Label(out_frame, text="Output Folder:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Label(out_frame, text="Output Folder:").grid(row=0, column=0, sticky="w", padx=(0, 4))
         self.sm_output_var = tk.StringVar()
         _sm_cfg = load_config()
         if _sm_cfg.get("output_folder_sm") and os.path.isdir(_sm_cfg["output_folder_sm"]):
             self.sm_output_var.set(_sm_cfg["output_folder_sm"])
         self.sm_output_var.trace_add("write",
             lambda *a: save_config({"output_folder_sm": self.sm_output_var.get()}))
-        sm_out_entry = ttk.Entry(out_frame, textvariable=self.sm_output_var, width=60)
-        sm_out_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        sm_out_entry = ttk.Entry(out_frame, textvariable=self.sm_output_var, width=16)
+        sm_out_entry.grid(row=0, column=1, sticky="ew", padx=(0, 4))
         self._enable_drop(sm_out_entry, self.sm_output_var)
         sm_out_btn = ttk.Frame(out_frame)
         sm_out_btn.grid(row=0, column=2)
@@ -37230,30 +37685,24 @@ demucs.separate.main()
                    command=lambda: self.sm_output_var.set("")).pack(side=tk.LEFT, padx=(4, 0))
 
         out_opts = ttk.Frame(out_frame)
-        out_opts.grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        out_opts.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
         self.sm_open_editor_var    = tk.BooleanVar(value=True)
         self.sm_save_file_var      = tk.BooleanVar(value=True)
         self.sm_send_creator_var   = tk.BooleanVar(value=False)
         ttk.Checkbutton(out_opts, text="Open result in MIDI Editor",
-                        variable=self.sm_open_editor_var).pack(side=tk.LEFT, padx=(0, 20))
+                        variable=self.sm_open_editor_var).pack(anchor="w")
         ttk.Checkbutton(out_opts, text="Save MIDI file to output folder",
-                        variable=self.sm_save_file_var).pack(side=tk.LEFT, padx=(0, 20))
+                        variable=self.sm_save_file_var).pack(anchor="w", pady=(2, 0))
         ttk.Checkbutton(out_opts, text="Send MIDI to Song Creator",
-                        variable=self.sm_send_creator_var).pack(side=tk.LEFT)
+                        variable=self.sm_send_creator_var).pack(anchor="w", pady=(2, 0))
 
-        # ── Audio offset ──────────────────────────────────────────────────────
-        offset_outer = ttk.Frame(body)
-        offset_outer.pack(fill=tk.X, pady=(0, 10))
-        offset_outer.columnconfigure(0, weight=2, uniform="offcol")
-        offset_outer.columnconfigure(1, weight=3, uniform="offcol")
-
-        # Left — controls
-        offset_frame = ttk.LabelFrame(offset_outer, text=" Audio Offset ", padding=10)
-        offset_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        offset_frame = ttk.Frame(comb_frame)
+        offset_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        self._sm_offset_frame = offset_frame
 
         ttk.Label(offset_frame, text="Drum start offset:").pack(anchor="w")
         off_entry_frame = ttk.Frame(offset_frame)
-        off_entry_frame.pack(anchor="w", pady=(4, 0))
+        off_entry_frame.pack(anchor="w", pady=(2, 0))
         self.sm_offset_var = tk.StringVar(value="0.000")
         off_entry = ttk.Entry(off_entry_frame, textvariable=self.sm_offset_var, width=10)
         off_entry.pack(side=tk.LEFT)
@@ -37268,7 +37717,8 @@ demucs.separate.main()
             self.sm_offset_var.set(f"{cur + delta:.3f}")
 
         nudge_frame = ttk.Frame(offset_frame)
-        nudge_frame.pack(anchor="w", pady=(6, 0))
+        nudge_frame.pack(anchor="w", pady=(4, 0))
+        self._sm_nudge_frame = nudge_frame
         ttk.Button(nudge_frame, text="-100ms", width=7,
                    command=lambda: _sm_nudge(-0.100)).pack(side=tk.LEFT, padx=(0, 2))
         ttk.Button(nudge_frame, text="-10ms", width=6,
@@ -37281,21 +37731,23 @@ demucs.separate.main()
                    command=lambda: self.sm_offset_var.set("0.000")).pack(side=tk.LEFT)
 
         norm_frame = ttk.Frame(offset_frame)
-        norm_frame.pack(anchor="w", pady=(10, 0))
+        norm_frame.pack(anchor="w", pady=(4, 0))
         self.sm_offset_normalize_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(norm_frame,
                         text="Auto-align: make offset land exactly where entered",
                         variable=self.sm_offset_normalize_var).pack(anchor="w")
         _, auto_align_tips = self._make_collapsible_tips(
-            norm_frame, title="What does Auto-align do?", start_open=False)
-        ttk.Label(auto_align_tips,
+            norm_frame, title="What does Auto-align do?", start_open=False,
+            on_toggle=_refit)
+        _sm_align_help_lbl = ttk.Label(auto_align_tips,
                   text="Ensures your offset value is accurate by accounting for the sheet music's\n"
                        "own internal start time. Leave on unless you need raw tick-level control.",
-                  style="Sub.TLabel", foreground="#888",
-                  wraplength=380, justify=tk.LEFT).pack(anchor="w")
+                  style="Sub.TLabel", foreground=sm_colors["muted888"],
+                  wraplength=_sm_wrap_388, justify=tk.LEFT)
+        _sm_align_help_lbl.pack(anchor="w")
 
         read_frame = ttk.Frame(offset_frame)
-        read_frame.pack(anchor="w", pady=(10, 0))
+        read_frame.pack(anchor="w", pady=(4, 0))
 
         self._sm_last_first_note_time = None
 
@@ -37314,15 +37766,13 @@ demucs.separate.main()
         ttk.Button(read_frame, text="Use first note time from last conversion", image=fluent_icon("clipboard_task") or "", compound="left",
                    command=_sm_read_from_log).pack(anchor="w")
         self.sm_first_note_lbl = ttk.Label(read_frame, text="(convert once to populate)",
-                                            style="Sub.TLabel", foreground="#555")
+                                            style="Sub.TLabel", foreground=sm_colors["muted555"])
         self.sm_first_note_lbl.pack(anchor="w", pady=(2, 0))
 
-        # Right — collapsible how-to
-        help_outer = ttk.Frame(offset_outer)
-        help_outer.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         _, help_frame = self._make_collapsible_tips(
-            help_outer, title="How to find your offset", start_open=False)
-        ttk.Label(help_frame,
+            offset_frame, title="How to find your offset", start_open=False,
+            on_toggle=_refit)
+        _sm_offset_help_lbl = ttk.Label(help_frame,
                   text="How to find your offset:\n\n"
                        "  1.  Open the MIDI Editor (Tab 6) and load your drums-only\n"
                        "      stem into the Playback Audio — Drums Only field\n"
@@ -37336,114 +37786,114 @@ demucs.separate.main()
                        "  Use the ±10ms / ±100ms buttons to nudge if needed.\n\n"
                        "  Auto-align ensures whatever number you enter lands\n"
                        "  at exactly that second — no guesswork or math needed.",
-                  style="Sub.TLabel", foreground="#888",
-                  justify=tk.LEFT, wraplength=480).pack(anchor="w")
+                  style="Sub.TLabel", foreground=sm_colors["muted888"],
+                  justify=tk.LEFT, wraplength=_sm_wrap_388)
+        _sm_offset_help_lbl.pack(anchor="w")
 
-        # ── Advanced options ──────────────────────────────────────────────────
+        # ── Advanced (Column 1) ──────────────────────────────────────────────
+        adv_card = ttk.LabelFrame(bottom_row, text=" Advanced ", padding=_sm_card_pad)
+        _fluent_labelframe_title(adv_card, " Advanced ", "settings")
+        adv_card.grid(row=0, column=1, sticky="nsew", padx=(3, 3))
+        self._sm_adv_card = adv_card
+
         self.sm_adv_expanded = tk.BooleanVar(value=False)
-        adv_toggle = ttk.Checkbutton(body,
-                                     text="Advanced — Tempo, Time Signature & Part overrides", image=fluent_icon("settings") or "", compound="left",
+        adv_toggle = ttk.Checkbutton(adv_card,
+                                     text="Advanced — Tempo and Time Signature overrides", image=fluent_icon("settings") or "", compound="left",
                                      variable=self.sm_adv_expanded,
                                      command=self._sm_toggle_advanced)
-        adv_toggle.pack(anchor="w", pady=(0, 4))
+        adv_toggle.pack(anchor="w", pady=(0, 2))
+        self._sm_adv_toggle = adv_toggle
 
-        self.sm_adv_frame = ttk.LabelFrame(body,
-                                           text=" Advanced / Overrides ", padding=10)
+        self.sm_adv_frame = ttk.Frame(adv_card)
         # Not packed yet — shown/hidden by toggle
 
         adv_inner = ttk.Frame(self.sm_adv_frame)
         adv_inner.pack(fill=tk.X)
 
-        ttk.Label(adv_inner,
+        _sm_override_help_lbl = ttk.Label(adv_inner,
                   text="Leave blank to use values from the MusicXML file. "
                        "Fill in to override if the file has wrong or missing values.",
-                  style="Sub.TLabel", foreground="#888",
-                  wraplength=800).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+                  style="Sub.TLabel", foreground=sm_colors["muted888"],
+                  wraplength=_sm_wrap_368)
+        _sm_override_help_lbl.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 6))
 
         ttk.Label(adv_inner, text="Override BPM:").grid(row=1, column=0, sticky="w", padx=(0, 8))
         self.sm_bpm_var = tk.StringVar()
-        ttk.Entry(adv_inner, textvariable=self.sm_bpm_var, width=10).grid(
-            row=1, column=1, sticky="w", padx=(0, 20))
+        ttk.Entry(adv_inner, textvariable=self.sm_bpm_var, width=8).grid(
+            row=1, column=1, sticky="w", padx=(0, 8))
         eg_lbl = ttk.Label(adv_inner, text="(e.g. 120)")
         eg_lbl.grid(row=1, column=2, sticky="w")
         self._add_tooltip(eg_lbl, "Leave blank to use BPM from the file")
 
-        ttk.Label(adv_inner, text="Override Time Sig:").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
+        ttk.Label(adv_inner, text="Override Time Sig:").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(4, 0))
         ts_frame = ttk.Frame(adv_inner)
-        ts_frame.grid(row=2, column=1, sticky="w", pady=(6, 0))
+        ts_frame.grid(row=2, column=1, sticky="w", pady=(4, 0))
         self.sm_timesig_num_var = tk.StringVar()
         self.sm_timesig_den_var = tk.StringVar()
         ttk.Entry(ts_frame, textvariable=self.sm_timesig_num_var, width=4).pack(side=tk.LEFT)
         ttk.Label(ts_frame, text=" / ").pack(side=tk.LEFT)
         ttk.Entry(ts_frame, textvariable=self.sm_timesig_den_var, width=4).pack(side=tk.LEFT)
         ttk.Label(adv_inner, text="(e.g. 4 / 4)",
-                  style="Sub.TLabel").grid(row=2, column=2, sticky="w", padx=(8, 0), pady=(6, 0))
+                  style="Sub.TLabel").grid(row=2, column=2, sticky="w", padx=(8, 0), pady=(4, 0))
 
-        ttk.Label(adv_inner,
-                  text="⚠  Overriding tempo or time signature only affects how the MIDI is written —\n"
-                       "it does not stretch or shift existing notes. Use only if the file values are\n"
-                       "wrong or missing.",
-                  style="Sub.TLabel", foreground="#e09a3a",
-                  justify=tk.LEFT).grid(row=3, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        _sm_override_warn_lbl = ttk.Label(adv_inner,
+                  text="⚠  Overriding tempo or time signature only affects how the MIDI is\n"
+                       "written — it does not stretch or shift existing notes. Use only\n"
+                       "if the file values are wrong or missing.",
+                  style="Sub.TLabel", foreground=sm_colors["warning"],
+                  justify=tk.LEFT, wraplength=_sm_wrap_368)
+        _sm_override_warn_lbl.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
-        # ── Drum part selector ────────────────────────────────────────────────
-        ttk.Separator(adv_inner, orient="horizontal").grid(
-            row=4, column=0, columnspan=4, sticky="ew", pady=(12, 8))
-
-        ttk.Label(adv_inner, text="Drum Part:").grid(row=5, column=0, sticky="w", padx=(0, 8))
-        part_sel_frame = ttk.Frame(adv_inner)
-        part_sel_frame.grid(row=5, column=1, columnspan=3, sticky="ew")
-        self.sm_part_var = tk.StringVar(value="Auto-detect (recommended)")
-        self.sm_part_combo = ttk.Combobox(part_sel_frame, textvariable=self.sm_part_var,
-                                          width=40, state="readonly")
-        self.sm_part_combo["values"] = ["Auto-detect (recommended)"]
-        self.sm_part_combo.pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(part_sel_frame, text="Scan File", image=fluent_icon("scan") or "", compound="left",
-                   command=self._sm_scan_parts).pack(side=tk.LEFT)
-        ttk.Label(adv_inner,
-                  text="  Click 'Scan File' to read the parts from your MusicXML file and pick one\n"
-                       "  manually. Use this if auto-detect picks the wrong drum part.",
-                  style="Sub.TLabel", foreground="#888",
-                  justify=tk.LEFT).grid(row=6, column=0, columnspan=4, sticky="w", pady=(4, 0))
-
-        # ── Parser mode ───────────────────────────────────────────────────────
-        mode_frame = ttk.LabelFrame(body, text=" Conversion Quality ", padding=10)
-        mode_frame.pack(fill=tk.X, pady=(0, 10))
+        mode_frame = ttk.Frame(adv_card)
+        mode_frame.pack(fill=tk.X, pady=(4, 6))
+        self._sm_mode_frame = mode_frame
+        ttk.Label(mode_frame, text="Conversion Quality:",
+                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 2))
         self.sm_mode_var = tk.StringVar(value="music21")
-        ttk.Radiobutton(mode_frame,
-                        text="High accuracy  (recommended) — correctly handles songs with tempo "
-                             "changes, complex drum patterns, and full band scores",
-                        variable=self.sm_mode_var, value="music21").pack(anchor="w")
-        ttk.Radiobutton(mode_frame,
-                        text="Basic  (fallback) — use if High accuracy gives unexpected results. "
-                             "Works well for simple drum-only files with a single tempo",
-                        variable=self.sm_mode_var, value="standard").pack(anchor="w", pady=(4, 0))
+        sm_r_high = ttk.Radiobutton(
+            mode_frame,
+            text="High accuracy (recommended)",
+            variable=self.sm_mode_var, value="music21")
+        sm_r_high.pack(anchor="w")
+        self._add_tooltip(
+            sm_r_high,
+            "High accuracy  (recommended) — correctly handles songs with tempo "
+            "changes, complex drum patterns, and full band scores")
+        sm_r_basic = ttk.Radiobutton(
+            mode_frame,
+            text="Basic (fallback)",
+            variable=self.sm_mode_var, value="standard")
+        sm_r_basic.pack(anchor="w", pady=(2, 0))
+        self._add_tooltip(
+            sm_r_basic,
+            "Basic  (fallback) — use if High accuracy gives unexpected results. "
+            "Works well for simple drum-only files with a single tempo")
 
         try:
             import music21 as _m21_test
             self._sm_music21_available = True
-            ttk.Label(mode_frame, text="✓  High accuracy mode is available",
-                      foreground="#00d4d4", style="Sub.TLabel").pack(anchor="w", pady=(6, 0))
+            _sm_quality_lbl = ttk.Label(mode_frame, text="✓  High accuracy mode is available",
+                      foreground=sm_colors["success"], style="Sub.TLabel")
+            _sm_quality_lbl.pack(anchor="w", pady=(4, 0))
+            _sm_quality_role = "success"
         except ImportError:
             self._sm_music21_available = False
             self.sm_mode_var.set("standard")
-            ttk.Label(mode_frame,
+            _sm_quality_lbl = ttk.Label(mode_frame,
                       text="⚠  High accuracy mode is not installed — using Basic mode.\n"
                            "To enable it, install music21 from the command line.",
-                      foreground="#e09a3a", style="Sub.TLabel").pack(anchor="w", pady=(6, 0))
+                      foreground=sm_colors["warning"], style="Sub.TLabel")
+            _sm_quality_lbl.pack(anchor="w", pady=(4, 0))
+            _sm_quality_role = "warning"
 
-        # ── How it works + sync warning (two columns) ─────────────────────────
-        info_row = ttk.Frame(body)
-        info_row.pack(fill=tk.X, pady=(0, 10))
-        info_row.columnconfigure(0, weight=3, uniform="infocol")
-        info_row.columnconfigure(1, weight=2, uniform="infocol")
-
-        info_outer = ttk.Frame(info_row)
-        info_outer.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         _, info_content = self._make_collapsible_tips(
-            info_outer, title="How It Works", icon="info", start_open=False)
-        ttk.Label(info_content,
-                  text="What ParaKit does with your file:\n"
+            adv_card, title="How It Works", icon="info", start_open=False,
+            on_toggle=_refit)
+        _sm_hiw_lbl = ttk.Label(info_content,
+                  text="Accepts .mxl (direct download from MuseScore.com) or .xml (exported from notation software).\n"
+                       "Works with full band sheet music too — ParaKit automatically finds\n"
+                       "and extracts only the drum part, ignoring all other instruments.\n\n"
+                       "What ParaKit does with your file:\n"
                        "  1.  Reads your MusicXML file and finds the drum/percussion part\n"
                        "  2.  All other instruments (guitar, bass, piano, etc.) are ignored\n"
                        "  3.  Every drum hit is mapped to the correct Paradiddle note value\n"
@@ -37463,14 +37913,14 @@ demucs.separate.main()
                        "      tempo in the file is wrong (e.g. it says 60 but the song is 120).\n"
                        "  Override Time Signature — use if the file has the wrong time signature\n"
                        "      or none at all. Leave blank to use whatever is in the file.",
-                  style="Sub.TLabel", foreground="#aaaaaa",
-                  justify=tk.LEFT, wraplength=500).pack(anchor="w")
+                  style="Sub.TLabel", foreground=sm_colors["muted"],
+                  justify=tk.LEFT, wraplength=_sm_wrap_388)
+        _sm_hiw_lbl.pack(anchor="w")
 
-        sync_outer = ttk.Frame(info_row)
-        sync_outer.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         _, sync_content = self._make_collapsible_tips(
-            sync_outer, title="Audio Sync", icon="warning", start_open=False)
-        ttk.Label(sync_content,
+            adv_card, title="Audio Sync", icon="warning", start_open=False,
+            on_toggle=_refit)
+        _sm_sync_lbl = ttk.Label(sync_content,
                   text="⚠  Important — Audio Sync is Your Responsibility:\n"
                        "This tool converts your sheet music into a MIDI file accurately, but it has\n"
                        "no way of knowing whether your sheet music lines up with the audio file you\n"
@@ -37480,36 +37930,70 @@ demucs.separate.main()
                        "After converting, always use the Song Tester tab (Tab 11) to check and correct\n"
                        "BPM and offset before converting to .rlrr. This step is the same as it would\n"
                        "be with any other MIDI source — sheet music does not skip it.",
-                  style="Sub.TLabel", foreground="#e09a3a",
-                  justify=tk.LEFT, wraplength=340).pack(anchor="w")
+                  style="Sub.TLabel", foreground=sm_colors["warning"],
+                  justify=tk.LEFT, wraplength=_sm_wrap_348)
+        _sm_sync_lbl.pack(anchor="w")
 
-        # ── Convert button (sheet music tab) ──────────────────────────────────
-        self.sm_btn = ttk.Button(body, text="Convert Sheet Music to MIDI", image=self._primary_action_icon("book_open") or "", compound="left",
-                                 style="Hero.TButton",
-                                 command=self._sm_convert)
-        self.sm_btn.pack(fill=tk.X, pady=(10, 6), ipady=8)
-
-        # Progress bar + elapsed timer — mirrors the Stem Splitter
-        self.sm_progress = _G85AltSnareProgressBar(body, mode="indeterminate", width=400, height=30)
-        self.sm_progress.pack(fill=tk.X, pady=(0, 2))
-        self.sm_timer_lbl = ttk.Label(body, text="", style="Sub.TLabel")
-        self.sm_timer_lbl.pack(anchor="w", pady=(0, 4))
-
-        # ── Log ───────────────────────────────────────────────────────────────
-        log_frame = ttk.LabelFrame(body, text=" Log ", padding=5)
-        log_frame.pack(fill=tk.BOTH, expand=True)
+        # ── Log (Column 2) ───────────────────────────────────────────────────
+        log_frame = ttk.LabelFrame(bottom_row, text=" Log ", padding=5)
+        _fluent_labelframe_title(log_frame, " Log ", "document")
+        log_frame.grid(row=0, column=2, sticky="nsew", padx=(6, 0))
+        self._sm_log_frame = log_frame
         log_btn_row = ttk.Frame(log_frame)
         log_btn_row.pack(fill=tk.X, pady=(0, 4))
         ttk.Button(log_btn_row, text="Export Log", image=fluent_icon("document") or "", compound="left",
                    command=lambda: self._export_log(
                        self.sm_log_text, "sheet_music_log.txt", "Sheet Music → MIDI")
                    ).pack(side=tk.LEFT)
+        log_vp = tk.Frame(log_frame, bg=APP_BG, highlightthickness=0)
+        log_vp.pack(fill=tk.BOTH, expand=True)
+        log_vp.pack_propagate(False)
+        log_vp.configure(height=_SM_MIN_LOG)
+        self._sm_log_vp = log_vp
         self.sm_log_text = scrolledtext.ScrolledText(
-            log_frame, height=10, bg="#0d1117", fg="#58a6ff",
+            log_vp, height=1, bg="#0d1117", fg="#58a6ff",
             font=("Consolas", 9), wrap=tk.WORD,
             insertbackground="#58a6ff", state="disabled")
         self.sm_log_text.pack(fill=tk.BOTH, expand=True)
         self._setup_pretty_log_widget(self.sm_log_text, bg="#0d1117")
+        self._sm_padding_bound = (
+            (find_frame, "padding", (6, 6), (10, 6)),
+            (in_frame, "padding", (6, 6), (10, 6)),
+            (comb_frame, "padding", (6, 6), (10, 6)),
+            (adv_card, "padding", (6, 6), (10, 6)),
+            (row_top, "pack_pady", (0, 4), (0, 6)),
+        )
+        self._sm_wrap_bound = (
+            (_sm_download_help_lbl, "wraplength", 388, 380),
+            (_sm_sub_note_lbl, "wraplength", 388, 380),
+            (_sm_types_lbl, "wraplength", 388, 380),
+            (_sm_align_help_lbl, "wraplength", 388, 380),
+            (_sm_offset_help_lbl, "wraplength", 388, 380),
+            (_sm_override_help_lbl, "wraplength", 368, 360),
+            (_sm_override_warn_lbl, "wraplength", 368, 360),
+            (_sm_hiw_lbl, "wraplength", 388, 380),
+            (_sm_sync_lbl, "wraplength", 348, 340),
+        )
+        self._sm_theme_labels = (
+            (_sm_title_lbl, "purple"),
+            (self._sm_hdr_sub, "purple"),
+            (_sm_sub_note_lbl, "purple"),
+            (_sm_search_help_lbl, "muted888"),
+            (self._sm_filter_desc, "muted555"),
+            (_sm_download_help_lbl, "muted555"),
+            (_sm_scan_help_lbl, "muted888"),
+            (_sm_types_lbl, "muted888"),
+            (_sm_align_help_lbl, "muted888"),
+            (self.sm_first_note_lbl, "muted555"),
+            (_sm_offset_help_lbl, "muted888"),
+            (_sm_override_help_lbl, "muted888"),
+            (_sm_override_warn_lbl, "warning"),
+            (_sm_quality_lbl, _sm_quality_role),
+            (_sm_hiw_lbl, "muted"),
+            (_sm_sync_lbl, "warning"),
+        )
+        self._sm_density_applied = _sm_compact
+        _refit()
 
     def _sm_open_search(self):
         """Open MuseScore.com search in the user's default browser."""
@@ -37617,9 +38101,16 @@ demucs.separate.main()
 
     def _sm_toggle_advanced(self):
         if self.sm_adv_expanded.get():
-            self.sm_adv_frame.pack(fill=tk.X, pady=(0, 10))
+            kw = {"fill": tk.X, "pady": (0, 10)}
+            after_w = getattr(self, "_sm_adv_toggle", None)
+            if after_w is not None:
+                kw["after"] = after_w
+            self.sm_adv_frame.pack(**kw)
         else:
             self.sm_adv_frame.pack_forget()
+        refit = getattr(self, "_sm_refit", None)
+        if callable(refit):
+            refit()
 
     def _sm_browse_input(self):
         path = filedialog.askopenfilename(
@@ -37674,11 +38165,6 @@ demucs.separate.main()
             values = ["Auto-detect (recommended)"] + part_names
             self.sm_part_combo["values"] = values
             self.sm_part_combo.set("Auto-detect (recommended)")
-
-            # Open Advanced panel so user can see the dropdown
-            if not self.sm_adv_expanded.get():
-                self.sm_adv_expanded.set(True)
-                self._sm_toggle_advanced()
 
             messagebox.showinfo(
                 "Parts Found",
@@ -37792,6 +38278,7 @@ demucs.separate.main()
         Read the container first, fall back to any plausible score member, and if there
         genuinely is none, say what the archive DOES hold so the message is actionable.
         """
+        import xml.etree.ElementTree as ET
         if not input_path.lower().endswith('.mxl'):
             with open(input_path, 'rb') as f:
                 return f.read()
@@ -44483,6 +44970,26 @@ demucs.separate.main()
                 self._pp_mix_set_source_mode("stems")
             return self._pp_mix_load_stems(specs)
 
+        _recent_var = tk.StringVar(master=self.root)
+        _recent_target = [None]
+
+        def _on_recent_pick(*_):
+            try:
+                p = _recent_var.get()
+                if p and callable(_recent_target[0]):
+                    _recent_target[0](p)
+            except Exception:
+                pass
+            finally:
+                _recent_target[0] = None
+
+        _recent_var.trace_add("write", _on_recent_pick)
+
+        def _recent_menu(anchor, key, filetypes, on_pick):
+            _recent_var.set("")
+            _recent_target[0] = on_pick
+            self._show_recent_menu(anchor, key, _recent_var, filetypes)
+
         return {
             "get_cfg": _get_cfg, "set_cfg": _set_cfg,
             "status_message": (lambda text, ms=4000:
@@ -44530,6 +45037,8 @@ demucs.separate.main()
             "synth_play": self._pp_synth_play,
             "synth_set_muted": (lambda m:
                                 setattr(self, "_pp_synth_muted", bool(m))),
+            "recent_add": (lambda key, path: self._add_recent_file(key, path)),
+            "recent_menu": _recent_menu,
             # OMITTED (phase-1): get_kit_layout (no host kit store),
             # midi_on_devices_changed.
         }
@@ -44856,7 +45365,9 @@ demucs.separate.main()
                 "sit next to ParaKit v4.0.py." % (e,))).pack(pady=40)
             return
         try:
-            self._practice_tab = PracticeTab(parent, hooks=self._build_pp_hooks("practice"))
+            self._practice_tab = PracticeTab(
+                parent, hooks=self._build_pp_hooks("practice"),
+                compact=self._compact_layout)
             self._practice_tab.pack(fill=tk.BOTH, expand=True)
         except Exception as _pr_e:
             for _c in parent.winfo_children():
@@ -44869,20 +45380,56 @@ demucs.separate.main()
                 "The rest of ParaKit is unaffected." % (_pr_e,))).pack(pady=40)
             return
 
+        def _practice_forward_selected():
+            practice = getattr(self, "_practice_tab", None)
+            if practice is None:
+                return
+            try:
+                if not practice.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            forward = getattr(practice, "set_notebook_active", None)
+            if not callable(forward):
+                return
+            try:
+                selected = self.notebook.select() == str(parent)
+            except tk.TclError:
+                selected = False
+            forward(selected)
+
+        # Before idle, including when Practice is already the selected tab.
+        _practice_forward_selected()
+
         def _practice_on_tab_changed_stop(_e=None):
+            try:
+                _practice_forward_selected()
+            except Exception:
+                pass
             try:
                 if (getattr(self, "_mixer_music_owner", None) == "practice"
                         and self.notebook.index("current")
                         != self._tab_indexes.get("practice")):
-                    stop_fn = getattr(self._practice_tab, "external_stop", None)
+                    practice = getattr(self, "_practice_tab", None)
+                    stop_fn = getattr(practice, "external_stop", None) if practice is not None else None
                     if callable(stop_fn):
                         stop_fn()
                     else:
                         self._pp_mix_stop()
             except Exception:
                 pass
-        self.notebook.bind("<<NotebookTabChanged>>",
-                           _practice_on_tab_changed_stop, add="+")
+        self._practice_tab_bind = self.notebook.bind(
+            "<<NotebookTabChanged>>", _practice_on_tab_changed_stop, add="+")
+
+        def _practice_on_destroy(event, _bid=self._practice_tab_bind, _tab=self._practice_tab):
+            # Descendant Destroy events also reach this widget; drop only ours.
+            if getattr(event, "widget", None) is not _tab:
+                return
+            try:
+                self.notebook.unbind("<<NotebookTabChanged>>", _bid)
+            except Exception:
+                pass
+        self._practice_tab.bind("<Destroy>", _practice_on_destroy, add="+")
 
     def _send_to_preview(self, midi=None, audio=None, drums=None, offset=None):
         """Cross-tab hand-off into the Preview tab (replaces _viz_send). Loads

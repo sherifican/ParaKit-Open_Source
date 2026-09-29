@@ -54,6 +54,7 @@ Pillow when installed; absence falls back to tk.PhotoImage / initials.
 from __future__ import annotations
 
 import colorsys
+import copy
 import functools
 import json
 import math
@@ -92,7 +93,6 @@ from parakit_practice_widgets import (
     TEXT,
     TEXT_BRIGHT,
     Chip,
-    GradientButton,
     OutlineButton,
     PlaceholderEntry,
     Segmented,
@@ -102,6 +102,10 @@ from parakit_practice_widgets import (
     apply_theme_global,
     blend,
 )
+
+# 4.14.3 B1: Home-only shell/token/geometry sidecar. The shared widgets
+# module above stays byte-identical for the Play/Results/Kit Studio screens.
+import parakit_practice_home_widgets as phw
 
 import parakit_practice_engine as engine
 from parakit_practice_engine import (
@@ -567,9 +571,13 @@ class PracticeHomeScreen(ttk.Frame):
     playback, Settings, Kit Studio, and calibration all live outside this
     screen and are reached through the four locked `self.on_*` callbacks."""
 
-    def __init__(self, parent, hooks=None, **kw):
+    def __init__(self, parent, hooks=None, compact: Optional[bool] = None,
+                 **kw):
         super().__init__(parent, style="Prac.TFrame", **kw)
         self.hooks = hooks if hooks is not None else {}
+        # Density injection point: embedded construction receives the host's
+        # density; standalone omission defaults to Roomy (False).
+        self._compact = bool(compact) if compact is not None else False
 
         # ----- locked Home<->tab signal contract (DISPATCH section 5) -----
         self.on_play_request: Optional[Callable[[dict], None]] = None
@@ -577,6 +585,10 @@ class PracticeHomeScreen(ttk.Frame):
         self.on_open_kit_studio: Optional[Callable[[], None]] = None
         self.on_open_calibration: Optional[Callable[[], None]] = None
         self.on_keyboard_test: Optional[Callable[[], None]] = None
+        # Optional (B6a): arm a key capture as (lane_id, intent) with intent
+        # "replace", "append" or "ghost". Unset (standalone Home), the key
+        # badges and + / +ghost fall back to on_open_settings("keybinds").
+        self.on_capture_binding: Optional[Callable[[str, str], None]] = None
 
         # ----- persisted state (via the hook seam) -------------------------
         stored_prefs = self._cfg_get("practice_prefs", {})
@@ -584,6 +596,7 @@ class PracticeHomeScreen(ttk.Frame):
             stored_prefs = {}
         self._prefs: Dict[str, Any] = dict(DEFAULT_PREFS)
         self._prefs.update(stored_prefs)
+        self._applying_snapshot = False
 
         self._songs_folder = self._cfg_get("practice_songs_folder", "")
         if not isinstance(self._songs_folder, str):
@@ -619,8 +632,27 @@ class PracticeHomeScreen(ttk.Frame):
         self._poll_scan_job = None
         self._filter_job = None
 
+        # ----- B1 shell geometry state (fill guard / settlement / wheel) ----
+        self._settlement = None
+        self._cooldown_job = None
+        self._stacked = None
+        self._wrap_labels = []
+        self._page_scrollable = False
+        self._fit_failure = False
+        self._fit_failure_reason = ""
+        self._repass_count = 0
+
         # ----- root-level key binds (the '/' search shortcut) -----------------
         self._key_binds: List[Tuple[tk.Misc, str, str]] = []
+
+        # One idle MIDI snapshot. Generation invalidates a callback that
+        # outlives disable, departure, or teardown. Fields exist before _build
+        # binds Configure.
+        self._midi_refresh_job = None
+        self._midi_refresh_widget = None
+        self._midi_refresh_notify = False
+        self._midi_refresh_generation = 0
+        self._destroying = False
 
         if self.hooks:
             apply_theme_embedded(self)
@@ -703,65 +735,67 @@ class PracticeHomeScreen(ttk.Frame):
     def _build(self) -> None:
         self._build_topbar()   # fixed at the top (never scrolls)
 
-        # Scroll container (v4.9.2): SONG + SETUP + INPUT stacked can exceed a
-        # 1080p window and clip the bottom (the keybind card was below the fold).
-        # Wrap the body in a vertical scroll canvas so nothing is ever cut off on
-        # any monitor. The scrollbar is the guarantee; the mouse wheel is routed
-        # by pointer (song list vs the whole page) in _on_page_wheel.
+        # Fill-guarded outer scroll host (4.14.3 B1, geometry contract): the
+        # page scrolls ONLY when the layout cannot fit the allocation. When
+        # the two-column page fits, the body item is pinned to the canvas
+        # height and the origin is held at y=0, so a fitting page can never
+        # scroll into blank (the Song Tester _fit_fill pattern). The vertical
+        # scrollbar is ALWAYS packed: its gutter is reserved, so the 1100 px
+        # stack threshold -- measured on the allocated Home width BEFORE the
+        # gutter -- cannot flip the mode when a scrollbar appears.
         outer = tk.Frame(self, background=BG)
         outer.pack(fill=tk.BOTH, expand=True)
         self._page_canvas = tk.Canvas(outer, background=BG, highlightthickness=0)
-        page_vsb = ttk.Scrollbar(outer, orient=tk.VERTICAL,
-                                 command=self._page_canvas.yview)
-        self._page_canvas.configure(yscrollcommand=page_vsb.set)
-        page_vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._page_vsb = ttk.Scrollbar(outer, orient=tk.VERTICAL,
+                                       command=self._page_canvas.yview)
+        self._page_canvas.configure(yscrollcommand=self._page_vsb.set)
+        self._page_vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self._page_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        body = tk.Frame(self._page_canvas, background=BG)
+        self._body = tk.Frame(self._page_canvas, background=BG)
         self._page_window = self._page_canvas.create_window(
-            (0, 0), window=body, anchor="nw")
-        body.bind("<Configure>", lambda _e: self._page_canvas.configure(
-            scrollregion=self._page_canvas.bbox("all")))
-        self._page_canvas.bind(
-            "<Configure>", lambda e: self._page_canvas.itemconfigure(
-                self._page_window, width=e.width))   # body fills canvas width
-        # Retain the funcids so destroy() can remove ONLY these global handlers
-        # (breaker codex #1, 2026-07-22): bind_all persists on the "all" bindtag,
-        # so without cleanup each destroy/rebuild leaks another live _on_page_wheel
-        # (and pins this screen in memory). unbind_all is NOT an option — the host
-        # app has its own global wheel handler on "all" that must survive.
-        self._page_wheel_binds = []
-        for _seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-            self._page_wheel_binds.append(
-                (_seq, self._page_canvas.bind_all(_seq, self._on_page_wheel,
-                                                  add="+")))
+            (0, 0), window=self._body, anchor="nw")
+        self._body.bind("<Configure>", self._on_body_configure)
+        self._page_canvas.bind("<Configure>", self._on_page_canvas_configure)
+        # The stack threshold and the body budget derive from the allocated
+        # HOME size (Configure on the canvas would exclude the reserved
+        # scrollbar gutter and could oscillate across it).
+        self.bind("<Configure>", self._on_home_configure)
 
-        # fill=X (NOT expand): in the scroll body the grid takes its NATURAL
-        # height, so the song list stays at its bounded 340 px (internal scroll)
-        # instead of growing 133-songs tall and making the page enormous.
-        grid = ttk.Frame(body, style="Prac.TFrame")
-        grid.pack(fill=tk.X, padx=14, pady=(0, 10))
-        grid.columnconfigure(0, weight=5)
-        grid.columnconfigure(1, weight=4)
-        grid.rowconfigure(0, weight=1)
-        song_card = self._build_song_card(grid)
-        song_card.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
-        setup_card = self._build_setup_card(grid)
-        setup_card.grid(row=0, column=1, sticky="new", padx=(7, 0))
-        input_card = self._build_input_card(body)
-        input_card.pack(fill=tk.X, padx=14, pady=(0, 14))
+        # Home-scoped wheel routing (4.14.3 B1, wheel co-tenancy): Home's own
+        # widgets carry a private bindtag ahead of "all", so Home consumes its
+        # wheel events exactly once while the host's global scroll router
+        # stays registered for every other tab. No bind_all, no unbind_all.
+        phw.install_wheel_scope(self, self._on_page_wheel)
+
+        # 58/42 uniform columns: SONG left at full height, SETUP above INPUT
+        # in the right column so INPUT absorbs the slack. One stable grid
+        # parent, so restacking below 1100 px is a re-grid, never a re-parent.
+        pad = phw.shell_padding(self._compact)
+        grid = tk.Frame(self._body, background=BG)
+        grid.pack(fill=tk.BOTH, expand=True, padx=pad, pady=(0, 10))
+        self._cols = grid
+        self._song_card = self._build_song_card(grid)
+        self._song_card._ph_col = "left"   # width-aware label registry
+        self._right_col = tk.Frame(grid, background=BG)
+        self._right_col._ph_col = "right"
+        self._setup_card = self._build_setup_card(self._right_col)
+        self._setup_card.pack(side=tk.TOP, fill=tk.X)
+        self._input_card = self._build_input_card(self._right_col)
+        self._input_card.pack(side=tk.TOP, fill=tk.BOTH, expand=True,
+                              pady=(12, 0))
+        self._settlement = phw.PendingSettlement(self, self._settle_geometry)
         self._rebuild_list()
         self._update_play_loaded()
+        phw.tag_subtree(self)
+        self._schedule_settlement()
 
-    def _on_page_wheel(self, event) -> None:
-        # Route the wheel by pointer: over the song list -> scroll the list (it
-        # has its own internal scroll); anywhere else on the page -> scroll the
-        # whole page. Guarded to no-op when the Practice tab is not the visible
-        # notebook page (bind_all fires app-wide).
-        try:
-            if not self.winfo_ismapped():
-                return
-        except tk.TclError:
-            return
+    def _on_page_wheel(self, event) -> str:
+        # Fires ONLY for widgets carrying Home's wheel bindtag (installed via
+        # phw.install_wheel_scope), i.e. pointer events over Home itself. The
+        # "break" return stops the bindtag walk before "all", so the host's
+        # global router never re-handles a Home event and Home never sees
+        # another tab's event. A covered Home (Play/Results/Studio raised)
+        # receives no pointer events, so no visibility guard is needed.
         delta = 0
         if getattr(event, "num", None) == 4:
             delta = -1
@@ -770,8 +804,12 @@ class PracticeHomeScreen(ttk.Frame):
         elif getattr(event, "delta", 0):
             delta = -1 if event.delta > 0 else 1
         if not delta:
-            return
-        target = self._page_canvas
+            return "break"
+        # Route by pointer: over the library -> the library (it has its own
+        # internal scroll); otherwise the page, but only while the page is
+        # actually scrollable -- a fitting page and its blank space must not
+        # scroll (geometry contract).
+        target = None
         try:
             n = self.winfo_containing(event.x_root, event.y_root)
         except tk.TclError:
@@ -780,11 +818,303 @@ class PracticeHomeScreen(ttk.Frame):
             if n is getattr(self, "_list_canvas", None):
                 target = self._list_canvas
                 break
+            if n is getattr(self, "_kb_canvas", None):
+                target = self._kb_canvas
+                break
             n = getattr(n, "master", None)
+        if target is None and getattr(self, "_page_scrollable", False):
+            target = getattr(self, "_page_canvas", None)
+        if target is not None:
+            try:
+                target.yview_scroll(delta, "units")
+            except tk.TclError:
+                pass
+        return "break"
+
+    def relayout(self, compact) -> None:
+        """Apply live density change (Compact / Roomy) in place."""
         try:
-            target.yview_scroll(delta, "units")
+            if not self.winfo_exists():
+                return
         except tk.TclError:
-            pass
+            return
+        self._compact = bool(compact)
+        pad = phw.shell_padding(self._compact)
+        cols = getattr(self, "_cols", None)
+        if cols is not None:
+            try:
+                info = cols.pack_info()
+                cur = info.get("padx", 0)
+                if isinstance(cur, (tuple, list)):
+                    cur_val = int(cur[0])
+                else:
+                    cur_val = int(cur)
+                if cur_val != pad:
+                    cols.pack_configure(padx=pad)
+            except (tk.TclError, TypeError, ValueError):
+                pass
+        self._cancel_cooldown()
+        self._repass_count = 0
+        self._schedule_settlement()
+
+    # ----- geometry settlement (4.14.3 B1, the plan's geometry contract) -----
+    def _cancel_cooldown(self) -> None:
+        cd = getattr(self, "_cooldown_job", None)
+        if cd is not None:
+            self._cooldown_job = None
+            try:
+                self.after_cancel(cd)
+            except Exception:
+                pass
+
+    def _settlement_cooldown(self) -> None:
+        self._cooldown_job = None
+        self._repass_count = 0
+        self._schedule_settlement()
+
+    def _on_home_configure(self, _event=None) -> None:
+        # Allocated Home size changed: the stack mode and the body budget both
+        # derive from it. Schedule only; never write geometry here.
+        self._cancel_cooldown()
+        self._repass_count = 0
+        self._schedule_settlement()
+
+    def _on_page_canvas_configure(self, event) -> None:
+        # The body fills the canvas width (compared before writing); the
+        # height is settled at idle.
+        try:
+            cur = self._page_canvas.itemcget(self._page_window, "width")
+            if str(event.width) != str(cur):
+                self._page_canvas.itemconfigure(self._page_window,
+                                                width=event.width)
+        except tk.TclError:
+            return
+        self._cancel_cooldown()
+        self._repass_count = 0
+        self._schedule_settlement()
+
+    def _on_body_configure(self, _event=None) -> None:
+        """Schedule settlement on body configure unless a cooldown is armed."""
+        if self._cooldown_job is not None:
+            return
+        self._schedule_settlement()
+
+    def _schedule_settlement(self) -> None:
+        st = getattr(self, "_settlement", None)
+        if st is not None:
+            st.schedule()
+
+    _OUTER_PAD_Y = 10      # outer pady on _cols: pady=(0, 10)
+    _STACKED_GAP_Y = 12    # vertical gap between stacked columns: pady=(12, 0)
+
+    def _restack(self, stacked: bool) -> None:
+        grid = self._cols
+        for c in (0, 1):
+            grid.columnconfigure(c, weight=0, uniform="")
+        for r in (0, 1):
+            grid.rowconfigure(r, weight=0)
+        self._song_card.grid_forget()
+        self._right_col.grid_forget()
+        if stacked:
+            grid.columnconfigure(0, weight=1)
+            self._song_card.grid(row=0, column=0, sticky="ew")
+            self._right_col.grid(row=1, column=0, sticky="ew",
+                                 pady=(self._STACKED_GAP_Y, 0))
+        else:
+            # uniform= makes 58/42 a true ratio: without it grid shares only
+            # the LEFTOVER space by weight and the wider request wins the base.
+            grid.columnconfigure(0, weight=phw.COL_LEFT_WEIGHT,
+                                 uniform=phw.COL_UNIFORM)
+            grid.columnconfigure(1, weight=phw.COL_RIGHT_WEIGHT,
+                                 uniform=phw.COL_UNIFORM)
+            grid.rowconfigure(0, weight=1)
+            self._song_card.grid(row=0, column=0, sticky="nsew", padx=(0, 7))
+            self._right_col.grid(row=0, column=1, sticky="nsew", padx=(7, 0))
+
+    def _settle_geometry(self) -> None:
+        """The one idle geometry settlement.
+
+        Inputs are the OUTER allocation only: the stack mode from Home's
+        allocated width (before the scrollbar gutter), the Song viewport's
+        explicit height from outer allocation minus directly measured fixed
+        chrome, the width-aware label wraps, and the fill guard. Every write is
+        compared against the last written value and skipped when unchanged.
+        When a pass writes changes, at most three consecutive idle re-passes
+        may chain to settle wrap-driven child heights without an outer
+        Configure; bound exhaustion arms a 250 ms cooldown to rate-limit tight
+        loops while settling late wrap propagation. No update() /
+        update_idletasks() here or in any Configure callback.
+        """
+        try:
+            home_w = self.winfo_width()
+            canvas_w = self._page_canvas.winfo_width()
+            canvas_h = self._page_canvas.winfo_height()
+        except tk.TclError:
+            return
+        if home_w <= 1 or canvas_w <= 1 or canvas_h <= 1:
+            return   # unmapped; the mapping Configure reschedules
+
+        wrote = False
+
+        # 1. Stack mode: allocated HOME width, before the scrollbar gutter.
+        stacked = home_w < phw.STACK_BELOW
+        if stacked != self._stacked:
+            self._stacked = stacked
+            self._restack(stacked)
+            wrote = True
+
+        # 2. Song viewport: outer allocation minus directly measured fixed
+        #    chrome. Fixed chrome is measured from the card's children so
+        #    the lagging card aggregate is never in the calculation; the
+        #    Song document's own height is never an input.
+        vp = getattr(self, "_song_viewport", None)
+        card = getattr(self, "_song_card", None)
+        fixed = phw.measure_fixed_chrome(card, vp)
+        try:
+            right_req = self._right_col.winfo_reqheight()
+        except tk.TclError:
+            right_req = 0
+
+        target = None
+        if fixed is None:
+            self._fit_failure = True
+            self._fit_failure_reason = "fixed chrome measurement failed"
+        else:
+            if stacked:
+                budget = max(0, canvas_h - self._OUTER_PAD_Y - self._STACKED_GAP_Y - right_req)
+            else:
+                budget = max(0, canvas_h - self._OUTER_PAD_Y)
+            left = budget - fixed
+            target = phw.compute_viewport_height(budget, fixed)
+            # Fit failure is RECORDED, never hidden: minimum chrome that
+            # cannot fit must not collapse the viewport to zero.
+            self._fit_failure = left < phw.MIN_VIEWPORT_HEIGHT
+            if self._fit_failure:
+                self._fit_failure_reason = "insufficient budget for minimum viewport"
+            if vp is not None:
+                if vp.set_request(height=target):
+                    wrote = True
+
+        # Input card viewport (4.14.3 B4): fixed minimum request (160 px).
+        # Slack reaches the viewport purely by allocation: right col grid
+        # sticky="nsew", input card fill=BOTH expand=True, pad, list_frame
+        # and _kb_viewport all pack expand=True.
+        kb_vp = getattr(self, "_kb_viewport", None)
+        kb_card = getattr(self, "_input_card", None)
+        kb_fixed = phw.measure_fixed_chrome(kb_card, kb_vp)
+        if kb_fixed is None:
+            self._fit_failure = True
+            self._fit_failure_reason = "input fixed chrome measurement failed"
+        else:
+            kb_target = phw.MIN_VIEWPORT_HEIGHT
+            if not stacked:
+                try:
+                    setup_h = self._setup_card.winfo_reqheight()
+                except tk.TclError:
+                    setup_h = 0
+                kb_budget = max(0, canvas_h - self._OUTER_PAD_Y)
+                kb_fixed_total = setup_h + self._STACKED_GAP_Y + kb_fixed
+                kb_left = kb_budget - kb_fixed_total
+                if kb_left < phw.MIN_VIEWPORT_HEIGHT:
+                    self._fit_failure = True
+                    self._fit_failure_reason = "insufficient budget for minimum input viewport"
+            if kb_vp is not None:
+                if kb_vp.set_request(height=kb_target):
+                    wrote = True
+
+        # 3. Width-aware labels wrap at their column's live allocation.
+        alive = []
+        for lbl, home_of in self._wrap_labels:
+            col = None
+            n = home_of
+            while n is not None:
+                col = getattr(n, "_ph_col", None)
+                if col:
+                    break
+                n = getattr(n, "master", None)
+            try:
+                if col == "left":
+                    base = self._song_card.winfo_width()
+                elif col == "right":
+                    base = self._right_col.winfo_width()
+                else:
+                    base = canvas_w
+            except tk.TclError:
+                continue
+            if phw.set_wraplength(lbl, base - phw.WRAP_INSET):
+                wrote = True
+            try:
+                lbl.cget("text")
+            except tk.TclError:
+                continue   # destroyed: drop from the registry
+            alive.append((lbl, home_of))
+        self._wrap_labels = alive
+
+        # 4. Fill guard: decide fit from measured parts rather than _body's
+        #    lagging aggregate request. A fitting two-column page is pinned to
+        #    the canvas height with the origin at y=0 and cannot scroll into
+        #    blank; a stacked or overflowing page scrolls with a finite region.
+        if fixed is not None and target is not None:
+            if stacked:
+                page_h = self._OUTER_PAD_Y + fixed + target + self._STACKED_GAP_Y + right_req
+            else:
+                page_h = self._OUTER_PAD_Y + max(fixed + target, right_req)
+            fits = (not stacked) and page_h <= canvas_h
+            self._page_scrollable = not fits
+            item_h = canvas_h if fits else max(page_h, canvas_h)
+            try:
+                cur_h = self._page_canvas.itemcget(self._page_window, "height")
+                if str(cur_h) != str(item_h):
+                    self._page_canvas.itemconfigure(self._page_window,
+                                                    height=item_h)
+                    wrote = True
+                want_region = (0, 0, canvas_w, item_h)
+                cur_region = str(self._page_canvas.cget("scrollregion") or "")
+                try:
+                    have = tuple(int(round(float(x)))
+                                 for x in cur_region.split())
+                except ValueError:
+                    have = ()
+                if have != want_region:
+                    self._page_canvas.configure(scrollregion=want_region)
+                    wrote = True
+                if fits:
+                    first, _last = self._page_canvas.yview()
+                    if first != 0.0:
+                        self._page_canvas.yview_moveto(0)
+            except tk.TclError:
+                pass
+
+        # 5. Convergence: when this pass wrote any layout state, schedule
+        #    one chained re-pass so geometry changes (e.g. label wrap changing
+        #    a child's height) feed the next measurement. Bounded to at most
+        #    three consecutive re-passes without an outer Configure; on
+        #    exhaustion, a 250 ms cooldown re-arms settlement to rate-limit
+        #    tight loops while allowing late wrap propagation to settle.
+        if wrote:
+            if self._repass_count < 3:
+                self._repass_count += 1
+                self._schedule_settlement()
+            else:
+                self._fit_failure_reason = (
+                    f"settlement did not converge in {self._repass_count} passes"
+                )
+                if self._cooldown_job is None:
+                    try:
+                        self._cooldown_job = self.after(
+                            250, self._settlement_cooldown)
+                    except tk.TclError:
+                        self._cooldown_job = None
+        else:
+            self._repass_count = 0
+            if not self._fit_failure:
+                self._fit_failure_reason = ""
+            if self._cooldown_job is not None:
+                try:
+                    self.after_cancel(self._cooldown_job)
+                except Exception:
+                    pass
+                self._cooldown_job = None
 
     # ----- small factories (mirrors the v5 _h2/_eyebrow/_hint/_sep helpers) ---
     @staticmethod
@@ -795,10 +1125,16 @@ class PracticeHomeScreen(ttk.Frame):
     def _eyebrow(parent, text: str) -> ttk.Label:
         return ttk.Label(parent, text=text, style="Prac.Cyan.TLabel", font=F_SMALL)
 
-    @staticmethod
-    def _hint(parent, text: str, wraplength: int = 520) -> ttk.Label:
-        return ttk.Label(parent, text=text, style="Prac.PanelMuted.TLabel",
-                         font=F_SMALL, wraplength=wraplength, justify=tk.LEFT)
+    def _hint(self, parent, text: str, wraplength: int = 520) -> ttk.Label:
+        lbl = ttk.Label(parent, text=text, style="Prac.PanelMuted.TLabel",
+                        font=F_SMALL, wraplength=wraplength, justify=tk.LEFT)
+        # Width-aware labels (4.14.3 B1): the idle settlement rewrites the
+        # wraplength from the live column allocation (compared before
+        # writing), so long text stays inside its card at any width.
+        registry = getattr(self, "_wrap_labels", None)
+        if registry is not None:
+            registry.append((lbl, parent))
+        return lbl
 
     @staticmethod
     def _sep(parent) -> ttk.Separator:
@@ -834,6 +1170,7 @@ class PracticeHomeScreen(ttk.Frame):
         self.note_lbl = ttk.Label(self, text="", style="Prac.Muted.TLabel",
                                   font=F_SMALL)
         self.note_lbl.pack(fill=tk.X, padx=14, pady=(0, 6), anchor=tk.W)
+        self._wrap_labels.append((self.note_lbl, self))
 
     @staticmethod
     def _make_chip(parent, text: str, state: str, led: Optional[str] = None) -> tk.Frame:
@@ -842,8 +1179,10 @@ class PracticeHomeScreen(ttk.Frame):
         `led=` optional explicit LED colour; default amber, green when state
         indicates ready/ok. Leading '● ' in text is stripped (LED replaces it).
         """
-        led_colors = {"ok": "#00ff88", "warn": "#ffb347", "off": MUTED}
-        led_c = led if led is not None else led_colors.get(state, "#ffb347")
+        # LED colors come from the established kit (GREEN/AMBER, 4.14.3 B1),
+        # replacing the one-off "#00ff88"/"#ffb347" literals.
+        led_colors = {"ok": phw.LED_OK, "warn": phw.LED_WARN, "off": phw.LED_OFF}
+        led_c = led if led is not None else led_colors.get(state, phw.LED_WARN)
         edge = blend(EMBER, BG, 0.6)
         display = text[1:].lstrip() if text.startswith("●") else text
 
@@ -865,8 +1204,8 @@ class PracticeHomeScreen(ttk.Frame):
 
     def _set_chip(self, chip: tk.Frame, text: str, state: str,
                   led: Optional[str] = None) -> None:
-        led_colors = {"ok": "#00ff88", "warn": "#ffb347", "off": MUTED}
-        led_c = led if led is not None else led_colors.get(state, "#ffb347")
+        led_colors = {"ok": phw.LED_OK, "warn": phw.LED_WARN, "off": phw.LED_OFF}
+        led_c = led if led is not None else led_colors.get(state, phw.LED_WARN)
         display = text[1:].lstrip() if text.startswith("●") else text
         try:
             chip._lbl.configure(text=display, foreground=MUTED_LAV)  # type: ignore[attr-defined]
@@ -888,43 +1227,35 @@ class PracticeHomeScreen(ttk.Frame):
             self.rescan_btn.pack_forget()
 
     # ----- SONG card ----------------------------------------------------------
-    def _build_song_card(self, parent) -> tk.Frame:
-        card = tk.Frame(parent, background=PANEL, highlightthickness=1,
-                        highlightbackground="#463a6b")   # v4.9.2 de-barren:
-        # brighter card edge so each section (SONG / SETUP / INPUT) reads as a
-        # distinct card against the deep bg, matching the v3 web reference (the
-        # old PURPLE_DEEP #2a1235 border was too dark to see).
+    def _build_song_card(self, parent) -> ttk.LabelFrame:
+        # Host-style LabelFrame chrome (4.14.3 B2). Title lives on the
+        # LabelFrame (Song Tester's fallback when labelframe_title is
+        # absent). Inner pad keeps B1 chrome measurement on packed children.
+        # Problem reasons live in the library document; the single-chart block
+        # is a docked footer on the card, outside the viewport.
+        card = phw.make_host_card(parent, "SONG", padding=(0, 0))
         pad = tk.Frame(card, background=PANEL)
         pad.pack(fill=tk.BOTH, expand=True, padx=16, pady=14)
 
-        self._h2(pad, "SONG").pack(anchor=tk.W, pady=(0, 8))
-
-        play_row = tk.Frame(pad, background=PANEL)
-        play_row.pack(fill=tk.X)
-        # Filled primary gradient. Owner 2026-09-17: Play Loaded Song takes
-        # tab-strip pink; the demo groove keeps the purple 3-stop. Practice is
-        # always a dark panel, so this is pink regardless of host theme.
-        # Stops are the existing purple triple's RGB deltas from its mid stop
-        # (#7A3BE8), applied to tab pink #ff6ec7 (r clamped on the left stop).
-        self.play_loaded_btn = GradientButton(
-            play_row, "▶  Play Loaded Song",
-            command=self._on_play_loaded,
-            stops=("#ff80d6", "#ff6ec7", "#f25eb8"),
-            height=36,
-            fg="#12121c",
-            tooltip="Play the selected library song at your chosen "
-                    "difficulty -- or the loaded single chart if no library "
-                    "song is selected.")
-        self.play_loaded_btn.set_enabled(False)
+        self._play_row = tk.Frame(pad, background=PANEL)
+        self._play_row.pack(fill=tk.X)
+        # Both play actions are standard Convert.TButton with native disabled
+        # maps, not custom gradients.
+        self.play_loaded_btn = phw.make_convert_button(
+            self._play_row, "▶  Play Loaded Song",
+            command=self._on_play_loaded)
+        Tooltip(self.play_loaded_btn,
+                "Play the selected library song at your chosen "
+                "difficulty -- or the loaded single chart if no library "
+                "song is selected.")
+        phw.set_ttk_enabled(self.play_loaded_btn, False)
         self.play_loaded_btn.pack(side=tk.LEFT)
-        # Demo groove keeps the pre-change purple 3-stop (owner 2026-09-17).
-        self.demo_btn = GradientButton(
-            play_row, "▶ Play the demo groove",
-            command=self._on_demo,
-            stops=("#8B4DF7", "#7A3BE8", "#6D2BD9"),
-            height=36,
-            tooltip="A built-in chart with a fully synthesized backing "
-                    "track -- plays instantly, no files needed.")
+        self.demo_btn = phw.make_convert_button(
+            self._play_row, "▶ Play the demo groove",
+            command=self._on_demo)
+        Tooltip(self.demo_btn,
+                "A built-in chart with a fully synthesized backing "
+                "track -- plays instantly, no files needed.")
         self.demo_btn.pack(side=tk.LEFT, padx=(8, 0))
         # Loaded/queued-song readout (v4.9.2): shows WHICH song "Play Loaded
         # Song" will start, so the user never launches the wrong one by mistake.
@@ -981,9 +1312,15 @@ class PracticeHomeScreen(ttk.Frame):
         list_frame = tk.Frame(pad, background=BG, highlightthickness=1,
                               highlightbackground=SEPARATOR)
         list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
-        self._list_canvas = tk.Canvas(list_frame, background=BG,
-                                      highlightthickness=0, height=340)
-        vsb = ttk.Scrollbar(list_frame, orient=tk.VERTICAL,
+        # Bounded viewport (4.14.3 B1 geometry contract): propagation off and
+        # an explicit allocation-driven height from _settle_geometry replace
+        # the fixed 340 px canvas. The document inside never sizes the page.
+        self._song_viewport = phw.ViewportFrame(list_frame, background=BG,
+                                                initial_height=340)
+        self._song_viewport.pack(fill=tk.BOTH, expand=True)
+        self._list_canvas = tk.Canvas(self._song_viewport, background=BG,
+                                      highlightthickness=0)
+        vsb = ttk.Scrollbar(self._song_viewport, orient=tk.VERTICAL,
                             style="Prac.Vertical.TScrollbar",
                             command=self._list_canvas.yview)
         self._list_canvas.configure(yscrollcommand=vsb.set)
@@ -992,20 +1329,30 @@ class PracticeHomeScreen(ttk.Frame):
         self._list_body = tk.Frame(self._list_canvas, background=BG)
         self._list_window = self._list_canvas.create_window(
             (0, 0), window=self._list_body, anchor="nw")
+        # Songs and inline pre-play rebuild inside _songs_host; problem
+        # reasons are a separate document region so a list rebuild cannot
+        # destroy them and so expanding reasons never sizes the page.
+        self._songs_host = tk.Frame(self._list_body, background=BG)
+        self._songs_host.pack(fill=tk.X)
+        self._problems_host = tk.Frame(self._list_body, background=BG)
+        self._problems_host.pack(fill=tk.X)
         self._list_body.bind("<Configure>", self._on_list_body_configure)
         self._list_canvas.bind("<Configure>", self._on_list_canvas_configure)
         # (Wheel is routed centrally by _on_page_wheel, which scrolls the list
         # when the pointer is over it and the whole page otherwise — v4.9.2.)
 
-        self.problems_btn = Chip(pad, "", accent=AMBER, on=False,
+        self.problems_btn = Chip(self._problems_host, "", accent=AMBER, on=False,
                                  command=self._on_problems_toggled)
-        self.problems_lbl = self._hint(pad, "")
+        self.problems_lbl = self._hint(self._problems_host, "")
         # packed on demand by _update_problems_drawer()
 
-        self._sep(pad).pack(fill=tk.X, pady=(8, 8))
-        self._eyebrow(pad, "OR LOAD A SINGLE CHART").pack(anchor=tk.W)
+        # Docked single-chart footer: packed on the card, not in the document.
+        self._song_footer = tk.Frame(pad, background=PANEL)
+        self._song_footer.pack(fill=tk.X)
+        self._sep(self._song_footer).pack(fill=tk.X, pady=(8, 8))
+        self._eyebrow(self._song_footer, "OR LOAD A SINGLE CHART").pack(anchor=tk.W)
 
-        single1 = tk.Frame(pad, background=PANEL)
+        single1 = tk.Frame(self._song_footer, background=PANEL)
         single1.pack(fill=tk.X, pady=(6, 0))
         self.load_rlrr_btn = OutlineButton(single1, "Choose .rlrr",
                                            accent=PURPLE_EDGE,
@@ -1016,7 +1363,7 @@ class PracticeHomeScreen(ttk.Frame):
                                     font=F_MONO)
         self.single_hint.pack(side=tk.LEFT, padx=(8, 0))
 
-        single2 = tk.Frame(pad, background=PANEL)
+        single2 = tk.Frame(self._song_footer, background=PANEL)
         single2.pack(fill=tk.X, pady=(6, 0))
         self.load_audio_btn = OutlineButton(
             single2, "Add audio (Full Mix / Stem)", accent=PURPLE_EDGE,
@@ -1027,13 +1374,13 @@ class PracticeHomeScreen(ttk.Frame):
                                           font=F_MONO)
         self.single_audio_hint.pack(side=tk.LEFT, padx=(8, 0))
 
-        single3 = tk.Frame(pad, background=PANEL)
+        single3 = tk.Frame(self._song_footer, background=PANEL)
         single3.pack(fill=tk.X, pady=(8, 0))
         self.play_single_btn = OutlineButton(
             single3, "▶ Play loaded chart", accent=MAGENTA,
             command=self._on_play_single, enabled=False)
         self.play_single_btn.pack(side=tk.LEFT)
-        self._hint(pad, "Load a single Paradiddle .rlrr (and optionally its "
+        self._hint(self._song_footer, "Load a single Paradiddle .rlrr (and optionally its "
                        "audio), then Play -- no folder needed.",
                   wraplength=300).pack(side=tk.LEFT, padx=(8, 0))
         return card
@@ -1065,15 +1412,13 @@ class PracticeHomeScreen(ttk.Frame):
                 pass
 
     # ----- SETUP card ---------------------------------------------------------
-    def _build_setup_card(self, parent) -> tk.Frame:
-        card = tk.Frame(parent, background=PANEL, highlightthickness=1,
-                        highlightbackground="#463a6b")   # v4.9.2 de-barren:
-        # brighter card edge so each section (SONG / SETUP / INPUT) reads as a
-        # distinct card against the deep bg, matching the v3 web reference (the
-        # old PURPLE_DEEP #2a1235 border was too dark to see).
+    def _build_setup_card(self, parent) -> ttk.LabelFrame:
+        # Host-style LabelFrame chrome (4.14.3 B3), matching the Song card.
+        # One switch per row; full-width fall-time / note-size scales with
+        # numeric labels and reset 1.0. No prototype-only toggles.
+        card = phw.make_host_card(parent, "SETUP", padding=(0, 0))
         pad = tk.Frame(card, background=PANEL)
         pad.pack(fill=tk.BOTH, expand=True, padx=16, pady=14)
-        self._h2(pad, "SETUP").pack(anchor=tk.W, pady=(0, 8))
 
         self.auto_kick_cb = self._switch_row(
             pad, "Auto-kick", "(auto-hits kick notes)", "autoKick")
@@ -1089,11 +1434,15 @@ class PracticeHomeScreen(ttk.Frame):
         # off) so existing configs and the renderer plumbing load unchanged.
 
         self.fall_slider, self.fall_val = self._slider_row(
-            pad, "Fall time", 0.8, 8.0, self._on_fall_time,
-            _num(self._prefs.get("fallTime", 2.6), 2.6), "{:.1f} s")
+            pad, "Fall time", phw.SETUP_FALL_RANGE[0], phw.SETUP_FALL_RANGE[1],
+            self._on_fall_time,
+            _num(self._prefs.get("fallTime", 2.6), 2.6), "{:.1f} s",
+            reset=phw.SETUP_RESET_VALUE)
         self.size_slider, self.size_val = self._slider_row(
-            pad, "Note size", 0.5, 2.0, self._on_note_size,
-            _num(self._prefs.get("noteSize", 1.0), 1.0), "{:g}×", reset=1.0)
+            pad, "Note size", phw.SETUP_NOTE_RANGE[0], phw.SETUP_NOTE_RANGE[1],
+            self._on_note_size,
+            _num(self._prefs.get("noteSize", 1.0), 1.0), "{:g}×",
+            reset=phw.SETUP_RESET_VALUE)
 
         btns = tk.Frame(pad, background=PANEL)
         btns.pack(fill=tk.X, pady=(10, 0))
@@ -1110,52 +1459,34 @@ class PracticeHomeScreen(ttk.Frame):
                        "(toggle with H).").pack(anchor=tk.W, pady=(10, 0))
         return card
 
-    def _switch_row(self, parent, label: str, hint: str, pref_key: str) -> ToggleSwitch:
-        row = tk.Frame(parent, background=PANEL)
-        row.pack(fill=tk.X, pady=3)
-        tk.Label(row, text=label, background=PANEL, foreground=TEXT,
-                font=F_BASE).pack(side=tk.LEFT)
-        if hint:
-            tk.Label(row, text=" " + hint, background=PANEL, foreground=MUTED,
-                    font=F_SMALL).pack(side=tk.LEFT)
-        sw = ToggleSwitch(row, on=bool(self._prefs.get(pref_key, False)),
-                          command=functools.partial(self._on_setup_toggle, pref_key),
-                          background=PANEL)
-        sw.pack(side=tk.RIGHT)
-        return sw
+    def _switch_row(self, parent, label: str, hint: str, pref_key: str):
+        return phw.make_setup_switch_row(
+            parent, label, hint, bool(self._prefs.get(pref_key, False)),
+            functools.partial(self._on_setup_toggle, pref_key),
+            background=PANEL)
 
     def _on_setup_toggle(self, pref_key: str, value: bool) -> None:
         self._set_pref(pref_key, value)
 
     def _slider_row(self, parent, label: str, lo: float, hi: float,
                     on_change, initial: float, fmt: str, reset=None):
-        row = tk.Frame(parent, background=PANEL)
-        row.pack(fill=tk.X, pady=(8, 0))
-        tk.Label(row, text=label, background=PANEL, foreground=TEXT,
-                font=F_BASE).pack(side=tk.LEFT)
-        val_lbl = tk.Label(row, text=fmt.format(initial), background=PANEL,
-                           foreground=CYAN, font=F_BOLD, width=7, anchor=tk.E)
-        val_lbl.pack(side=tk.RIGHT)
-        var = tk.DoubleVar(value=initial)
-        scale = ttk.Scale(row, from_=lo, to=hi, orient=tk.HORIZONTAL,
-                          variable=var, style="Prac.Horizontal.TScale",
-                          command=functools.partial(self._on_scale_move, var, val_lbl, fmt, on_change))
-        scale.pack(side=tk.LEFT, fill=tk.X, expand=True,
-                   padx=(10, 6 if reset is not None else 10))
-        # v4.9.1 (owner) — optional reset-to-default button next to the slider.
-        if reset is not None:
-            def _do_reset(_v=reset):
-                var.set(_v)
-                val_lbl.configure(text=fmt.format(_v))
-                on_change(_v)
-            OutlineButton(row, "↺", accent=PURPLE_EDGE, command=_do_reset,
-                          tooltip="Reset to default (%s)" % fmt.format(reset)
-                          ).pack(side=tk.RIGHT, padx=(0, 6))
+        scale, val_lbl, var, reset_btn = phw.make_setup_scale_row(
+            parent, label, lo, hi, initial, fmt,
+            functools.partial(self._on_scale_move, on_change),
+            reset, background=PANEL)
+        if label == "Fall time":
+            self._fall_var = var
+            self._fall_fmt = fmt
+            self._fall_reset = reset_btn
+        elif label == "Note size":
+            self._size_var = var
+            self._size_fmt = fmt
+            self._size_reset = reset_btn
         return scale, val_lbl
 
-    def _on_scale_move(self, var, val_lbl, fmt, on_change, _value) -> None:
-        v = var.get()
-        val_lbl.configure(text=fmt.format(v))
+    def _on_scale_move(self, on_change, v: float) -> None:
+        if getattr(self, "_applying_snapshot", False):
+            return
         on_change(v)
 
     def _on_fall_time(self, v: float) -> None:
@@ -1165,19 +1496,108 @@ class PracticeHomeScreen(ttk.Frame):
         self._set_pref("noteSize", round(v, 2))
 
     def _set_pref(self, key: str, value) -> None:
+        if getattr(self, "_applying_snapshot", False):
+            self._prefs[key] = value
+            return
+        # B3: embedded writes go through the router-owned field setter.
+        setter = None
+        if self.hooks:
+            setter = self.hooks.get("set_pref_field")
+        if callable(setter):
+            try:
+                setter(key, value)
+            except Exception as e:
+                self._note(f"config save failed: {e}", AMBER)
+            return
         self._prefs[key] = value
         self._cfg_set("practice_prefs", self._prefs)
 
+    def apply_prefs_snapshot(self, snap) -> None:
+        """Replace Home's preference copy from a router-published snapshot.
+
+        Copies top-level keys and nested values so Home cannot alias
+        the router's dict. Widget writes use fire=False / the applying
+        guard so a refresh cannot re-enter the setter.
+        """
+        if not isinstance(snap, dict):
+            return
+        copied = copy.deepcopy(snap)
+        self._applying_snapshot = True
+        try:
+            self._prefs = copied
+            mapping = (
+                ("auto_kick_cb", "autoKick", False),
+                ("square_cb", "square", False),
+                ("kick_line_cb", "kickLine", True),
+                ("beat_grid_cb", "beatGrid", True),
+            )
+            for attr, key, default in mapping:
+                sw = getattr(self, attr, None)
+                if sw is None:
+                    continue
+                want = bool(self._prefs.get(key, default))
+                try:
+                    if bool(sw.get()) != want:
+                        sw.set(want, fire=False)
+                except Exception:
+                    pass
+            fv = getattr(self, "_fall_var", None)
+            if fv is not None:
+                v = _num(self._prefs.get("fallTime", 2.6), 2.6)
+                try:
+                    if abs(float(fv.get()) - v) > 1e-6:
+                        fv.set(v)
+                except Exception:
+                    pass
+                lbl = getattr(self, "fall_val", None)
+                fmt = getattr(self, "_fall_fmt", "{:.1f} s")
+                if lbl is not None:
+                    try:
+                        lbl.configure(text=fmt.format(v))
+                    except tk.TclError:
+                        pass
+            sv = getattr(self, "_size_var", None)
+            if sv is not None:
+                v = _num(self._prefs.get("noteSize", 1.0), 1.0)
+                try:
+                    if abs(float(sv.get()) - v) > 1e-6:
+                        sv.set(v)
+                except Exception:
+                    pass
+                lbl = getattr(self, "size_val", None)
+                fmt = getattr(self, "_size_fmt", "{:g}×")
+                if lbl is not None:
+                    try:
+                        lbl.configure(text=fmt.format(v))
+                    except tk.TclError:
+                        pass
+        finally:
+            self._applying_snapshot = False
+        self._build_keybind_grid(self.effective_binds())
+
+    def effective_binds(self) -> list:
+        """Copied effective binds for display. Does not alias storage."""
+        getter = None
+        if self.hooks:
+            getter = self.hooks.get("get_effective_binds")
+        if callable(getter):
+            try:
+                raw = getter()
+                if isinstance(raw, list):
+                    return copy.deepcopy(raw)
+            except Exception as e:
+                self._note(f"effective binds read failed: {e}", AMBER)
+        binds = self._prefs.get("binds")
+        if isinstance(binds, list):
+            return copy.deepcopy(binds)
+        return []
+
     # ----- INPUT card ----------------------------------------------------------
-    def _build_input_card(self, parent) -> tk.Frame:
-        card = tk.Frame(parent, background=PANEL, highlightthickness=1,
-                        highlightbackground="#463a6b")   # v4.9.2 de-barren:
-        # brighter card edge so each section (SONG / SETUP / INPUT) reads as a
-        # distinct card against the deep bg, matching the v3 web reference (the
-        # old PURPLE_DEEP #2a1235 border was too dark to see).
+    def _build_input_card(self, parent) -> ttk.LabelFrame:
+        # Host-style LabelFrame chrome (4.14.3 B4), matching Song and Setup.
+        card = phw.make_host_card(parent, "INPUT", padding=(0, 0))
         pad = tk.Frame(card, background=PANEL)
         pad.pack(fill=tk.BOTH, expand=True, padx=16, pady=14)
-        self._h2(pad, "INPUT").pack(anchor=tk.W, pady=(0, 8))
 
         row = tk.Frame(pad, background=PANEL)
         row.pack(fill=tk.X)
@@ -1197,72 +1617,270 @@ class PracticeHomeScreen(ttk.Frame):
         self._hint(row, "Keyboard works out of the box · Shift = accent",
                   wraplength=260).pack(side=tk.LEFT, padx=(10, 0))
 
-        self._hint(pad, "Each lane and the key(s) bound to it -- click any "
-                       "chip to rebind in Settings.").pack(anchor=tk.W,
-                                                            pady=(8, 8))
+        self._hint(pad, "Click a key badge to replace that lane's keys; + adds "
+                       "a key; +ghost adds a velocity-32 key.").pack(anchor=tk.W,
+                                                                  pady=(8, 8))
 
-        self._kb_grid = tk.Frame(pad, background=PANEL)
-        self._kb_grid.pack(fill=tk.X)
-        self._build_keybind_grid(list(DEFAULT_KEYBINDS))
+        # Bounded lane viewport (4.14.3 B4): propagation off, fixed
+        # minimum requested height, single rows in STANDARD_ORDER.
+        list_frame = tk.Frame(pad, background=BG, highlightthickness=1,
+                              highlightbackground=SEPARATOR)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+        self._kb_viewport = phw.ViewportFrame(list_frame, background=BG,
+                                              initial_height=phw.MIN_VIEWPORT_HEIGHT)
+        self._kb_viewport.pack(fill=tk.BOTH, expand=True)
+        self._kb_canvas = tk.Canvas(self._kb_viewport, background=BG,
+                                    highlightthickness=0)
+        vsb = ttk.Scrollbar(self._kb_viewport, orient=tk.VERTICAL,
+                            style="Prac.Vertical.TScrollbar",
+                            command=self._kb_canvas.yview)
+        self._kb_canvas.configure(yscrollcommand=vsb.set)
+        self._kb_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._kb_body = tk.Frame(self._kb_canvas, background=BG)
+        self._kb_window = self._kb_canvas.create_window(
+            (0, 0), window=self._kb_body, anchor="nw")
+        self._kb_body.bind("<Configure>", self._on_kb_body_configure)
+        self._kb_canvas.bind("<Configure>", self._on_kb_canvas_configure)
+        self._kb_rows: Dict[str, dict] = {}
+        self._build_keybind_grid(self.effective_binds())
         return card
 
-    def _build_keybind_grid(self, binds: List[dict]) -> None:
-        for child in self._kb_grid.winfo_children():
-            child.destroy()
-        layout = default_layout()
-        for i, lane_id in enumerate(STANDARD_ORDER):
-            chip = tk.Frame(self._kb_grid, background=ROW_ALT,
-                            highlightthickness=1, highlightbackground=SEPARATOR)
-            chip.grid(row=i // 2, column=i % 2, sticky="ew", padx=3, pady=3)
-            self._kb_grid.columnconfigure(0, weight=1)
-            self._kb_grid.columnconfigure(1, weight=1)
-            inner = tk.Frame(chip, background=ROW_ALT)
-            inner.pack(fill=tk.X, padx=9, pady=6)
-            # The lane-colour DOT (a childless 12x12 tk.Frame) refused to render
-            # on the owner's box even with pack_propagate(False) — invisible
-            # there while fine here, twice reported. A frame can collapse; text
-            # cannot, so the lane NAME carries the colour instead (matches the
-            # in-game legend + MIDI editor). Guaranteed-visible, owner-directed.
-            tk.Label(inner, text=LANE_DEFS[lane_id]["label"], background=ROW_ALT,
-                    foreground=_legible_lane_color(
-                        lane_color(layout, lane_id, "forge")),
-                    font=F_SMALL).pack(side=tk.LEFT)
-            # Per-lane colour on the KEY BADGE (owner-directed 2026-07-23): the
-            # dot + colour-name kept not rendering on the owner's box, so the
-            # assigned-key badge carries the lane colour instead — cyan Hi-Hat,
-            # red Snare, orange Crash, etc. Legibility floor keeps dark lanes
-            # (Tom 1 navy / Tom 3 purple) readable on the DARKER badge fill.
-            lane_col = _legible_lane_color(lane_color(layout, lane_id, "forge"))
-            for b in binds:
-                if b.get("lane") != lane_id:
-                    continue
-                cap = tk.Label(inner, text=_key_label(b.get("code", "")),
-                              background=DARKER, foreground=lane_col, font=F_MONO,
-                              padx=5, pady=1, highlightthickness=1,
-                              highlightbackground=lane_col)
-                cap.pack(side=tk.RIGHT, padx=2)
-                if b.get("vel") is not None:
-                    Tooltip(cap, f"fires at velocity {b['vel']}")
-            OutlineButton(inner, "+ghost", accent=MUTED,
-                         command=functools.partial(self._on_rebind, lane_id),
-                         tooltip="Add a ghost-note key (fires at velocity 32)"
-                         ).pack(side=tk.RIGHT, padx=(4, 2))
-            OutlineButton(inner, "+", accent=PURPLE_EDGE,
-                         command=functools.partial(self._on_rebind, lane_id),
-                         tooltip="Add another key for this lane (Settings)"
-                         ).pack(side=tk.RIGHT, padx=2)
+    def _on_kb_body_configure(self, _event=None) -> None:
+        try:
+            self._kb_canvas.configure(scrollregion=self._kb_canvas.bbox("all"))
+        except tk.TclError:
+            pass
 
-    def _on_rebind(self, _lane_id: str) -> None:
+    def _on_kb_canvas_configure(self, event) -> None:
+        try:
+            self._kb_canvas.itemconfigure(self._kb_window, width=event.width)
+        except tk.TclError:
+            pass
+
+    def _build_keybind_grid(self, binds: List[dict]) -> None:
+        body = getattr(self, "_kb_body", None)
+        if body is None:
+            return
+        layout = default_layout()
+        if not self._kb_rows:
+            for i, lane_id in enumerate(STANDARD_ORDER):
+                row = tk.Frame(body, background=ROW_ALT,
+                               highlightthickness=1, highlightbackground=SEPARATOR)
+                row.pack(fill=tk.X, padx=3, pady=2)
+                inner = tk.Frame(row, background=ROW_ALT)
+                inner.pack(fill=tk.X, padx=9, pady=5)
+                # The lane-colour DOT (a childless 12x12 tk.Frame) refused to render
+                # on the owner's box even with pack_propagate(False) — invisible
+                # there while fine here, twice reported. A frame can collapse; text
+                # cannot, so the lane NAME carries the colour instead (matches the
+                # in-game legend + MIDI editor). Guaranteed-visible, owner-directed.
+                lane_col = _legible_lane_color(
+                    lane_color(layout, lane_id, "forge"))
+                tk.Label(inner, text=LANE_DEFS[lane_id]["label"],
+                         background=ROW_ALT, foreground=lane_col,
+                         font=F_SMALL).pack(side=tk.LEFT)
+
+                # Actions on the right: visible focus + keyboard activatable.
+                # "+" appends a normal key, "+ghost" a velocity-32 key (B6a).
+                # Return/space run through the consuming adapter, so the key
+                # that arms a capture can never become the captured key.
+                plus_cmd = functools.partial(self._on_rebind, lane_id, "append")
+                plus_btn = OutlineButton(inner, "+", accent=PURPLE_EDGE,
+                                         command=plus_cmd,
+                                         tooltip="Add another key for this lane (Settings)")
+                plus_btn.configure(takefocus=True)
+                plus_btn.bind("<Return>", functools.partial(self._consume_activation, plus_cmd))
+                plus_btn.bind("<space>", functools.partial(self._consume_activation, plus_cmd))
+                plus_btn.bind("<FocusIn>", lambda _e, b=plus_btn: b.configure(highlightbackground=TEXT_BRIGHT, highlightcolor=TEXT_BRIGHT))
+                plus_btn.bind("<FocusOut>", lambda _e, b=plus_btn: b._restyle())
+                plus_btn.pack(side=tk.RIGHT, padx=(2, 0))
+
+                ghost_cmd = functools.partial(self._on_rebind, lane_id, "ghost")
+                ghost_btn = OutlineButton(inner, "+ghost", accent=MUTED,
+                                          command=ghost_cmd,
+                                          tooltip="Add a ghost-note key (fires at velocity 32)")
+                ghost_btn.configure(takefocus=True)
+                ghost_btn.bind("<Return>", functools.partial(self._consume_activation, ghost_cmd))
+                ghost_btn.bind("<space>", functools.partial(self._consume_activation, ghost_cmd))
+                ghost_btn.bind("<FocusIn>", lambda _e, b=ghost_btn: b.configure(highlightbackground=TEXT_BRIGHT, highlightcolor=TEXT_BRIGHT))
+                ghost_btn.bind("<FocusOut>", lambda _e, b=ghost_btn: b._restyle())
+                ghost_btn.pack(side=tk.RIGHT, padx=(4, 2))
+
+                badge_box = tk.Frame(inner, background=ROW_ALT)
+                badge_box.pack(side=tk.RIGHT, padx=(0, 4))
+                self._kb_rows[lane_id] = {
+                    "row": row, "inner": inner, "badge_box": badge_box,
+                    "plus": plus_btn, "ghost": ghost_btn,
+                    "badges_summary": None,
+                }
+
+        # Update badges in place per row (only affected rows rebuilt)
+        for lane_id in STANDARD_ORDER:
+            entry = self._kb_rows.get(lane_id)
+            if not entry:
+                continue
+            lane_binds = [b for b in binds if isinstance(b, dict) and b.get("lane") == lane_id]
+            summary = tuple(
+                (b.get("code", ""), _key_label(b.get("code", "")), b.get("vel"))
+                for b in lane_binds
+            )
+            if entry.get("badges_summary") == summary:
+                continue
+            entry["badges_summary"] = summary
+            box = entry["badge_box"]
+            for child in box.winfo_children():
+                child.destroy()
+            lane_col = _legible_lane_color(
+                lane_color(layout, lane_id, "forge"))
+            if not lane_binds:
+                unbound = tk.Label(box, text="unbound",
+                                   background=DARKER, foreground=MUTED, font=F_MONO,
+                                   padx=5, pady=1, highlightthickness=1,
+                                   highlightbackground=SEPARATOR,
+                                   highlightcolor=SEPARATOR)
+                unbound.pack(side=tk.LEFT, padx=2)
+                self._bind_capture_target(unbound, lane_id, SEPARATOR)
+            else:
+                for b in lane_binds:
+                    cap = tk.Label(box, text=_key_label(b.get("code", "")),
+                                  background=DARKER, foreground=lane_col, font=F_MONO,
+                                  padx=5, pady=1, highlightthickness=1,
+                                  highlightbackground=lane_col,
+                                  highlightcolor=lane_col)
+                    cap.pack(side=tk.LEFT, padx=2)
+                    self._bind_capture_target(cap, lane_id, lane_col)
+                    if b.get("vel") is not None:
+                        Tooltip(cap, f"fires at velocity {b['vel']}")
+
+        try:
+            body.update_idletasks()
+            self._on_kb_body_configure()
+        except Exception:
+            pass
+        phw.tag_subtree(self._kb_viewport)
+
+    def _on_rebind(self, lane_id: str, intent: str = "replace") -> None:
+        """A key badge or the unbound indicator ("replace"), "+" ("append") or
+        "+ghost" ("ghost"). With the optional on_capture_binding callback
+        installed, request that capture; otherwise (standalone Home) open
+        Settings on its keybinds as before. A callback that raises is reported
+        by _emit and does NOT also trigger the fallback."""
+        if callable(getattr(self, "on_capture_binding", None)):
+            self._emit("on_capture_binding", lane_id, intent)
+            return
         self._emit("on_open_settings", "keybinds")
 
-    def _on_enable_midi(self) -> None:
-        ok, ports = self._hook_call("midi_list_ports")
-        if not ok:
-            self._note("MIDI not wired yet (keyboard still works).", MUTED)
+    @staticmethod
+    def _consume_activation(cmd, _event=None) -> str:
+        """Run an activation command and consume the click/Return/space that
+        triggered it, so the key that arms a capture can never become the
+        captured key or reach a toplevel shortcut."""
+        if callable(cmd):
+            cmd()
+        return "break"
+
+    @staticmethod
+    def _set_focus_ring(widget, color, _event=None) -> None:
+        try:
+            widget.configure(highlightbackground=color, highlightcolor=color)
+        except tk.TclError:
+            pass
+
+    def _bind_capture_target(self, widget, lane_id: str, ring: str) -> None:
+        """Make a key badge or the unbound indicator a keyboard-reachable
+        whole-lane "replace" capture target: click, Return and space activate
+        it; the focus ring brightens on focus and returns to `ring` on blur."""
+        activate = functools.partial(
+            self._consume_activation,
+            functools.partial(self._on_rebind, lane_id, "replace"))
+        widget.configure(takefocus=True)
+        for sequence in ("<Button-1>", "<Return>", "<space>"):
+            widget.bind(sequence, activate, add="+")
+        widget.bind("<FocusIn>", functools.partial(
+            self._set_focus_ring, widget, TEXT_BRIGHT), add="+")
+        widget.bind("<FocusOut>", functools.partial(
+            self._set_focus_ring, widget, ring), add="+")
+
+    def cancel_midi_refresh(self) -> None:
+        """Drop the pending snapshot. Repeated calls and Tcl teardown are safe."""
+        self._midi_refresh_generation = int(self._midi_refresh_generation) + 1
+        job = self._midi_refresh_job
+        widget = self._midi_refresh_widget
+        self._midi_refresh_job = None
+        self._midi_refresh_widget = None
+        self._midi_refresh_notify = False
+        if job is not None:
+            try:
+                # The idle callback is registered on the toplevel that scheduled
+                # it. Cancelling on Home deletes the Tcl command but leaves the
+                # name in the toplevel's _tclCommands, and a later root.destroy
+                # then raises TclError.
+                scheduler = widget if widget is not None else self.winfo_toplevel()
+                scheduler.after_cancel(job)
+            except tk.TclError:
+                pass
+
+    def request_midi_refresh(self, notify=False) -> None:
+        """Coalesce onto one idle callback. notify is OR'd until that callback runs.
+
+        The callback is scheduled on the toplevel, not on this widget, so a hook
+        that destroys Home can still return and the lifetime check can run.
+        """
+        if self._destroying:
             return
-        text = f"MIDI: {len(ports) if ports else 0} device(s)"
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        self._midi_refresh_notify = bool(self._midi_refresh_notify) or bool(notify)
+        if self._midi_refresh_job is None:
+            top = self.winfo_toplevel()
+            self._midi_refresh_widget = top
+            self._midi_refresh_job = top.after_idle(
+                self._refresh_midi_snapshot, self._midi_refresh_generation)
+
+    def _refresh_midi_snapshot(self, generation) -> None:
+        if generation != self._midi_refresh_generation or self._destroying:
+            return
+        try:
+            alive = bool(self.winfo_exists())
+        except tk.TclError:
+            return
+        if not alive:
+            return
+        self._midi_refresh_job = None
+        self._midi_refresh_widget = None
+        notify = bool(self._midi_refresh_notify)
+        self._midi_refresh_notify = False
+        hook_present = "midi_list_ports" in self.hooks
+        ok, ports = self._hook_call("midi_list_ports")
+        if generation != self._midi_refresh_generation or self._destroying:
+            return
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        if not hook_present:
+            text, state = "MIDI: none", "warn"
+            if notify:
+                self._note("MIDI not wired yet (keyboard still works).", MUTED)
+        elif not ok:
+            text, state = "MIDI: none", "warn"
+        elif isinstance(ports, (list, tuple)):
+            text = f"MIDI: {len(ports)} device(s)"
+            state = "ok" if ports else "warn"
+        else:
+            text, state = "MIDI: none", "warn"
+            if notify:
+                self._note("MIDI device list unavailable.", MUTED)
         for chip in (self.midi_chip, self.midi_chip_home):
-            self._set_chip(chip, text, "ok" if ports else "warn")
+            self._set_chip(chip, text, state)
+
+    def _on_enable_midi(self) -> None:
+        self.request_midi_refresh(notify=True)
 
     # =======================================================================
     # Scanning (off-thread; mirrors parakit_spectral_tab.py's
@@ -1487,18 +2105,19 @@ class PracticeHomeScreen(ttk.Frame):
         return deduped
 
     def _rebuild_list(self) -> None:
-        for child in list(self._list_body.winfo_children()):
+        host = getattr(self, "_songs_host", self._list_body)
+        for child in list(host.winfo_children()):
             child.destroy()
         total = len({e["key"] for e in self._entries})
         self.count_lbl.configure(text=f"{total} song{'s' if total != 1 else ''}")
         rows = self._filtered_sorted()
         if not self._entries:
-            ttk.Label(self._list_body, text=_EMPTY_LIB,
+            ttk.Label(host, text=_EMPTY_LIB,
                      style="Prac.PanelMuted.TLabel", font=F_SMALL,
                      wraplength=600, justify=tk.LEFT).pack(
                 fill=tk.X, padx=12, pady=12, anchor=tk.W)
         elif not rows:
-            ttk.Label(self._list_body, text="No songs match the search.",
+            ttk.Label(host, text="No songs match the search.",
                      style="Prac.PanelMuted.TLabel", font=F_SMALL).pack(
                 fill=tk.X, padx=12, pady=12, anchor=tk.W)
         else:
@@ -1510,13 +2129,16 @@ class PracticeHomeScreen(ttk.Frame):
                     pp.pack(fill=tk.X, pady=(0, 6), padx=(0, 0))
         self._list_body.update_idletasks()
         self._on_list_body_configure()
+        # Rebuilt rows/panels carry Home's wheel bindtag too (4.14.3 B1).
+        phw.tag_subtree(self._list_body)
 
     def _make_row(self, e: dict) -> tk.Frame:
         selected = e["key"] == self._selected_key
         # Neutral list field (BG) like the page + list canvas; selection reads as
         # a purple EDGE, not a purple fill wash (was blend(DARKER, PURPLE, 0.22)).
         row_bg = BG
-        row = tk.Frame(self._list_body, background=row_bg,
+        host = getattr(self, "_songs_host", self._list_body)
+        row = tk.Frame(host, background=row_bg,
                        highlightthickness=1,
                        highlightbackground=(PURPLE_EDGE if selected else SEPARATOR))
         inner = tk.Frame(row, background=row_bg)
@@ -1616,7 +2238,8 @@ class PracticeHomeScreen(ttk.Frame):
     def _build_preplay(self, entry: dict) -> tk.Frame:
         key = entry["key"]
         state = self._pp_state.setdefault(key, self._default_pp_state(entry))
-        panel = tk.Frame(self._list_body, background=PANEL,
+        host = getattr(self, "_songs_host", self._list_body)
+        panel = tk.Frame(host, background=PANEL,
                          highlightthickness=1, highlightbackground=PURPLE_EDGE)
         pad = tk.Frame(panel, background=PANEL)
         pad.pack(fill=tk.BOTH, expand=True, padx=14, pady=10)
@@ -2071,10 +2694,7 @@ class PracticeHomeScreen(ttk.Frame):
         except tk.TclError:
             pass
         selected = self._selected_key is not None
-        try:
-            self.play_loaded_btn.set_enabled(selected or single_ready)
-        except tk.TclError:
-            pass
+        phw.set_ttk_enabled(self.play_loaded_btn, selected or single_ready)
         self._update_loaded_readout(selected, single_ready)
 
     def _update_loaded_readout(self, selected: bool, single_ready: bool) -> None:
@@ -2322,6 +2942,10 @@ class PracticeHomeScreen(ttk.Frame):
         pending after() timers. Safe to call at any time, including before
         any scan has run (mirrors parakit_spectral_tab.py's external_stop)."""
         try:
+            self.cancel_midi_refresh()
+        except Exception:
+            pass
+        try:
             self._cancel_scan()
         except Exception:
             pass
@@ -2333,30 +2957,17 @@ class PracticeHomeScreen(ttk.Frame):
             self._filter_job = None
 
     def _unbind_page_wheel(self) -> None:
-        """Remove ONLY our bind_all wheel handlers from the 'all' bindtag (never
-        unbind_all — that would kill the host app's own global wheel handler).
-        Surgical funcid removal, mirroring the key-bind cleanup."""
-        w = getattr(self, "_page_canvas", None)
-        if w is None:
-            return
-        for seq, fid in getattr(self, "_page_wheel_binds", ()):
-            try:
-                # Remove ONLY this funcid's line from the 'all' bindtag script so
-                # the handler stops firing and is no longer referenced there. Do
-                # NOT deletecommand(fid): the command was registered against this
-                # canvas, so Tk deletes it itself in super().destroy() right
-                # after — a manual delete would double-delete and raise
-                # "can't delete Tcl command" (breaker regression fix).
-                script = w.bind_all(seq) or ""
-                marker = "[" + fid
-                keep = [ln for ln in script.split("\n")
-                        if (marker + " ") not in ln and (marker + "]") not in ln]
-                w.tk.call("bind", "all", seq, "\n".join(keep))
-            except Exception:
-                pass
-        self._page_wheel_binds = []
+        """Remove Home's private wheel-bindtag bindings (4.14.3 B1). Never
+        unbind_all: the host app's global wheel router on 'all' must survive.
+        The tag bindings are class-level, so destroying the widgets alone
+        would leave them registered against a dead screen."""
+        try:
+            phw.remove_wheel_scope(self)
+        except Exception:
+            pass
 
     def destroy(self) -> None:
+        self._destroying = True
         try:
             self.external_stop()
         except Exception:
@@ -2367,6 +2978,19 @@ class PracticeHomeScreen(ttk.Frame):
             pass
         try:
             self._unbind_page_wheel()
+        except Exception:
+            pass
+        try:
+            st = getattr(self, "_settlement", None)
+            if st is not None:
+                st.cancel()
+        except Exception:
+            pass
+        try:
+            cd = getattr(self, "_cooldown_job", None)
+            if cd is not None:
+                self.after_cancel(cd)
+                self._cooldown_job = None
         except Exception:
             pass
         super().destroy()

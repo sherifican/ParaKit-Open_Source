@@ -1,10 +1,10 @@
 {
-  "version": "4.14.2",
+  "version": "4.14.3",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Entries marked \"doc\": true are prose -- a hash mismatch on one is skipped by the updater instead of aborting the whole update; everything else stays fatal. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "12d11c82db4b775568896ab558b6436c1c8fd6dc0e03b5822083a70e31ba45fb",
+      "sha256": "7e3aa20d6f6d0a3a5f65483197c201b30efc6600046812794cca0cfe0dac6ce4",
       "doc": true
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "80e0637078555c536933dea5b1f6fcbe5a35966c69fcdf6a13cce17ba7e3dfc0",
+      "sha256": "765e8f8e2ec110c83500f1b1317d8e4aeac574cbf019238c32c187fb3cf315e5",
       "doc": true
     },
     {
@@ -4583,7 +4583,11 @@
     },
     {
       "path": "parakit_practice_home.py",
-      "sha256": "454837378868288df356909fdacc284f1849fee5b189684226730031b248ec80"
+      "sha256": "1af66fdeb98c505832360250bec6634463b4702abbd0c7bbbb082a28742376f1"
+    },
+    {
+      "path": "parakit_practice_home_widgets.py",
+      "sha256": "3c35e1846a5c57bf92899d75fc056b9edb4546307907879a0749e3b8aae4baf1"
     },
     {
       "path": "parakit_practice_sprites.py",
@@ -4591,7 +4595,7 @@
     },
     {
       "path": "parakit_practice_tab.py",
-      "sha256": "57c594fea83baba59bf1cbc23340c2e41cf6aebaf541b26c4a00bff676e8f7b0"
+      "sha256": "07f926b7a6e4099bfe500d15d65bfecd841ec2aee1b1ef55ec3cd508395a50e4"
     },
     {
       "path": "parakit_practice_widgets.py",
@@ -4607,7 +4611,7 @@
     },
     {
       "path": "parakit_preview_tab.py",
-      "sha256": "d0a864202c8ad85fa8b05e7ac4e7f0dfd89508d9e0568ec41da0ef58203e0dc0"
+      "sha256": "d5a0db124c9181c53c586a746f3490c74afbcd6eb045b903e800ff0815e0e23b"
     },
     {
       "path": "parakit_repo_banner.svg",

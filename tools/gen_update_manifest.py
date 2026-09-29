@@ -64,6 +64,10 @@ ROOT_FILES = [
     "parakit_practice_tab.py", "parakit_practice_home.py",
     "parakit_practice_engine.py", "parakit_practice_widgets.py",
     "parakit_practice_sprites.py",
+    # Practice Home redesign (4.14.3, batch B1): Home-only shell/token sidecar
+    # imported by parakit_practice_home.py -- without this entry the updater
+    # never delivers it and Home fails to import on updated installs.
+    "parakit_practice_home_widgets.py",
     # Shared drum-synth voices (Preview + Practice synth toggle, v4.9.x):
     "parakit_synth_voices.py",
     # Timing-drift analysis against the drum stem (v4.12.0). Imported lazily,

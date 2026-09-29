@@ -40,6 +40,7 @@ PUBLIC API the v4 wiring uses:
 """
 from __future__ import annotations
 
+import copy
 import functools
 import math
 import os
@@ -110,6 +111,7 @@ from parakit_practice_engine import (
     HIGHWAY_BG,
     KB_ACCENT_VEL,
     KB_BASE_VEL,
+    KB_GHOST_VEL,
     KEYBIND_PRESETS,
     LANE_DEFS,
     MAX_LANES,
@@ -185,33 +187,58 @@ KB_REPEAT_GAP_MS = 45
 
 
 def _sanitize_binds(raw, preset=None):
-    """Coerce a persisted ``binds`` value to a valid ``[{code:str, lane:str}]``
-    list, or fall back to the active keyboard preset's binds (v5 parity fix,
-    2026-07-21) and finally ``DEFAULT_KEYBINDS`` (breaker fix P1, 2026-07-21).
+    """Coerce a persisted ``binds`` value to a valid
+    ``[{code:str, lane:str[, vel:int]}]`` list, or fall back to the active
+    keyboard preset's binds (v5 parity fix, 2026-07-21) and finally
+    ``DEFAULT_KEYBINDS`` (breaker fix P1, 2026-07-21).
     A corrupt persisted pref -- a bare string, a list of strings, or dicts
     missing ``lane``/``code`` -- used to reach ``b["lane"]`` at the bind-chip /
     Kit-Studio / capture / view-build sites and crash the whole Practice tab
     build (Settings is built eagerly in ``PracticeTab.__init__``). Contract:
     degrade, never crash. Every reader routes ``binds`` through here.
 
+    Each surviving entry is a FRESH dict holding ``code``, ``lane`` and, only
+    when the stored value is a real int in 1..127 (``type(v) is int``),
+    ``vel`` -- a "+ghost" key stores 32. Any other ``vel`` (a bool, a float
+    even when integral, a numeric string, NaN/inf, a container, None, an
+    out-of-range int) is OMITTED, never clamped, and the binding itself is
+    kept. Other per-binding fields are discarded. Codes and lane names are not
+    validated, so Aux/unrendered lanes survive.
+
+    Duplicate codes collapse to the LAST structurally valid occurrence, with
+    that occurrence's own ``vel`` or lack of one, in last-occurrence order; a
+    malformed later entry never erases an earlier valid one.
+
     ``preset``: the ``kbPreset`` pref id. Mirrors the HTML's
     ``prefs.binds || KEYBIND_PRESETS[prefs.kbPreset].binds`` (:5525) — before
     this, Sticking-Focus/Lefty silently behaved as Standard whenever no custom
-    binds were stored, i.e. "the keys don't do what the preset says"."""
+    binds were stored, i.e. "the keys don't do what the preset says". Both
+    fallbacks return a fresh list of fresh dicts, so a caller that edits the
+    result can never edit the preset tables."""
     out = []
     if isinstance(raw, list):
-        for b in raw:
+        seen = set()
+        for b in reversed(raw):
             if not isinstance(b, dict):
                 continue
             code, lane = b.get("code"), b.get("lane")
-            if isinstance(code, str) and isinstance(lane, str):
-                out.append({"code": code, "lane": lane})
+            if not (isinstance(code, str) and isinstance(lane, str)):
+                continue
+            if code in seen:
+                continue
+            seen.add(code)
+            entry = {"code": code, "lane": lane}
+            vel = b.get("vel")
+            if type(vel) is int and 1 <= vel <= 127:
+                entry["vel"] = vel
+            out.append(entry)
+        out.reverse()
     if out:
         return out
     p = KEYBIND_PRESETS.get(str(preset or ""))
     if p and p.get("binds"):
         return [dict(b) for b in p["binds"]]
-    return list(DEFAULT_KEYBINDS)
+    return [dict(b) for b in DEFAULT_KEYBINDS]
 
 
 def _finite_or(v, default):
@@ -3555,24 +3582,37 @@ class _KeyboardTestPopup(tk.Toplevel):
 
 class SettingsOverlay(_Overlay):
     def __init__(self, parent, *, get_pref, set_pref, note, hook_call,
-                 on_binds_changed) -> None:
+                 on_binds_changed, on_visibility_changed=None) -> None:
         super().__init__(parent, "Settings", width=620, height=560)
         self._get = get_pref
         self._set = set_pref
         self._note = note
         self._hook_call = hook_call
         self._on_binds_changed = on_binds_changed
+        # Optional (B6a): told True after open() and False after close(), so the
+        # router can keep Home's '/' search shortcut off while Settings covers
+        # it. Standalone callers may omit it.
+        self._on_visibility_changed = on_visibility_changed
         self._active_tab = str(self._get("_settings_tab", "input") or "input")
         self._listening_lane: Optional[str] = None
         self._listen_id = None
+        # What an armed capture does with the key: "replace" the lane's keys,
+        # "append" another key, or "ghost" (append a velocity-32 key). Reset to
+        # "replace" whenever a capture ends, however it ends.
+        self._capture_intent = "replace"
         self._kb_test_popup = None  # _KeyboardTestPopup instance or None
         self._build()
         # Cancel any in-progress key-rebind LISTEN on teardown (breaker fix r9,
-        # 2026-07-21): _start_listen binds <KeyPress> on the TOPLEVEL, which
-        # outlives this overlay — without this, after tab.destroy() every
-        # keystroke fired _capture_key on the destroyed overlay (TclError storm).
-        self.bind("<Destroy>", lambda _e: (self._cancel_listen(),
-                                           self._close_keyboard_test()), add="+")
+        # 2026-07-21). The listener used to sit on the TOPLEVEL, which outlives
+        # this overlay, so after tab.destroy() every keystroke fired
+        # _capture_key on the destroyed overlay (TclError storm). B6a moved the
+        # listener onto this overlay; teardown still drops it (and its Tcl
+        # command) explicitly and closes the tester. The handler acts only on
+        # the overlay's OWN <Destroy>.
+        self.bind("<Destroy>", self._on_overlay_destroy, add="+")
+        # B6a focus policy: focus leaving the overlay frame -- to a Settings
+        # control or anywhere else -- cancels an armed capture without saving.
+        self.bind("<FocusOut>", self._on_overlay_focus_out, add="+")
 
     def _open_keyboard_test(self) -> None:
         """Open (or re-open) the Keyboard / MIDI self-test popup."""
@@ -3608,13 +3648,52 @@ class SettingsOverlay(_Overlay):
 
     def _cancel_listen(self) -> None:
         fid = getattr(self, "_listen_id", None)
-        if fid is not None:
+        try:
+            if fid is not None:
+                try:
+                    self.unbind("<KeyPress>", fid)
+                except Exception:
+                    # Teardown: the window may already be gone. Still drop the
+                    # Tcl command so no stale capture callback survives.
+                    try:
+                        self.deletecommand(fid)
+                    except Exception:
+                        pass
+        finally:
+            self._listen_id = None
+            self._listening_lane = None
+            self._capture_intent = "replace"
+
+    def _on_overlay_focus_out(self, event=None):
+        # Focus policy (B6a): an armed capture ends, without saving, the moment
+        # focus leaves the overlay frame -- to a Settings control (the offset
+        # spinbox, a combobox) or out of Settings entirely. The user clicks a
+        # lane chip again to re-arm; nothing here ever starts or re-arms one.
+        if event is None or getattr(event, "widget", None) is not self:
+            return
+        if self._listening_lane is None and self._listen_id is None:
+            return
+        self._cancel_listen()
+        try:
+            if self.winfo_exists():
+                self._rebuild_bind_chips()
+        except Exception:
+            pass
+        self._note("Key capture canceled.")
+
+    def _on_overlay_destroy(self, event=None) -> None:
+        if event is not None and getattr(event, "widget", None) is not self:
+            return
+        self._cancel_listen()
+        self._close_keyboard_test()
+
+    def _notify_visibility(self, visible: bool) -> None:
+        cb = getattr(self, "_on_visibility_changed", None)
+        if callable(cb):
             try:
-                self.winfo_toplevel().unbind("<KeyPress>", fid)
+                cb(bool(visible))
             except Exception:
                 pass
-            self._listen_id = None
-        self._listening_lane = None
 
     def close(self) -> None:
         # Closing the overlay mid-listen must cancel it (breaker fix r9): else the
@@ -3634,11 +3713,15 @@ class SettingsOverlay(_Overlay):
             self.winfo_toplevel().focus_set()
         except Exception:
             pass
+        self._notify_visibility(False)
 
     def open(self, tab: Optional[str] = None) -> None:
+        # Opening never carries an armed capture across.
+        self._cancel_listen()
         super().open()
         if tab:
             self._show_tab(tab)
+        self._notify_visibility(True)
 
     def _build(self) -> None:
         self.tabbar = tk.Frame(self.body, background=PANEL)
@@ -3659,6 +3742,8 @@ class SettingsOverlay(_Overlay):
         # Keybinds live under the Input tab; callers (Kit Studio "Edit binds…",
         # Home rebind "+") ask for "keybinds" -- alias it instead of KeyError-ing
         # on the tab dispatch (breaker fix P2, 2026-07-21).
+        # A tab switch destroys the chips an armed capture belongs to (B6a).
+        self._cancel_listen()
         if key in ("keybinds", "keys", "binds"):
             key = "input"
         elif key not in ("input", "audio", "display"):
@@ -3693,6 +3778,7 @@ class SettingsOverlay(_Overlay):
             # chips + toast). Before this, the combo only stored the id string
             # and the actual key map never changed — Sticking-Focus/Lefty were
             # silent no-ops ("some keys don't work").
+            self._cancel_listen()
             pid = ["standard", "sticking", "lefty"][combo.current()]
             self._set("kbPreset", pid)
             binds = [dict(b) for b in KEYBIND_PRESETS[pid]["binds"]]
@@ -3747,43 +3833,76 @@ class SettingsOverlay(_Overlay):
             cap.pack(side=tk.RIGHT, padx=6)
             cap.bind("<Button-1>", functools.partial(self._start_listen, lid))
 
-    def _start_listen(self, lid, _e=None):
+    def _start_listen(self, lid, _e=None, *, intent="replace"):
+        # One capture at a time: re-arming (another chip, or Home's badge / + /
+        # +ghost) first tears down whatever capture is already armed.
+        self._cancel_listen()
+        if intent not in ("replace", "append", "ghost"):
+            self._note("Cannot start key capture.")
+            return
         self._listening_lane = lid
+        self._capture_intent = intent
         self._rebuild_bind_chips()
-        self._note(f"Listening for {LANE_DEFS[lid]['label']} key… (Esc cancels)")
-        top = self.winfo_toplevel()
-        self._listen_id = top.bind("<KeyPress>", self._capture_key, add="+")
+        label = LANE_DEFS[lid]["label"]
+        if intent == "append":
+            self._note(f"Listening for {label} key… — add key "
+                       "(Esc or moving focus away cancels)")
+        elif intent == "ghost":
+            self._note(f"Listening for {label} key… — ghost velocity 32 "
+                       "(Esc or moving focus away cancels)")
+        else:
+            self._note(f"Listening for {label} key… "
+                       "(Esc or moving focus away cancels)")
+        # B6a: the listener lives on THIS overlay (not the toplevel) and the
+        # overlay takes focus, so the capture runs before -- and, by returning
+        # "break", instead of -- the toplevel's Play drum keys and Home's '/'.
+        self._listen_id = self.bind("<KeyPress>", self._capture_key, add="+")
+        self.focus_set()
 
     def _capture_key(self, event):
+        lid = self._listening_lane
+        intent = self._capture_intent
+        if lid is None or self._listen_id is None:
+            return None                     # inactive callback: not ours
         try:
             if not self.winfo_exists():   # destroyed overlay -> ignore (breaker fix r9)
-                return
-            top = self.winfo_toplevel()
-        except tk.TclError:
-            return
-        fid = getattr(self, "_listen_id", None)
-        if fid:
-            top.unbind("<KeyPress>", fid)
-            self._listen_id = None
-        lid = self._listening_lane
-        self._listening_lane = None
-        if event.keysym == "Escape" or lid is None:
+                self._cancel_listen()
+                return None
+            focused = self.focus_get()
+        except (tk.TclError, KeyError):
+            self._cancel_listen()
+            return None
+        # Only a key delivered while the overlay itself holds focus is captured.
+        # (No focus window at all means Tk is not delivering real key events to
+        # this application, so there is nothing to tell apart.)
+        if focused is not None and focused is not self:
+            self._cancel_listen()
             self._rebuild_bind_chips()
-            return
+            return None
+        self._cancel_listen()
+        if event.keysym == "Escape":
+            self._rebuild_bind_chips()
+            return "break"
         code = _tk_code(event)
         if not code:
             self._note("That key can't be bound.")
             self._rebuild_bind_chips()
-            return
+            return "break"
         binds = [dict(b) for b in _sanitize_binds(self._get("binds", None),
                                                   self._get("kbPreset", "standard"))]
         # one-key-one-lane: remove this code from any other lane, set on this lane
         binds = [b for b in binds if b.get("code") != code]
-        binds = [b for b in binds if b.get("lane") != lid] + [{"code": code, "lane": lid}]
+        if intent == "replace":
+            binds = [b for b in binds if b.get("lane") != lid]
+        captured = {"code": code, "lane": lid}
+        if intent == "ghost":
+            captured["vel"] = KB_GHOST_VEL
+        binds.append(captured)
         self._set("binds", binds)
         self._on_binds_changed(binds)
         self._rebuild_bind_chips()
         self._note(f"{LANE_DEFS[lid]['label']} bound to {_key_label(code)}.")
+        return "break"
 
     # ----- Audio tab -----
     def _tab_audio(self) -> None:
@@ -4227,7 +4346,7 @@ class MixerOverlay(_Overlay):
 # PracticeTab -- the screen router (Home -> Play -> Results) + overlays.
 # ===========================================================================
 class PracticeTab(ttk.Frame):
-    def __init__(self, parent, hooks=None, **kw) -> None:
+    def __init__(self, parent, hooks=None, *, compact=False, **kw) -> None:
         super().__init__(parent, style="Prac.TFrame", **kw)
         self.hooks = hooks if hooks is not None else {}
 
@@ -4247,6 +4366,22 @@ class PracticeTab(ttk.Frame):
         self._current: Optional[dict] = None
         self._last_payload: Optional[dict] = None
 
+        # Screen visibility (B6a). _active_screen is the screen actually raised
+        # in the stack; Settings opens OVER it without replacing it. Home counts
+        # as shown only while the Practice notebook tab is active, Home is the
+        # raised screen and Settings is closed. _notebook_active starts True so
+        # standalone use keeps working.
+        self._active_screen = None
+        self._settings_visible = False
+        self._home_visible = False
+        self._notebook_active = True
+        # False until the host forwards a selected state. The first forward is
+        # applied even when it repeats the initial True, so a Practice tab that
+        # is already selected still takes its first MIDI snapshot. Standalone
+        # use never forwards and keeps Home search on the initial True.
+        self._notebook_forwarded = False
+        self._destroying = False
+
         self._stack = tk.Frame(self, background=BG)
         self._stack.pack(fill=tk.BOTH, expand=True)
         self._stack.rowconfigure(0, weight=1)
@@ -4264,15 +4399,21 @@ class PracticeTab(ttk.Frame):
         _home_hooks = dict(self.hooks)
         _home_hooks.setdefault(
             "get_kit_layout", lambda _name=None: apply_layout_snapshot(self._layout))
-        self.home = PracticeHomeScreen(self._stack, hooks=_home_hooks)
+        _home_hooks["set_pref_field"] = self._home_pref_set
+        _home_hooks["get_effective_binds"] = self._effective_binds
+        self.home = PracticeHomeScreen(self._stack, hooks=_home_hooks,
+                                       compact=compact)
         self.home.grid(row=0, column=0, sticky="nsew")
         self.home.on_play_request = self._on_play_request
         self.home.on_open_settings = self._open_settings
+        # B6a: key badge / + / +ghost arm a capture in the existing Settings.
+        self.home.on_capture_binding = self._open_binding_capture
         self.home.on_open_kit_studio = self._open_kit_studio_home
         self.home.on_open_calibration = self._open_calibration
         # Keyboard / MIDI test shortcut from the Home input section — reuses the
         # Settings overlay's tester popup (works whether or not Settings is open).
         self.home.on_keyboard_test = self._open_keyboard_test_home
+        self._publish_home_snapshot()
 
         # Play
         self.play = PlayScreen(
@@ -4293,7 +4434,8 @@ class PracticeTab(ttk.Frame):
         self.settings = SettingsOverlay(
             self, get_pref=self._pref_get, set_pref=self._pref_set,
             note=self._status, hook_call=self._hook_call,
-            on_binds_changed=self._on_binds_changed)
+            on_binds_changed=self._on_binds_changed,
+            on_visibility_changed=self._on_settings_visibility_changed)
         self.calibration = CalibrationOverlay(
             self, get_pref=self._pref_get, set_pref=self._pref_set,
             note=self._status, hook_call=self._hook_call)
@@ -4305,6 +4447,23 @@ class PracticeTab(ttk.Frame):
         self._studio_panel: Optional[KitStudioPanel] = None
 
         self._raise_screen(self.home)
+
+    def relayout(self, compact) -> None:
+        """Forward live layout mode (Compact / Roomy) to Home."""
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        home = getattr(self, "home", None)
+        if home is None:
+            return
+        try:
+            if not home.winfo_exists():
+                return
+            home.relayout(bool(compact))
+        except tk.TclError:
+            pass
 
     # ----- hook seam (spectral pattern) -----
     def _cfg_get(self, key, default=None):
@@ -4348,7 +4507,8 @@ class PracticeTab(ttk.Frame):
         return self._prefs.get(key, default)
 
     def _pref_set(self, key, value) -> None:
-        self._prefs[key] = value
+        # Preference values are JSON-shaped (dicts, lists, scalars); deepcopy is safe and cheap.
+        self._prefs[key] = copy.deepcopy(value)
         self._cfg_set(_CFG_PREFS_KEY, self._prefs)
         # Settings > Audio only refreshed the view, so Song/Drums/Master/Mute-synth
         # changed nothing until the NEXT session started -- while the dock's own `m`
@@ -4373,6 +4533,7 @@ class PracticeTab(ttk.Frame):
             self.play._prefs = self._prefs
             self.play.highway.set_view(self._view_for_render(self._current))
             self.play.update_dock()
+        self._publish_home_snapshot()  # Settings writes refresh Home
 
     def _on_pref_changed(self, key, value) -> None:
         if key == "_open_settings":
@@ -4384,7 +4545,10 @@ class PracticeTab(ttk.Frame):
             self.play.highway.set_view(self._view_for_render(self._current))
 
     def _on_binds_changed(self, binds) -> None:
-        self._prefs["binds"] = binds
+        if isinstance(binds, list):
+            self._prefs["binds"] = copy.deepcopy(binds)
+        else:
+            self._prefs["binds"] = binds
         self._cfg_set(_CFG_PREFS_KEY, self._prefs)
         try:
             self.play.set_binds(binds)
@@ -4392,9 +4556,41 @@ class PracticeTab(ttk.Frame):
                 self.play.highway.set_view(self._view_for_render(self._current))
         except Exception:
             pass
+        self._publish_home_snapshot()  # bind changes refresh Home
 
     def _binds(self) -> list:
         return _sanitize_binds(self._prefs.get("binds"), self._prefs.get("kbPreset"))
+
+    def _effective_binds(self) -> list:
+        """Copied effective binds for Home display. Does not alias storage."""
+        return copy.deepcopy(self._binds())
+
+    def _copy_prefs_for_home(self) -> dict:
+        return copy.deepcopy(self._prefs)
+
+    def _publish_home_snapshot(self) -> None:
+        if getattr(self, "_publishing_home", False):
+            return
+        home = getattr(self, "home", None)
+        if home is None:
+            return
+        try:
+            if not home.winfo_exists():
+                return
+        except Exception:
+            return
+        fn = getattr(home, "apply_prefs_snapshot", None)
+        if not callable(fn):
+            return
+        self._publishing_home = True
+        try:
+            fn(self._copy_prefs_for_home())
+        finally:
+            self._publishing_home = False
+
+    def _home_pref_set(self, key, value) -> None:
+        """Narrow router-owned key/value setter for embedded Home writes."""
+        self._pref_set(key, value)  # merge one field into the router dict
 
     # ----- view building (mirrors v5 _view_for_render) -----
     def _view_for_render(self, current: dict) -> dict:
@@ -4496,11 +4692,101 @@ class PracticeTab(ttk.Frame):
         # Single navigation seam (breaker fix, 2026-07-21): raise the screen AND
         # tell Home whether it is now the top screen, so Home's global '/' search
         # shortcut only fires on Home (a covered frame stays winfo_ismapped()).
+        # B6a: the raised screen is recorded, and Home's shown state is derived
+        # from it, the Practice notebook tab and whether Settings is open.
         screen.tkraise()
+        self._active_screen = screen
+        self._sync_home_shown()
+
+    def _sync_home_shown(self) -> None:
+        """Push Home's real visibility to Home. Opening or closing Settings
+        never changes _active_screen, so closing Settings over Play or Kit
+        Studio leaves Home hidden, and closing it over Home shows Home again
+        (it does not focus search). A false-to-true transition refreshes MIDI
+        only after the host has forwarded a selected state, so construction's
+        own raise is not a snapshot."""
+        shown = (
+            self._notebook_active
+            and self._active_screen is self.home
+            and not self._settings_visible
+        )
+        was_visible = bool(self._home_visible)
+        self._home_visible = bool(shown)
         try:
-            self.home.set_shown(screen is self.home)
+            self.home.set_shown(bool(shown))
         except Exception:
             pass
+        if (shown and not was_visible and self._notebook_forwarded
+                and not self._destroying):
+            home = getattr(self, "home", None)
+            if home is not None:
+                try:
+                    home.request_midi_refresh(notify=False)
+                except Exception:
+                    pass
+
+    def set_notebook_active(self, active) -> None:
+        """Host notebook selected-state.
+
+        The first call is never a duplicate. Later calls that repeat the
+        current state are ignored. Entry requests a MIDI snapshot even when
+        Play or Results stays raised, then recomputes Home visibility (one
+        shared idle job when both request). Departure cancels a pending
+        snapshot and any Settings capture, then recomputes visibility. It does
+        not stop playback by itself.
+        """
+        if self._destroying:
+            return
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        active = bool(active)
+        if self._notebook_forwarded and active == self._notebook_active:
+            return
+        self._notebook_forwarded = True
+        self._notebook_active = active
+        home = getattr(self, "home", None)
+        if active:
+            if home is not None:
+                home.request_midi_refresh(notify=False)
+            self._sync_home_shown()
+        else:
+            if home is not None:
+                try:
+                    home.cancel_midi_refresh()
+                except Exception:
+                    pass
+            settings = getattr(self, "settings", None)
+            if settings is not None:
+                try:
+                    armed = (
+                        getattr(settings, "_listening_lane", None) is not None
+                        or getattr(settings, "_listen_id", None) is not None
+                    )
+                    settings._cancel_listen()
+                    # _cancel_listen drops the binding and does not rebuild the
+                    # chips or replace the listening note. FocusOut then sees
+                    # the capture already clear and returns, so an overlay left
+                    # open would still show "press…" after Practice is re-entered.
+                    if armed:
+                        try:
+                            if settings.winfo_exists():
+                                settings._rebuild_bind_chips()
+                        except tk.TclError:
+                            pass
+                        try:
+                            settings._note("Key capture canceled.")
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            self._sync_home_shown()
+
+    def _on_settings_visibility_changed(self, visible: bool) -> None:
+        self._settings_visible = bool(visible)
+        self._sync_home_shown()
 
     def _normalize_prefs(self) -> None:
         """Coerce every persisted pref to its DEFAULT_PREFS type once, so no
@@ -4540,6 +4826,14 @@ class PracticeTab(ttk.Frame):
 
     def _open_settings(self, tab=None) -> None:
         self.settings.open(tab)
+
+    def _open_binding_capture(self, lane_id, intent="replace") -> None:
+        """Home key badge / + / +ghost: open the EXISTING Settings overlay on
+        its Input tab and arm one key capture for `lane_id` with `intent`
+        ("replace" the lane's keys, "append" a key, or "ghost" = append a
+        velocity-32 key). There is no second capture UI."""
+        self._open_settings("keybinds")
+        self.settings._start_listen(lane_id, intent=intent)
 
     def _open_keyboard_test_home(self) -> None:
         # Home input-section shortcut to the Keyboard / MIDI test popup. The
@@ -4752,6 +5046,7 @@ class PracticeTab(ttk.Frame):
             pass
 
     def destroy(self) -> None:
+        self._destroying = True
         try:
             self.external_stop()
         except Exception:
