@@ -139,10 +139,23 @@ That's it. To **update** to the latest version later, just run `git pull` inside
 ## Recent Changes
 
 <details>
-<summary><b>Open older tab-layout screenshots</b> — selected redesigns from v4.9.8 back to v4.4.64-1. Current releases are in the <a href="#changelog">Changelog</a> table and in <a href="CHANGELOG.txt"><code>CHANGELOG.txt</code></a>.</summary>
+<summary><b>Open older tab-layout screenshots</b> — selected redesigns from v4.14.3 back to v4.4.64-1. Current releases are in the <a href="#changelog">Changelog</a> table and in <a href="CHANGELOG.txt"><code>CHANGELOG.txt</code></a>.</summary>
 
 
 *Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
+
+**v4.14.3**<br>2026-09-26
+
+MIDI Editor - playback controls regrouped
+
+<img src="screenshots/app-06-midi-editor.png?v=20260926" width="900" alt="MIDI Editor - Spectral and Auto Fetch Audio with the song title on one row; playback, recording and Note offset rows grouped below">
+
+*Screenshot shows Roomy layout; the captured build displays v4.14.2.*
+
++ **Playback controls regrouped.** Spectral and Auto Fetch Audio sit on one row, with the song title to their right. Play and Stop, Review Speed, the Loop row and the audio output latency row sit together under a divider. Record, Count-in, Metronome and Test have their own row, and Note offset sits in its own group below. Every control keeps its action and its hover text.
++ **Stem columns.** In Compact, the two stem columns sit at the width they need, with no gap between them. Hovering **Single track** or **Layered** explains what each playback mode does.
+
+---
 
 **v4.13.0**<br>2026-09-03
 
@@ -169,7 +182,7 @@ Spectral Comparison — a third view, and a spectrogram that keeps its detail
 
 MIDI Editor — sharper chart, note selection, reactive notes and new toolbar buttons
 
-<img src="screenshots/app-06-midi-editor.png?v=20260821b" width="900" alt="MIDI Editor — chart with the Velocity Lane open; Chart Timing, Difficulty and Add Snare Roll on the toolbar">
+<img src="screenshots/app-06-midi-editor.png?v=20260926" width="900" alt="MIDI Editor - drum chart with Chart Timing, Difficulty and Add Snare Roll controls visible">
 
 + **Reactive Notes, rebuilt.** Notes used to blank solid white as the playhead crossed them, so you lost track of which drum it was at the moment it mattered. A note now flares to a brighter version of its **own lane color** and throws a soft halo that fades out behind it. The original flash is still there as **Flash Notes (Classic Style)** in the new Style dropdown — and as of this release both the toggle and the style are remembered between launches.
 + **Sharper chart sprites.** Notes are drawn as a single clean high-resolution ring instead of the old softer shape, flagged notes get thinner and tidier outlines, and the toolbar buttons wear the v5 outline style. The dot at the top of the green playhead is now an enlarged grab-handle, so it is obvious where to click to drag it.
@@ -444,7 +457,7 @@ How closely do ParaKit's converted charts agree with charts people made by hand?
 <img src="screenshots/app-05-audio-to-midi.png?v=20260821" width="900" alt="Audio to MIDI">
 
 ### 6 · MIDI Editor
-<img src="screenshots/app-06-midi-editor.png?v=20260821b" width="900" alt="MIDI Editor">
+<img src="screenshots/app-06-midi-editor.png?v=20260926" width="900" alt="MIDI Editor">
 
 ### 7 · Spectral Comparison
 Did the detector chart it right? The chart is overlaid on the audio's energy and the disagreements are
