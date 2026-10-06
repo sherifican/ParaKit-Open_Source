@@ -139,10 +139,32 @@ That's it. To **update** to the latest version later, just run `git pull` inside
 ## Recent Changes
 
 <details>
-<summary><b>Open older tab-layout screenshots</b> — selected redesigns from v4.14.3 back to v4.4.64-1. Current releases are in the <a href="#changelog">Changelog</a> table and in <a href="CHANGELOG.txt"><code>CHANGELOG.txt</code></a>.</summary>
+<summary><b>Open older tab-layout screenshots</b> — selected redesigns from v4.14.4 back to v4.4.64-1. Current releases are in the <a href="#changelog">Changelog</a> table and in <a href="CHANGELOG.txt"><code>CHANGELOG.txt</code></a>.</summary>
 
 
 *Screenshots will be added here each time there is a Feature/Tab Layout redesign.*
+
+**v4.14.4**<br>2026-10-03
+
+Sheet Music - Score band
+
+<img src="screenshots/app-07-sheet-music-to-midi.png?v=20261003" width="900" alt="Sheet Music to MIDI tab with the Score band along the bottom, showing the file, the part, the saved name, and twelve drum lanes">
+
+<img src="screenshots/app-11b-practice.png?v=20261003" width="900" alt="Practice tab open on the PRACTICE V3 page, header Layout: Compact, window title ParaKit v4.14.3, Song card with a song list and album art on the left, Setup above Input on the right">
+
+*Practice tab, unchanged in v4.14.4. Screenshot shows Compact layout; the captured build displays v4.14.3.*
+
++ **Score band.** Sheet Music to MIDI shows a Score band on the bottom row, under Output and Advanced. After a conversion it shows the file, the part, the saved MIDI name, and a status line with measures, BPM, time signature, and first note. Remapped appears only when a note was remapped, and Dropped appears only when a note was dropped. Twelve lanes stay listed. Every lane bar starts at one common offset, to the right of the widest label drawn, and uses one track length, with length equal to that track times the lane's count divided by the busiest lane's count, so the busiest lane fills the track, equal counts draw equal bars, a lane with hundreds of notes fills the track only when it is the busiest, a positive count under 2 px draws at 2 px, and a lane with 0 notes shows a short muted mark.
+
++ **High accuracy tempo.** High accuracy reads every tempo mark as quarter-note BPM. A printed half note at 60 and a dotted quarter at 80 in 6/8 are written as quarter 120, where earlier versions wrote quarter 60 and quarter 80. A file whose tempo is only a playback value, with no printed metronome mark, now converts instead of stopping with an error. A printed quarter of 96 followed later by a playback-only 120 keeps both sections. Earlier versions dropped the later mark. Files whose tempo marks are all printed quarter notes convert exactly as before. The BPM override still sets the chosen BPM as quarter BPM for every mark. Basic mode is unchanged.
+
++ **Advanced on a Roomy page.** In Roomy at 2000x1050, opening Advanced turns the page squeeze on. Convert goes from 48 px to 24 px. All 12 lanes and all 4 facts stay shown, and the page does not scroll. Closing Advanced releases the squeeze and Convert returns to 48 px.
+
++ **Stem spacing.** Single track and Layered share one frame on the Drums row, 8 px to the right of the clear button, and they clear the Stem 3 and Stem 4 indicators. The clearance holds in Compact and in Roomy, in dark and in light, at 2000x1085 and at 1600x900. A Roomy window shorter than 913 px uses Compact spacing at launch and when a layout is selected, and not on ordinary resizing. The clearance still holds.
+
++ **Keep drums waveform.** Display & Snap adds Keep drums waveform, off unless a saved value is already true. On, the strip shows the Drums slot in Single track and in Layered. If the Drums path is empty or is not a file, the strip follows the selected stem when that file is available. If that file cannot be read or has no samples, the strip stays empty. Playback mode, stem selection, and volume stay unchanged.
+
+---
 
 **v4.14.3**<br>2026-09-26
 
@@ -475,7 +497,7 @@ or exported. Detection itself is untouched — the tab only reads audio and char
 <img src="screenshots/app-06d-spectral-waveform.png?v=20260817" width="900" alt="Spectral Comparison, Waveform view">
 
 ### 8 · Sheet Music → MIDI
-<img src="screenshots/app-07-sheet-music-to-midi.png?v=20260821" width="900" alt="Sheet Music to MIDI">
+<img src="screenshots/app-07-sheet-music-to-midi.png?v=20261003" width="900" alt="Sheet Music to MIDI">
 
 ### 9 · YouTube → FLAC
 <img src="screenshots/app-08-youtube-to-flac.png?v=20260821" width="900" alt="YouTube to FLAC">
@@ -490,7 +512,7 @@ or exported. Detection itself is untouched — the tab only reads audio and char
 <img src="screenshots/app-11a-preview.png?v=20260725" width="900" alt="Preview tab">
 
 ### 13 · Practice
-<img src="screenshots/app-11b-practice.png?v=20260821" width="900" alt="Practice tab">
+<img src="screenshots/app-11b-practice.png?v=20261003" width="900" alt="Practice tab">
 <img src="screenshots/app-11c-practice-gameplay.png?v=20260904" width="900" alt="Practice tab, gameplay: the note highway with the Live Settings panel open">
 
 ### 14 · Quick Start & FAQ
