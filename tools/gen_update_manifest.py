@@ -234,6 +234,49 @@ def _ignore_query_note(reason):
               "apply)" % reason)
 
 
+def _note_git_child_executed(digest):
+    """Record a helper load on a gate that is collecting a receipt."""
+    for mod in list(sys.modules.values()):
+        if mod is None:
+            continue
+        book = getattr(mod, "EXECUTED_DIGESTS", None)
+        if isinstance(book, dict) and callable(getattr(mod, "digest_set", None)):
+            book.setdefault("git_child_env_digest", []).append(digest)
+
+
+def _load_git_child_env():
+    """Load the sibling git_child_env.py.
+
+    The only path is the file beside this one. There is no ancestor walk
+    and no __main__ fallback, so a fixture that did not copy the helper
+    cannot pass by finding one somewhere else. A cached module is reused
+    only when its source digest is this sibling's sha256. Any failure
+    while loading, including a syntax error, propagates.
+    """
+    import hashlib
+    import importlib.util
+    from pathlib import Path
+    key = "parakit_git_child_env"
+    path = Path(__file__).resolve().with_name("git_child_env.py")
+    if not path.is_file():
+        raise FileNotFoundError("MISSING git child env helper: git_child_env.py")
+    data = path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    mod = sys.modules.get(key)
+    if mod is not None and getattr(mod, "_PARAKIT_SOURCE_DIGEST", None) == digest:
+        _note_git_child_executed(digest)
+        return mod
+    spec = importlib.util.spec_from_file_location(key, str(path))
+    if spec is None or spec.loader is None:
+        raise FileNotFoundError("MISSING git child env helper: git_child_env.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[key] = module
+    spec.loader.exec_module(module)
+    module._PARAKIT_SOURCE_DIGEST = digest
+    _note_git_child_executed(digest)
+    return module
+
+
 def _gitignored_set(root):
     """Relative paths (forward-slash) git IGNORES under `root`. The CONTENT_DIRS
     walk below did NOT consult .gitignore (breaker 2026-07-23, codex), so a
@@ -245,27 +288,37 @@ def _gitignored_set(root):
     The query strips inherited GIT_* selectors, suppresses global/system config
     (a global core.excludesFile must not decide what ships), and pins
     --work-tree to `root` so a repository-local core.worktree cannot redirect
-    it: membership is defined by this checkout's own ignore rules."""
+    it: membership is defined by this checkout's own ignore rules.
+    The helper is loaded before the try. Any failure to load it, not only a
+    missing file, propagates. An empty set is only the disclosed fallback for
+    a git query that itself failed."""
+    helper = _load_git_child_env()
+    env = helper.git_child_env()
+    pins = helper.local_git_config_args()
     try:
         import subprocess
+        # The helper's own ignore file hides .claude/settings.local.json.
+        # --exclude repeats that rule on this command, so a repository
+        # core.excludesFile cannot drop it from the set this generator ships by.
         if True:  # generator pins and isolates the ignore query
-            env = {k: v for k, v in os.environ.items()
-                   if not k.upper().startswith("GIT_")}
-            env["GIT_CONFIG_NOSYSTEM"] = "1"
-            env["GIT_CONFIG_GLOBAL"] = os.devnull
-            env["GIT_CONFIG_SYSTEM"] = os.devnull
-            cmd = ["git", "-C", root, "--work-tree=" + os.path.abspath(root),
-                   "ls-files", "--others", "--ignored", "--exclude-standard", "-z"]
+            cmd = ["git", *pins, "-C", root,
+                   "--work-tree=" + os.path.abspath(root),
+                   "ls-files", "--others", "--ignored", "--exclude-standard",
+                   "--exclude=**/.claude/settings.local.json", "-z"]
         else:
             env = None
             cmd = ["git", "-C", root, "ls-files", "--others", "--ignored",
-                   "--exclude-standard", "-z"]
+                   "--exclude-standard",
+                   "--exclude=**/.claude/settings.local.json", "-z"]
         out = subprocess.run(cmd, capture_output=True, timeout=30, env=env)
         if out.returncode != 0:
             _ignore_query_note("rc %d" % out.returncode)
             return set()
         return {p.replace("\\", "/")
                 for p in out.stdout.decode("utf-8", "replace").split("\0") if p}
+    except FileNotFoundError as exc:
+        _ignore_query_note("%s: %s" % (type(exc).__name__, exc))
+        return set()
     except Exception as exc:
         _ignore_query_note("%s: %s" % (type(exc).__name__, exc))
         return set()
@@ -329,12 +382,13 @@ def main():
 
     ignored = _gitignored_set(root)
     skipped_ignored = []
+    _local_settings = _load_git_child_env().hides_local_claude_settings
 
     files = []
     for rel in ROOT_FILES:
         p = os.path.join(root, rel)
         rel_fs = rel.replace("\\", "/")
-        if rel_fs in ignored:
+        if rel_fs in ignored or _local_settings(rel_fs):
             # A whitelisted root file that git ignores is a config error — surface
             # it loudly rather than silently ship (or silently drop) it.
             missing.append(f"root file is .gitignore'd (will NOT ship): {rel}")
@@ -356,7 +410,7 @@ def main():
                     continue
                 full = os.path.join(dirpath, fn)
                 rel = os.path.relpath(full, root).replace("\\", "/")
-                if rel in ignored:
+                if rel in ignored or _local_settings(rel):
                     skipped_ignored.append(rel)   # .gitignore'd -> never manifest/ship
                     continue
                 files.append((rel, _sha256(full)))

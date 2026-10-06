@@ -105,6 +105,12 @@ REQUIRED_GATE_TOOLS = (
     "tools/release_gate.py",
     "tools/ship_parity.py",
     "tools/check_release_file_drift.py",
+    # Published with the other gate tools. UNMANIFESTED_PUBLISHED_PATHS is
+    # derived from this tuple, so the drift walk compares the helper to dev
+    # HEAD. The delivery-set loop below flags a candidate that omits it.
+    # A fixture dev HEAD that does not contain the file is
+    # reference_unavailable, the same rule as the other four paths.
+    "tools/git_child_env.py",
 )
 UNMANIFESTED_PUBLISHED_PATHS = (APP,) + REQUIRED_GATE_TOOLS
 DELIVERY_SCREENSHOTS = (
@@ -144,6 +150,9 @@ DELIVERY_SCREENSHOTS = (
     "screenshots/web-midi-baseline-badge.png",
     "screenshots/web-midi-compat-table.png",
 )
+# The updater manifest leaves tools/ out. REQUIRED_GATE_TOOLS, including
+# tools/git_child_env.py, is how a staged copy of each gate tool is an
+# explained delivery path. The same tuple is the drift reference.
 DELIVERY_E = (
     ".gitattributes",
     ".gitignore",
@@ -2055,22 +2064,55 @@ def is_lfs_pointer(blob):
     return first.startswith(LFS_POINTER_PREFIX)
 
 
+def _note_git_child_executed(digest):
+    """Record a helper load on a gate that is collecting a receipt."""
+    for mod in list(sys.modules.values()):
+        if mod is None:
+            continue
+        book = getattr(mod, "EXECUTED_DIGESTS", None)
+        if isinstance(book, dict) and callable(getattr(mod, "digest_set", None)):
+            book.setdefault("git_child_env_digest", []).append(digest)
+
+
+def _load_git_child_env():
+    """Load the sibling git_child_env.py.
+
+    The only path is the file beside this one. There is no ancestor walk
+    and no __main__ fallback, so a fixture that did not copy the helper
+    cannot pass by finding one somewhere else. A cached module is reused
+    only when its source digest is this sibling's sha256.
+    """
+    key = "parakit_git_child_env"
+    path = Path(__file__).resolve().with_name("git_child_env.py")
+    if not path.is_file():
+        raise FileNotFoundError("MISSING git child env helper: git_child_env.py")
+    data = path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    mod = sys.modules.get(key)
+    if mod is not None and getattr(mod, "_PARAKIT_SOURCE_DIGEST", None) == digest:
+        _note_git_child_executed(digest)
+        return mod
+    spec = importlib.util.spec_from_file_location(key, str(path))
+    if spec is None or spec.loader is None:
+        raise FileNotFoundError("MISSING git child env helper: git_child_env.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[key] = module
+    spec.loader.exec_module(module)
+    module._PARAKIT_SOURCE_DIGEST = digest
+    _note_git_child_executed(digest)
+    return module
+
+
 def _git_env(isolate_config=True):
     # Inherited GIT_* variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ...)
     # could point git at a repository or index other than the candidate's;
-    # every call drops them. Config isolation is separate: cat-file and
-    # archive run without the machine's config so raw bytes are the verdict,
-    # while the dirty check keeps it, because `git add` would.
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.upper().startswith("GIT_")
-    }
-    if isolate_config:
-        env["GIT_CONFIG_NOSYSTEM"] = "1"
-        env["GIT_CONFIG_GLOBAL"] = os.devnull
-        env["GIT_CONFIG_SYSTEM"] = os.devnull
-    return env
+    # every call drops them. Global and system config are always suppressed:
+    # a machine core.autocrlf or excludesfile must not decide bytes.
+    # isolate_config remains so git_run(..., isolated=False) still binds.
+    # That caller passes config=() so repository-local config, which is what
+    # `git add` reads, still applies. The dirty check needs that local
+    # core.autocrlf. It does not need the user's global gitconfig.
+    return _load_git_child_env().git_child_env()
 
 
 def git_run(root, *args, config=("core.autocrlf=false", "core.eol=lf"),
@@ -2078,8 +2120,14 @@ def git_run(root, *args, config=("core.autocrlf=false", "core.eol=lf"),
     # --work-tree pins the candidate: a core.worktree in the repository
     # configuration would otherwise move the dirty check to another directory
     # while write-tree and cat-file read the candidate's index.
+    # fsmonitor and hooksPath are pinned before -C and before the caller's
+    # -c values, so a caller core.autocrlf still wins.
     root = Path(root)
-    cmd = ["git", "-C", str(root), "--work-tree=" + str(root.resolve())]
+    helper = _load_git_child_env()
+    cmd = [
+        "git", *helper.local_git_config_args(),
+        "-C", str(root), "--work-tree=" + str(root.resolve()),
+    ]
     for item in config:
         cmd.extend(["-c", item])
     cmd.extend(args)
@@ -2112,15 +2160,24 @@ def git_diff_names(root, paths=None):
     args = ["diff", "--name-only", "--"]
     if paths:
         args.extend(paths)
-    # This asks whether `git add` would change the staged blob, so it runs
-    # under the normalization `git add` uses: the repository's effective
-    # config, including the machine's core.autocrlf. The isolated LF config
-    # belongs to cat-file and archive, where raw bytes are the verdict;
-    # forcing it here made a CRLF worktree file over an LF index blob read
-    # as an unstaged edit whenever git re-read the content. Repository, index,
-    # and work-tree selection stay pinned to the candidate (GIT_* is still
-    # dropped; git_run passes --work-tree).
-    result = git_run(root, *args, config=(), isolated=False)
+    # This asks whether `git add` would change the staged blob. A
+    # repository-local core.autocrlf still applies: config stays empty so
+    # that local value is what git reads (f2ef65af). Forcing
+    # core.autocrlf=false here made a CRLF worktree over an LF blob look
+    # unstaged. There is no local value on the dev checkout. The only
+    # machine value was system true, and system config is no longer seen.
+    # core.autocrlf=input is that normalization, and it is passed only when
+    # the repo itself has no local value, so a local setting still wins.
+    # Global and system config stay suppressed. The fsmonitor, hooks, and
+    # replace pins still apply.
+    local = git_run(
+        root, "config", "--local", "--get", "core.autocrlf",
+        config=(), isolated=False,
+    )
+    config = ()
+    if local.returncode != 0 or not local.stdout.strip():
+        config = ("core.autocrlf=input",)
+    result = git_run(root, *args, config=config, isolated=False)
     if result.returncode != 0:
         raise RuntimeError(
             "git diff failed: "

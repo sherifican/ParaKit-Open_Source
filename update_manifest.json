@@ -1,10 +1,10 @@
 {
-  "version": "4.14.3",
+  "version": "4.14.4",
   "note": "Runtime files the in-app updater keeps current. The main 'ParaKit v4.0.py' is handled separately; screenshots/ are intentionally excluded. CHANGELOG.txt + README.md + README.txt ARE synced (What's New + version line). Entries marked \"doc\": true are prose -- a hash mismatch on one is skipped by the updater instead of aborting the whole update; everything else stays fatal. Regenerate with tools/gen_update_manifest.py from the PUBLIC repo after any release.",
   "files": [
     {
       "path": "CHANGELOG.txt",
-      "sha256": "7e3aa20d6f6d0a3a5f65483197c201b30efc6600046812794cca0cfe0dac6ce4",
+      "sha256": "6a3b9926aea40ebd324860ee15d0d82c432f59fd472d9025135bef0c4ec143a1",
       "doc": true
     },
     {
@@ -60,7 +60,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "393e1bb537601ce1d8a541337b939cb18474302183b657c4f493336341ad9a8c",
+      "sha256": "8de1d193b5ab4f2186fa492b554e3f569c2047d9a733e7142dc2b91b0b671980",
       "doc": true
     },
     {

@@ -50,15 +50,16 @@ a path as argv[1]):
      are refused; the worktree file is never consulted. A missing onnxruntime
      is UNMEASURED red, never green.
  12. Same-invocation controls. Default main() is the orchestrator: hash this
-     file plus ship_parity.py and check_release_file_drift.py, freeze the
-     candidate with one write-tree, run _breaker/release_gate_regress.py as a
-     child with --gate-source this file (the child reads the gate set once,
-     prints its receipt from that capture, and executes the capture, never
-     a later disk read), require rc 0 and matching digest lines, run the
-     stages against that frozen tree_id (the Check 2 stages
-     forward it; version, memory, mirror, and asset checks read the working
-     tree), re-write-tree and require equality, re-hash the gate set and
-     require every helper load the stages executed to equal the receipt,
+     file plus ship_parity.py, check_release_file_drift.py, and
+     git_child_env.py, freeze the candidate with one write-tree, run
+     _breaker/release_gate_regress.py as a child with --gate-source this file
+     (the child reads the gate set once, prints its receipt from that capture,
+     and executes the capture, never a later disk read), require rc 0 and
+     matching digest lines, run the stages against that frozen tree_id (the
+     Check 2 stages forward it; version, memory, mirror, and asset checks read
+     the working tree), re-write-tree and require equality, re-hash the gate
+     set and require every helper load the stages executed to equal the
+     receipt, including git_child_env.py,
      and only then print GATE PASS. --stages-only runs the
      stages and prints STAGES OK / STAGES FAIL, never GATE PASS. No skip
      flag, no cached receipt, no environment substitute.
@@ -147,6 +148,32 @@ def collect(root):
 
 
 
+def _load_git_child_env():
+    """Load the sibling git_child_env.py and attest every load.
+
+    The only path is the file beside this one. There is no ancestor walk
+    and no __main__ fallback. A cached module is reused only when its
+    source digest is the sibling's current sha256, and that reuse is
+    recorded as git_child_env_digest. Any other cache is ignored and the
+    sibling is executed through _load_attested, which records the same
+    digest from the bytes that ran.
+    """
+    import hashlib
+    from pathlib import Path
+    path = Path(__file__).resolve().with_name("git_child_env.py")
+    if not path.is_file():
+        raise FileNotFoundError("MISSING git child env helper: git_child_env.py")
+    data = path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    cached = sys.modules.get("parakit_git_child_env")
+    if cached is not None and getattr(cached, "_PARAKIT_SOURCE_DIGEST", None) == digest:
+        EXECUTED_DIGESTS.setdefault("git_child_env_digest", []).append(digest)
+        return cached
+    module = _load_attested("git_child_env_digest", path, "parakit_git_child_env")
+    module._PARAKIT_SOURCE_DIGEST = digest
+    return module
+
+
 def check_memory_stores():
     """Warn-then-FAIL if a ParaKit memory store has uncommitted work.
 
@@ -162,7 +189,6 @@ def check_memory_stores():
     public repo, and a machine with no such store SKIPS cleanly rather than failing —
     which is why it can live in a tool other people can run.
     """
-    import subprocess
     from pathlib import Path
 
     # NOTE: deliberately NOT wrapped in a broad try/except. A check that swallows its
@@ -173,11 +199,16 @@ def check_memory_stores():
     if dev_mem.is_dir():
         stores.append(dev_mem)
 
+    # Load before the per-store OSError handler. FileNotFoundError is an
+    # OSError, and swallowing a missing helper would skip the check and
+    # return 0. A missing helper must fail the gate, not look like a clean
+    # store. The handler below is only for a store git cannot read.
+    helper = _load_git_child_env()
     checked, dirty = 0, []
     for st in stores:
         try:
-            top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=st,
-                                 capture_output=True, text=True)
+            top = helper.run_git(
+                ["git", "rev-parse", "--show-toplevel"], cwd=st, text=True)
             if top.returncode:
                 continue                      # not version-controlled; not our business
             # `-- .` scopes the status to THIS directory. Without it, a store that is a
@@ -186,8 +217,13 @@ def check_memory_stores():
             # run and would have failed every release for reasons nothing to do with
             # memory. The question is "is anything under this store uncommitted", not
             # "is the repo containing it clean".
-            r = subprocess.run(["git", "status", "--porcelain", "--", "."], cwd=st,
-                               capture_output=True, text=True)
+            # core.autocrlf=input, after the helper's pins, so a later -c
+            # wins. System config is nulled, and these stores have no
+            # attributes file. Without this pin a CRLF worktree over an
+            # identical LF blob reads as dirty. A content change still does.
+            r = helper.run_git(
+                ["git", "-c", "core.autocrlf=input", "status", "--porcelain", "--", "."],
+                cwd=st, text=True)
             if r.returncode:
                 continue
             checked += 1
@@ -238,7 +274,6 @@ def check_index_matches_manifest(root, tree_id=None):
 
     Requires a git checkout and both inputs; absence is a failing precondition.
     """
-    import subprocess
     import importlib.util
     from pathlib import Path
 
@@ -253,8 +288,7 @@ def check_index_matches_manifest(root, tree_id=None):
         return 1  # parity preflight: missing inputs
 
     def git(*a):
-        return subprocess.run(("git", "-C", str(root)) + a,
-                              capture_output=True)
+        return _load_git_child_env().run_git(("git", "-C", str(root)) + a)
 
     if git("rev-parse", "--git-dir").returncode != 0:
         print("  ! index vs manifest      GATE FAIL (not a git checkout)")
@@ -635,23 +669,15 @@ def _load_attested(label, path, module_name):
 
 
 def write_candidate_tree(root):
-    """One `git write-tree` on the candidate, GIT_* stripped and the work tree
-    pinned (the identity stage's isolation). The orchestrator calls this twice.
+    """One `git write-tree` on the candidate through the shared git-child
+    environment, work tree pinned (the identity stage's isolation). The
+    orchestrator calls this twice.
     """
-    import os
-    import subprocess
     from pathlib import Path
     root = Path(root).resolve()
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.upper().startswith("GIT_")
-    }
-    r = subprocess.run(
+    r = _load_git_child_env().run_git(
         ("git", "-C", str(root), "--work-tree=" + str(root), "write-tree"),
-        capture_output=True,
         text=True,
-        env=env,
     )
     if r.returncode != 0:
         raise RuntimeError(
@@ -661,17 +687,21 @@ def write_candidate_tree(root):
     return (r.stdout or "").strip()
 
 
+_DIGEST_FILES = (
+    ("gate_digest", "release_gate.py"),
+    ("ship_parity_digest", "ship_parity.py"),
+    ("drift_digest", "check_release_file_drift.py"),
+    ("git_child_env_digest", "git_child_env.py"),
+)
+
+
 def digest_set(gate_dir=None):
-    """sha256 of the running gate and the two loaders it importlibs."""
+    """sha256 of the running gate, the two loaders it importlibs, and the git child helper."""
     import hashlib
     from pathlib import Path
     gate_dir = Path(gate_dir or Path(__file__).resolve().parent)
     out = {}
-    for label, name in (
-        ("gate_digest", "release_gate.py"),
-        ("ship_parity_digest", "ship_parity.py"),
-        ("drift_digest", "check_release_file_drift.py"),
-    ):
+    for label, name in _DIGEST_FILES:
         path = gate_dir / name
         out[label] = (
             hashlib.sha256(path.read_bytes()).hexdigest()
@@ -684,7 +714,7 @@ def digest_set(gate_dir=None):
 def parse_digest_lines(text):
     found = {}
     for line in (text or "").splitlines():
-        for key in ("gate_digest", "ship_parity_digest", "drift_digest"):
+        for key, _name in _DIGEST_FILES:
             prefix = key + "="
             if line.startswith(prefix):
                 found[key] = line[len(prefix):].strip()
@@ -692,7 +722,7 @@ def parse_digest_lines(text):
 
 
 def _print_digest_set(expected):
-    for key in ("gate_digest", "ship_parity_digest", "drift_digest"):
+    for key, _name in _DIGEST_FILES:
         print("%s=%s" % (key, expected.get(key, "MISSING")))
 
 

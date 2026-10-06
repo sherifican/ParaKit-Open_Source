@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.14.3  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.14.4  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -26,6 +26,66 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.14.4   --   2026-10-03
+------------------------------------------------------------------------------
+  This release spaces the MIDI Editor stem columns so Single track and
+  Layered clear the Stem 3 and Stem 4 indicators. Display & Snap gains Keep
+  drums waveform. Sheet Music to MIDI gains a Score band along the bottom of
+  the page. High accuracy now reads every tempo mark as quarter-note BPM.
+
+  MIDI EDITOR STEM SPACING
+  Single track and Layered share one frame on the Drums row. That frame sits
+  8 px to the right of the Drums clear button, and the Stem 3 and Stem 4
+  column uses the same 8 px. The frame clears the Stem 3 and Stem 4
+  indicators. The clearance holds in Compact and in Roomy, in dark and in
+  light, at 2000x1085 and at 1600x900. A Roomy window shorter than 913 px
+  uses Compact spacing at launch and when a layout is selected, and not on
+  ordinary resizing. The clearance still holds on the layout that was built.
+
+  KEEP DRUMS WAVEFORM
+  Display & Snap has a Keep drums waveform checkbox. It stays off unless a
+  saved value is already true. Off, the waveform strip follows the selected
+  stem. On, the strip shows the Drums slot in Single track and in Layered.
+  If the Drums path is empty or is not a file, the strip follows the
+  selected stem when that file is available. If the file that would be drawn
+  cannot be read or has no samples, the strip stays empty. While the option
+  is on, a label above the snap row names the source. Playback mode, the
+  stem that is selected, and volume stay unchanged. Chart End still follows
+  the selected stem's file.
+
+  SHEET MUSIC SCORE BAND
+  Sheet Music to MIDI shows a Score band on the bottom row, under Output and
+  Advanced. After a conversion the band shows the file, the part, and the
+  saved MIDI name, plus a status line with the measure count, BPM, time
+  signature, and first note. Remapped appears only when a note was remapped,
+  and Dropped appears only when a note was dropped. Twelve lanes are listed,
+  each with its count: Kick, Snare (rim), Snare, Floor Tom, Hi-Hat (closed),
+  Hi-Hat (pedal), Hi-Hat (open), Tom 2, Tom 1, Crash, Ride, and Ride (bell).
+  Every lane bar starts at one common offset, to the right of the widest
+  label drawn, and every bar uses one track length. A bar's length is the
+  track times the lane's count divided by the busiest lane's count, so the
+  busiest lane fills the track, equal counts draw equal bars, and a lane
+  with hundreds of notes fills the track only when it is the busiest. A
+  positive count that would draw shorter than 2 px draws at 2 px. A lane
+  with 0 notes shows a short muted mark. In Roomy at 2000x1050, opening
+  Advanced turns the page squeeze on. Convert goes from 48 px to 24 px. All
+  12 lanes and all 4 facts stay shown, and the page does not scroll. Closing
+  Advanced releases the squeeze and Convert returns to 48 px. On a Roomy
+  page the squeeze turns on when the measured Score canvas is shorter than
+  the facts and the lanes need, and it releases when that canvas fits again.
+
+  SHEET MUSIC TEMPO
+  High accuracy reads every tempo mark as quarter-note BPM. A printed half
+  note at 60 and a dotted quarter at 80 in 6/8 are written as quarter 120,
+  where earlier versions wrote quarter 60 and quarter 80. A file whose tempo
+  is only a playback value, with no printed metronome mark, now converts
+  instead of stopping with an error. A printed quarter of 96 followed later
+  by a playback-only 120 keeps both sections. Earlier versions dropped the
+  later mark. Files whose tempo marks are all printed quarter notes convert
+  exactly as before. The BPM override still sets the chosen BPM as quarter
+  BPM for every mark. Basic mode is unchanged.
 
 ------------------------------------------------------------------------------
   v4.14.3   --   2026-09-26

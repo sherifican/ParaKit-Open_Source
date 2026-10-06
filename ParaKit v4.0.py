@@ -6896,6 +6896,22 @@ def _sheet_music_theme_colors():
     }
 
 
+_SM_SCORE_LANES = (
+    "Kick", "Snare (rim)", "Snare", "Floor Tom",
+    "Hi-Hat (closed)", "Hi-Hat (pedal)", "Hi-Hat (open)",
+    "Tom 2", "Tom 1", "Crash", "Ride", "Ride (bell)",
+)
+_SM_SCORE_IDLE = "Scan a file or convert to see this score."
+_SM_SCORE_SCAN = "Parts found. Measures and lanes appear after Convert."
+_SM_SCORE_EMPTY = "No drum notes found."
+# Wide first. The painter keeps the earliest shape that shows the most
+# unclipped facts, so a short band can pick 6x2 when 4x3 would clip a fact.
+_SM_SCORE_GRID_SHAPES = ((4, 3), (6, 2), (12, 1), (3, 4), (2, 6), (1, 12))
+# Painter skips a bar whose room is under 2 px. The fit test keeps that bar
+# for the widest label: old 8 px pad, plus the 4+6+4 insets around the bar.
+_SM_SCORE_MIN_BAR = 2
+
+
 def _neon_visual_defaults():
     """Default sizing and animation values for ParaKit's neon progress bars."""
     return {
@@ -8199,7 +8215,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.14.3"
+    VERSION = "4.14.4"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -26354,6 +26370,7 @@ demucs.separate.main()
         # FOLLOWUPS_PARKED.md F-UX-007 for the parked backfill task.
         wave_row = ttk.Frame(snap_outer)
         wave_row.pack(fill=tk.X, pady=(0, 4))
+        self._me_wave_row = wave_row
         ttk.Label(wave_row, text="Waveform:",
                   style="Sub.TLabel").pack(side=tk.LEFT, padx=(0, 4))
         # v4.5.2-1 — the two-tone "Stereo" style is now the DEFAULT for users who
@@ -26409,8 +26426,37 @@ demucs.separate.main()
             "Switch any time; the change applies immediately and your\n"
             "preference is remembered across app restarts.")
 
+        self._me_snap_outer = snap_outer
+        self._me_waveform_source_wrap_px = None
+        self.me_keep_drums_waveform_var = tk.BooleanVar(
+            value=load_config().get("me_keep_drums_waveform", False) is True)
+        self.me_keep_drums_waveform_cb = ttk.Checkbutton(
+            snap_outer, text="Keep drums waveform",
+            variable=self.me_keep_drums_waveform_var)
+        self.me_keep_drums_waveform_cb.pack(fill=tk.X, pady=(0, 2))
+        self._add_tooltip(
+            self.me_keep_drums_waveform_cb,
+            "Keep the Drums slot's waveform visible while Full Mix or another stem\n"
+            "plays. Applies to Single track and Layered playback.\n"
+            "If the Drums file is missing, the waveform follows the selected stem.\n"
+            "If the Drums file cannot be read, the strip stays empty and the label says so.\n"
+            "Playback selection and volume are unchanged.")
+        self.me_waveform_source_var = tk.StringVar(value="")
+        self.me_waveform_source_label = ttk.Label(
+            snap_outer,
+            textvariable=self.me_waveform_source_var,
+            width=1,
+            anchor="w",
+            justify=tk.LEFT,
+            style="Sub.TLabel")
+        self.me_keep_drums_waveform_var.trace_add(
+            "write", self._me_keep_drums_waveform_changed)
+        snap_outer.bind(
+            "<Configure>", self._me_on_waveform_source_configure, add="+")
+
         snap_row = ttk.Frame(snap_outer)
         snap_row.pack(fill=tk.X, pady=(0, 2))
+        self._me_snap_row = snap_row
         self.me_note_snap_var = tk.BooleanVar(value=False)
         _note_snap_cb = ttk.Checkbutton(snap_row, text="Snap to notes",
                         variable=self.me_note_snap_var)
@@ -26565,7 +26611,8 @@ demucs.separate.main()
         stems_left  = ttk.Frame(stems_area)
         stems_left.pack(side=tk.LEFT, fill=tk.Y)
         stems_right = ttk.Frame(stems_area)
-        stems_right.pack(side=tk.LEFT, fill=tk.Y)
+        # 8 px: the Drums row leaves this much between its clear button and the Single/Layered group.
+        stems_right.pack(side=tk.LEFT, fill=tk.Y, padx=(8, 0))
 
         STEM_DEFS = [
             ("Drums",    "recent_me_drums",  stems_left),
@@ -26824,9 +26871,15 @@ demucs.separate.main()
 
         def _me_audio_var_changed(*_):
             path = self._me_active_audio()
-            if path and os.path.isfile(path):
-                _me_preserve_active_cache()
-                self.root.after(100, lambda p=path: self._me_waveform_load(p))
+            if self._me_keep_drums_waveform_enabled():
+                if path and os.path.isfile(path):
+                    _me_preserve_active_cache()
+                self.root.after(
+                    100, lambda: self._me_refresh_waveform(update_chart_end=True))
+            else:
+                if path and os.path.isfile(path):
+                    _me_preserve_active_cache()
+                    self.root.after(100, lambda p=path: self._me_waveform_load(p))
             if not self._me_playing:
                 return
             layered = self.me_layered_var.get()
@@ -27118,6 +27171,8 @@ demucs.separate.main()
         self.me_waveform_canvas.bind("<Button-4>", lambda e: "break")
         self.me_waveform_canvas.bind("<Button-5>", lambda e: "break")
         self._me_waveform_data = None  # cached downsampled amplitude array
+        if self._me_keep_drums_waveform_enabled():
+            self._me_refresh_waveform(update_chart_end=False)
 
         # ── Bind canvas events ────────────────────────────────────────────────
         self.me_canvas.bind("<ButtonPress-1>",   self._me_on_lclick)
@@ -29554,6 +29609,8 @@ demucs.separate.main()
                     self._me_loaded_midi_end = chosen_notes[-1]["time"]
 
             self._me_redraw()
+            if self._me_keep_drums_waveform_enabled():
+                self._me_waveform_draw()
             return True
 
         except Exception as e:
@@ -32270,12 +32327,129 @@ demucs.separate.main()
             self._me_draw_playhead(t)
         self._me_waveform_draw(pos=t)
 
-    def _me_waveform_load(self, audio_path):
+    def _me_keep_drums_waveform_enabled(self):
+        """True only when the Keep drums waveform variable exists and is true."""
+        var = getattr(self, "me_keep_drums_waveform_var", None)
+        if var is None:
+            return False
+        try:
+            return bool(var.get())
+        except Exception:
+            return False
+
+    def _me_waveform_source(self):
+        """Pick one waveform file. Slot 0 wins when its path is a file."""
+        drums = self.me_stem_vars[0].get().strip()
+        if drums and os.path.isfile(drums):
+            return "drums", drums
+        selected = self._me_active_audio()
+        if selected and os.path.isfile(selected):
+            return "fallback", selected
+        return "none", ""
+
+    def _me_pack_waveform_source_label(self):
+        self.me_waveform_source_label.pack(
+            fill=tk.X, before=self._me_snap_row)
+
+    def _me_waveform_source_label_text(self, kind, ok):
+        if kind == "drums" and ok:
+            return "Waveform: Drums"
+        if kind == "fallback" and ok:
+            return "Waveform: selected stem (Drums unavailable)"
+        if kind == "drums":
+            return "Waveform: Drums - unavailable"
+        return "Waveform: unavailable"
+
+    def _me_on_waveform_source_configure(self, event=None):
+        outer = getattr(self, "_me_snap_outer", None)
+        label = getattr(self, "me_waveform_source_label", None)
+        if outer is None or label is None:
+            return
+        try:
+            outer_w = int(outer.winfo_width())
+        except Exception:
+            return
+        if outer_w < 2:
+            return
+        left = right = 5
+        try:
+            raw = outer.cget("padding")
+            if isinstance(raw, (tuple, list)):
+                parts = [int(float(x)) for x in raw]
+            else:
+                parts = [int(float(x)) for x in str(raw).replace("{", " ").replace("}", " ").split()]
+            if len(parts) == 1:
+                left = right = parts[0]
+            elif len(parts) == 2:
+                left = right = parts[1]
+            elif len(parts) >= 4:
+                left, right = parts[0], parts[2]
+        except Exception:
+            left = right = 5
+        border = 1
+        try:
+            border = int(float(str(outer.cget("borderwidth")).split()[0]))
+        except Exception:
+            border = 1
+        usable = outer_w - left - right - (2 * max(border, 0))
+        if usable < 2:
+            return
+        if usable == getattr(self, "_me_waveform_source_wrap_px", None):
+            return
+        self._me_waveform_source_wrap_px = usable
+        try:
+            label.configure(wraplength=usable)
+        except Exception:
+            pass
+
+    def _me_refresh_waveform(self, update_chart_end=False):
+        if not self._me_keep_drums_waveform_enabled():
+            return
+        self._me_pack_waveform_source_label()
+        kind, path = self._me_waveform_source()
+        reconcile = False
+        if update_chart_end:
+            active = self._me_active_audio()
+            if active and os.path.isfile(active):
+                reconcile = True
+        self._me_waveform_load(
+            path, update_chart_end=reconcile, _source_resolved=True)
+        ok = (
+            self._me_waveform_data is not None
+            and self._me_waveform_stereo is not None)
+        self.me_waveform_source_var.set(
+            self._me_waveform_source_label_text(kind, ok))
+
+    def _me_keep_drums_waveform_changed(self, *_):
+        enabled = self._me_keep_drums_waveform_enabled()
+        saved = save_config({"me_keep_drums_waveform": enabled})
+        if enabled:
+            self._me_refresh_waveform(update_chart_end=False)
+        else:
+            self.me_waveform_source_var.set("")
+            self.me_waveform_source_label.pack_forget()
+            path = self._me_active_audio()
+            if path and os.path.isfile(path):
+                self._me_waveform_load(path, update_chart_end=False)
+        if not saved:
+            self.me_status_var.set("Waveform preference could not be saved.")
+
+    def _me_waveform_load(
+            self, audio_path, update_chart_end=True, *, _source_resolved=False):
         """Load and downsample audio amplitude into waveform cache."""
+        if self._me_keep_drums_waveform_enabled() and not _source_resolved:
+            return self._me_refresh_waveform(
+                update_chart_end=update_chart_end)
         try:
             import numpy as np
             import soundfile as sf
+            if _source_resolved:
+                if not audio_path or not os.path.isfile(audio_path):
+                    raise OSError("waveform source is not a file")
             data, rate = sf.read(audio_path, dtype='float32', always_2d=True)
+            if _source_resolved:
+                if rate is None or rate <= 0 or len(data) == 0:
+                    raise ValueError("waveform source has no audio samples")
             # Mix to mono, take absolute value
             mono = np.abs(data.mean(axis=1))
             # v4 — also cache per-channel envelopes for the two-tone "Stereo"
@@ -32310,23 +32484,24 @@ demucs.separate.main()
         # aligned against, so that is silent wrong output with no error.
         self._me_waveform_cache_key = None
         if not getattr(self, '_me_chart_end_follow', True):
-            last = _me_last_note_time(getattr(self, 'me_notes', None))
-            try:
-                audio = self._me_audio_length_secs()
-            except Exception:
-                audio = None
-            new_c, dirty, status = _me_chart_end_on_audio_change(
-                False, getattr(self, '_me_chart_end', None), last, audio)
-            if dirty:
-                self._me_push_undo()
-                self._me_chart_end = new_c
-            elif new_c is not None:
-                self._me_chart_end = new_c
-            if status:
+            if update_chart_end:
+                last = _me_last_note_time(getattr(self, 'me_notes', None))
                 try:
-                    self.me_status_var.set(status)
+                    audio = self._me_audio_length_secs()
                 except Exception:
-                    pass
+                    audio = None
+                new_c, dirty, status = _me_chart_end_on_audio_change(
+                    False, getattr(self, '_me_chart_end', None), last, audio)
+                if dirty:
+                    self._me_push_undo()
+                    self._me_chart_end = new_c
+                elif new_c is not None:
+                    self._me_chart_end = new_c
+                if status:
+                    try:
+                        self.me_status_var.set(status)
+                    except Exception:
+                        pass
         self._me_waveform_draw()
 
     def _me_waveform_draw(self, pos=None):
@@ -32627,9 +32802,10 @@ demucs.separate.main()
             nxt = (cur + offset) % len(self.me_stem_vars)
             if self.me_stem_vars[nxt].get().strip():
                 self.me_audio_track_var.set(str(nxt))
-                path = self._me_active_audio()
-                if path:
-                    self.root.after(100, lambda p=path: self._me_waveform_load(p))
+                if not self._me_keep_drums_waveform_enabled():
+                    path = self._me_active_audio()
+                    if path:
+                        self.root.after(100, lambda p=path: self._me_waveform_load(p))
                 return
 
     def _me_vel_hscroll(self, *args):
@@ -37277,8 +37453,707 @@ demucs.separate.main()
     # Tab 7 — Sheet Music → MIDI
     # =========================================================================
 
+
+    def _sm_score_snapshot(self):
+        snap = getattr(self, "_sm_score", None)
+        if not isinstance(snap, dict) or not snap:
+            return {
+                "kind": "idle",
+                "file": "",
+                "part": "",
+                "parts": "",
+                "saved": "",
+                "lanes": {name: 0 for name in _SM_SCORE_LANES},
+                "measures": None,
+                "bpm": None,
+                "bpm_sections": None,
+                "meter": None,
+                "first_note": None,
+                "remapped": None,
+                "dropped": None,
+            }
+        return snap
+
+    def _sm_score_status_text(self, snap):
+        kind = (snap or {}).get("kind") or "idle"
+        if kind == "scan":
+            return _SM_SCORE_SCAN
+        if kind == "empty":
+            return _SM_SCORE_EMPTY
+        if kind != "score":
+            return _SM_SCORE_IDLE
+        parts = []
+        if snap.get("measures") is not None:
+            parts.append("Measures: %d" % int(snap["measures"]))
+        if snap.get("bpm") is not None:
+            bpm_txt = "BPM: %.1f" % float(snap["bpm"])
+            sections = snap.get("bpm_sections")
+            if sections is not None and int(sections) > 1:
+                bpm_txt += " (%d sections)" % int(sections)
+            parts.append(bpm_txt)
+        meter = snap.get("meter")
+        if meter:
+            num, den, tag = meter
+            parts.append("Time sig: %s/%s (%s)" % (num, den, tag))
+        if snap.get("first_note") is not None:
+            parts.append("First note: %.3f s" % float(snap["first_note"]))
+        if snap.get("remapped") is not None:
+            parts.append("Remapped: %d" % int(snap["remapped"]))
+        if snap.get("dropped") is not None:
+            parts.append("Dropped: %d" % int(snap["dropped"]))
+        return " | ".join(parts)
+
+    @staticmethod
+    def _sm_score_recount(skipped):
+        if not skipped:
+            return None, None
+        remapped = 0
+        dropped = 0
+        saw_r = False
+        saw_d = False
+        arrow = "\u2192"
+        for key, count in skipped.items():
+            try:
+                n = int(count)
+            except (TypeError, ValueError):
+                continue
+            if arrow in str(key):
+                remapped += n
+                saw_r = True
+            else:
+                dropped += n
+                saw_d = True
+        return (remapped if saw_r else None), (dropped if saw_d else None)
+
+    def _sm_score_cut(self, name):
+        base = os.path.basename(str(name or ""))
+        if len(base) <= 42:
+            return base
+        return base[:39] + "..."
+
+    def _sm_score_emit(self, snap):
+        try:
+            import copy
+            data = copy.deepcopy(snap)
+            self.root.after(0, lambda d=data: self._sm_score_show(d))
+        except Exception:
+            pass
+
+    def _sm_score_emit_merge(self, base, **updates):
+        try:
+            snap = {
+                "kind": "idle",
+                "file": "",
+                "part": "",
+                "parts": "",
+                "saved": "",
+                "lanes": {},
+                "measures": None,
+                "bpm": None,
+                "bpm_sections": None,
+                "meter": None,
+                "first_note": None,
+                "remapped": None,
+                "dropped": None,
+            }
+            if base:
+                snap.update(base)
+            snap.update(updates)
+            raw = snap.get("lanes") or {}
+            snap["lanes"] = {
+                name: int(raw.get(name, 0) or 0) for name in _SM_SCORE_LANES
+            }
+            self._sm_score_emit(snap)
+            return snap
+        except Exception:
+            return dict(base or {})
+
+    def _sm_score_show(self, snap):
+        try:
+            data = dict(snap)
+            raw = dict(data.get("lanes") or {})
+            data["lanes"] = {
+                name: int(raw.get(name, 0) or 0) for name in _SM_SCORE_LANES
+            }
+            self._sm_score = data
+        except Exception:
+            return
+        self._sm_score_paint_all()
+
+    def _sm_score_clear(self):
+        self._sm_score = {
+            "kind": "idle",
+            "file": "",
+            "part": "",
+            "parts": "",
+            "saved": "",
+            "lanes": {name: 0 for name in _SM_SCORE_LANES},
+            "measures": None,
+            "bpm": None,
+            "bpm_sections": None,
+            "meter": None,
+            "first_note": None,
+            "remapped": None,
+            "dropped": None,
+        }
+        self._sm_score_paint_all()
+
+    def _sm_score_show_scan(self, input_path, part_names):
+        try:
+            self._sm_score_show({
+                "kind": "scan",
+                "file": os.path.basename(input_path),
+                "part": "",
+                "parts": " | ".join(part_names),
+                "saved": "",
+                "lanes": {name: 0 for name in _SM_SCORE_LANES},
+                "measures": None,
+                "bpm": None,
+                "bpm_sections": None,
+                "meter": None,
+                "first_note": None,
+                "remapped": None,
+                "dropped": None,
+            })
+        except Exception:
+            pass
+
+    def _sm_score_refresh_recent(self):
+        # The menu beside Browse is the recent-file list. The Score band does
+        # not draw it. This cache stays so construction, browse, drop, and the
+        # long-path row can refresh without painting those names.
+        # recent_sm_input accepts *.*, so the menu extension check keeps every
+        # existing path. The exists check is the filter the menu has to match.
+        try:
+            raw = load_config().get("recent_sm_input") or []
+        except Exception:
+            raw = []
+        if not isinstance(raw, (list, tuple)):
+            raw = []
+        kept = []
+        for path in raw:
+            try:
+                if path and os.path.exists(path):
+                    kept.append(path)
+            except Exception:
+                continue
+        self._sm_score_recent = list(kept[:8])
+        self._sm_score_paint_all()
+
+    def _sm_score_font(self, canvas):
+        import tkinter.font as tkfont
+        font = getattr(self, "_sm_score_font_obj", None)
+        if font is None:
+            font = tkfont.Font(root=canvas, family="Segoe UI", size=9)
+            self._sm_score_font_obj = font
+        return font
+
+    def _sm_score_tokens(self):
+        try:
+            tokens = _parakit_theme_tokens()
+            return tokens["purple"], tokens["muted_fg"]
+        except Exception:
+            return "#b388ff", "#aaaaaa"
+
+    def _sm_score_primary_lines(self, snap):
+        # One copy of each fact. The control cards do not paint these.
+        lines = [self._sm_score_status_text(snap)]
+        if snap.get("file"):
+            lines.append("File: " + self._sm_score_cut(snap.get("file")))
+        if snap.get("part"):
+            lines.append("Part: " + str(snap.get("part")))
+        elif snap.get("parts"):
+            lines.append("Parts: " + str(snap.get("parts")))
+        if snap.get("saved"):
+            lines.append("Saved: " + self._sm_score_cut(snap.get("saved")))
+        return lines
+
+    def _sm_score_fit_lines(self, lines, height, linespace):
+        kept = []
+        for line in lines:
+            if (len(kept) + 1) * linespace <= height:
+                kept.append(line)
+            else:
+                break
+        return kept
+
+    def _sm_score_lane_label(self, name, lanes):
+        count = int((lanes or {}).get(name, 0) or 0)
+        return "%s  %d" % (name, count), count
+
+    def _sm_score_shape_fits(self, font, width, cols, lanes):
+        if cols < 1 or width <= 1:
+            return False
+        widest = 0
+        for name in _SM_SCORE_LANES:
+            label, _count = self._sm_score_lane_label(name, lanes)
+            widest = max(widest, int(font.measure(label)))
+        return (width / float(cols)) >= (widest + 8 + 14 + _SM_SCORE_MIN_BAR)
+
+    def _sm_score_layout(self, font, width, height, snap, linespace):
+        """Pick the lane grid that shows the most unclipped facts.
+
+        Ties keep the earlier, wider shape, so a tall band stays 4 columns
+        by 3 rows. A short band uses 6 by 2 when that grid shows a fact the
+        4 by 3 grid would clip.
+        """
+        row_h = max(linespace, 12)
+        lanes = (snap or {}).get("lanes") or {}
+        lines = self._sm_score_primary_lines(snap)
+        best = None
+        best_rank = None
+        for cols, rows in _SM_SCORE_GRID_SHAPES:
+            if cols * rows < len(_SM_SCORE_LANES):
+                continue
+            if not self._sm_score_shape_fits(font, width, cols, lanes):
+                continue
+            need = rows * row_h
+            if need + linespace > height:
+                continue
+            header = self._sm_score_fit_lines(lines, height - need, linespace) or lines[:1]
+            draw_bottom = 2 + len(header) * linespace + (rows - 1) * row_h + 1 + linespace
+            rank = (len(header), 1 if draw_bottom <= height + 0.5 else 0)
+            if best is None or rank > best_rank:
+                best = ((cols, rows, row_h), header)
+                best_rank = rank
+        if best is not None:
+            return best
+        return None, self._sm_score_fit_lines(lines, height, linespace) or lines[:1]
+
+    def _sm_score_draw_lines(self, canvas, font, lines, y, linespace, purple, muted, status):
+        tagged = False
+        for i, line in enumerate(lines):
+            is_status = (not tagged) and line == status
+            if is_status:
+                tagged = True
+            canvas.create_text(
+                4, y + i * linespace, anchor="nw", text=line,
+                fill=purple if is_status else muted, font=font,
+                tags=("score_fg",) if is_status else (),
+            )
+        return tagged
+
+    def _sm_score_draw_grid(self, canvas, font, x0, y0, width, lanes, purple, muted, cols, rows, row_h):
+        col_w = width / float(cols)
+        drawn = []
+        max_count = 1
+        for index, name in enumerate(_SM_SCORE_LANES):
+            row = index // cols
+            if row >= rows:
+                break
+            label, count = self._sm_score_lane_label(name, lanes)
+            drawn.append((index, label, count))
+            if count > max_count:
+                max_count = count
+        widest = 0
+        for _index, label, _count in drawn:
+            widest = max(widest, int(font.measure(label)))
+        # One start and one track in every cell. The start follows the widest
+        # label actually drawn. _sm_score_shape_fits accepts a shape only when
+        # that track is at least 8 + _SM_SCORE_MIN_BAR, which is 10 px.
+        bar_off = 4 + widest + 6
+        track = col_w - float(bar_off) - 4
+        if track < 2:
+            return
+        for index, label, count in drawn:
+            col = index % cols
+            row = index // cols
+            x = x0 + col * col_w
+            y = y0 + row * row_h
+            canvas.create_text(
+                x + 4, y + 1, anchor="nw", text=label, font=font, fill=muted)
+            bar_x = x + bar_off
+            bar_h = 8 if row_h >= 14 else max(3, row_h - 4)
+            bar_y = y + max(1, (row_h - bar_h) / 2.0)
+            if count <= 0:
+                bar_w = 2
+                color = muted
+            else:
+                bar_w = track * (count / float(max_count))
+                if bar_w < 2:
+                    bar_w = 2
+                if bar_w > track:
+                    bar_w = track
+                color = purple
+            canvas.create_rectangle(
+                bar_x, bar_y, bar_x + bar_w, bar_y + bar_h,
+                fill=color, outline=color)
+
+    def _sm_score_paint_one(self, canvas):
+        canvas.delete("all")
+        role = (getattr(self, "_sm_score_roles", None) or {}).get(canvas)
+        if role != "band":
+            return
+        width = int(canvas.winfo_width())
+        height = int(canvas.winfo_height())
+        if width <= 1 or height <= 1:
+            return
+        font = self._sm_score_font(canvas)
+        linespace = max(1, int(font.metrics("linespace") or 1))
+        if height < linespace:
+            return
+        purple, muted = self._sm_score_tokens()
+        snap = self._sm_score_snapshot()
+        lanes = snap.get("lanes") or {}
+        status = self._sm_score_status_text(snap)
+        shape, header = self._sm_score_layout(font, width, height, snap, linespace)
+        self._sm_score_draw_lines(
+            canvas, font, header, 2, linespace, purple, muted, status)
+        if shape is None:
+            return
+        cols, rows, row_h = shape
+        self._sm_score_draw_grid(
+            canvas, font, 0, 2 + len(header) * linespace, width, lanes,
+            purple, muted, cols, rows, row_h)
+
+    def _sm_score_paint_all(self):
+        for canvas in getattr(self, "_sm_score_canvases", ()) or ():
+            try:
+                self._sm_score_paint_one(canvas)
+            except Exception:
+                pass
+
+    def _sm_score_paint(self, event=None):
+        try:
+            canvas = getattr(event, "widget", None) if event is not None else None
+            if canvas is None:
+                self._sm_score_paint_all()
+                return
+            self._sm_score_paint_one(canvas)
+        except Exception:
+            pass
+
+    def _sm_short_roomy_fact_need(self):
+        """Canvas height for four unclipped facts plus a 6 by 2 lane grid."""
+        band = getattr(self, "_sm_score_band", None)
+        if band is None:
+            return None
+        try:
+            font = self._sm_score_font(band)
+            linespace = max(1, int(font.metrics("linespace") or 1))
+        except Exception:
+            return None
+        row_h = max(linespace, 12)
+        return 2 + 4 * linespace + row_h + 1 + linespace
+
+    def _sm_iter_page_buttons(self):
+        inner = getattr(self, "_sm_inner", None)
+        if inner is None:
+            return
+        stack = [inner]
+        while stack:
+            widget = stack.pop()
+            try:
+                stack.extend(widget.winfo_children())
+            except Exception:
+                pass
+            try:
+                kind = widget.winfo_class()
+            except Exception:
+                continue
+            if kind in ("TButton", "TCheckbutton", "TRadiobutton"):
+                yield widget
+
+    def _sm_padding_key(self, widget, value):
+        if value is None or value == "":
+            return ()
+        try:
+            if isinstance(value, (tuple, list)):
+                parts = tuple(value)
+            else:
+                parts = tuple(widget.tk.splitlist(str(value)))
+        except Exception:
+            return (str(value),)
+        nums = []
+        saw_number = False
+        for part in parts:
+            text = str(part).strip()
+            if text == "":
+                continue
+            saw_number = True
+            try:
+                nums.append(int(widget.winfo_pixels(text)))
+            except Exception:
+                return (str(value),)
+        if not saw_number:
+            return ()
+        if len(nums) == 1:
+            return (nums[0], nums[0])
+        if len(nums) >= 4 and nums[0] == nums[2] and nums[1] == nums[3]:
+            return (nums[0], nums[1])
+        return (nums[0], nums[1])
+
+    def _sm_write_short_roomy_squeeze(self, on):
+        """Button and Convert spacing only. Card padding stays on the density binding."""
+        for widget in self._sm_iter_page_buttons():
+            kind = widget.winfo_class()
+            if on and kind == "TButton":
+                want = (6, 1)
+            elif on:
+                want = (4, 0)
+            else:
+                want = ""
+            try:
+                current = widget.cget("padding")
+            except Exception:
+                continue
+            if self._sm_padding_key(widget, current) == self._sm_padding_key(widget, want):
+                continue
+            try:
+                widget.configure(padding=want)
+            except Exception:
+                pass
+        btn = getattr(self, "sm_btn", None)
+        if btn is None:
+            return
+        want_ipady = 0 if on else 8
+        want_pady = (2, 2) if on else (8, 4)
+        try:
+            info = btn.pack_info()
+        except Exception:
+            return
+        try:
+            cur_ipady = int(float(info.get("ipady") or 0))
+        except (TypeError, ValueError):
+            cur_ipady = -1
+        cur_pady = self._sm_padding_key(btn, info.get("pady"))
+        if cur_ipady == want_ipady and cur_pady == self._sm_padding_key(btn, want_pady):
+            return
+        try:
+            btn.pack_configure(ipady=want_ipady, pady=want_pady)
+        except Exception:
+            pass
+
+    def _sm_clear_short_roomy_squeeze(self):
+        state = getattr(self, "_sm_short_squeeze", None)
+        if isinstance(state, dict) and state.get("on"):
+            self._sm_write_short_roomy_squeeze(False)
+        self._sm_short_squeeze = {
+            "on": False, "base": None, "gain": None, "hold": False, "released": False,
+            "awaiting": False, "seen": None, "seen_client": None, "base_client": None,
+        }
+
+    def _sm_score_height_measured(self):
+        """Canvas height, or (False, 0) when that height is not on screen.
+
+        A hidden Score canvas keeps the height from the last time the page
+        was shown. The squeeze must not turn on or off from that number.
+        """
+        band = getattr(self, "_sm_score_band", None)
+        if band is None:
+            return False, 0
+        try:
+            if not int(band.winfo_ismapped()):
+                return False, 0
+            height = int(band.winfo_height())
+        except Exception:
+            return False, 0
+        if height <= 1:
+            return False, 0
+        return True, height
+
+    def _sm_sheet_is_current(self):
+        tab = getattr(self, "_sm_tab", None)
+        if tab is None:
+            return False
+        try:
+            return str(self.notebook.select()) == str(tab)
+        except Exception:
+            return False
+
+    def _sm_on_sheet_shown(self, _event=None):
+        if not self._sm_sheet_is_current():
+            return
+        self._sm_schedule_shown_refit()
+
+    def _sm_schedule_shown_refit(self):
+        """Refit after Sheet Music is mapped, from the height then on screen.
+
+        The first idle can still see the canvas from before the page was
+        shown. A second idle reads it again after geometry has run.
+        """
+        if getattr(self, "_sm_shown_refit_queued", False):
+            return
+        self._sm_shown_refit_queued = True
+
+        def _later():
+            self._sm_shown_refit_queued = False
+            try:
+                self.root.update_idletasks()
+            except Exception:
+                pass
+            refit = getattr(self, "_sm_refit", None)
+            if not callable(refit):
+                return
+            refit()
+
+            def _again():
+                try:
+                    self.root.update_idletasks()
+                except Exception:
+                    pass
+                refit()
+
+            try:
+                self.root.after_idle(_again)
+            except Exception:
+                pass
+
+        try:
+            self.root.after_idle(_later)
+        except Exception:
+            self._sm_shown_refit_queued = False
+
+    def _sm_squeeze_client(self):
+        try:
+            return (int(self.root.winfo_width()), int(self.root.winfo_height()))
+        except Exception:
+            return None
+
+    def _sm_roomy_band_needs_squeeze(self, canvas_h, need):
+        """True when this Roomy Score canvas cannot show the facts and lanes.
+
+        The measured canvas is the trigger. A client height of 913 or more
+        does not turn the squeeze off while this canvas is still short.
+        """
+        try:
+            canvas_h = int(canvas_h)
+            need = int(need)
+        except (TypeError, ValueError):
+            return False
+        return canvas_h < need
+
+    def _sm_apply_short_roomy_squeeze(self):
+        """Squeeze Sheet Music controls when the settled Roomy band is short.
+
+        Base is the unsqueezed canvas height. It is recorded only when that
+        height and the client size match the previous pass, and the previous
+        pass was scheduled after the fill. A band that is still collapsing
+        is not the baseline. Gain is the later growth at that same client
+        size, and only when it is within what the padding can return. A
+        canvas that already clears the fact floor by more than that padding
+        stays unsqueezed, so the closed 2000x1050 Roomy band stays 229.
+        Opening Advanced on a Roomy page turns the squeeze on when that
+        open canvas is shorter than the fact and lane need. Closing
+        Advanced releases the squeeze when the canvas fits again.
+        """
+        try:
+            measured, height = self._sm_score_height_measured()
+            if not measured:
+                state = getattr(self, "_sm_short_squeeze", None)
+                if isinstance(state, dict):
+                    state["awaiting"] = True
+                return
+            need = self._sm_short_roomy_fact_need()
+            if not need:
+                return
+            state = getattr(self, "_sm_short_squeeze", None)
+            if not isinstance(state, dict):
+                state = {
+                    "on": False, "base": None, "gain": None,
+                    "hold": False, "released": False, "awaiting": False,
+                    "seen": None, "seen_client": None, "base_client": None,
+                }
+                self._sm_short_squeeze = state
+            if bool(getattr(self, "_compact_layout", False)):
+                self._sm_clear_short_roomy_squeeze()
+                return
+            client = self._sm_squeeze_client()
+            seen = state.get("seen")
+            seen_client = state.get("seen_client")
+            state["seen"] = height
+            state["seen_client"] = client
+            settled = (
+                seen == height
+                and seen_client == client
+                and client is not None
+            )
+            # Convert loses 16 px of ipady and 8 px of pack pady. The
+            # 1600x900 shrink grows the canvas by 77. A larger jump is a
+            # resize or a fill that had not settled, not the padding.
+            gain_cap = 96
+            if not settled:
+                state["awaiting"] = True
+                if state.get("on"):
+                    self._sm_write_short_roomy_squeeze(True)
+                return
+            state["awaiting"] = False
+            if not state.get("on"):
+                if not self._sm_roomy_band_needs_squeeze(height, need):
+                    state["released"] = False
+                    state["hold"] = False
+                    state["base"] = None
+                    state["gain"] = None
+                    state["base_client"] = None
+                    return
+                if state.get("released"):
+                    state["hold"] = True
+                    state["released"] = False
+                    self._sm_write_short_roomy_squeeze(True)
+                    state["on"] = True
+                    return
+                self._sm_write_short_roomy_squeeze(True)
+                state["on"] = True
+                state["base"] = height
+                state["gain"] = None
+                state["hold"] = False
+                state["released"] = False
+                state["base_client"] = client
+                return
+            self._sm_write_short_roomy_squeeze(True)
+            release = height >= need + gain_cap
+            if not release and state.get("gain") is None:
+                base = state.get("base")
+                same_client = client is not None and client == state.get("base_client")
+                if not isinstance(base, int) or not same_client:
+                    self._sm_write_short_roomy_squeeze(False)
+                    state["on"] = False
+                    state["base"] = None
+                    state["gain"] = None
+                    state["base_client"] = None
+                    state["released"] = False
+                    state["hold"] = False
+                    state["seen"] = None
+                    state["seen_client"] = None
+                    state["awaiting"] = True
+                    return
+                if height > base:
+                    delta = height - base
+                    if delta <= gain_cap:
+                        state["gain"] = delta
+                        return
+                    self._sm_write_short_roomy_squeeze(False)
+                    state["on"] = False
+                    state["base"] = None
+                    state["gain"] = None
+                    state["base_client"] = None
+                    state["released"] = False
+                    state["hold"] = False
+                    state["seen"] = None
+                    state["seen_client"] = None
+                    state["awaiting"] = True
+                    return
+            if not release:
+                gain = state.get("gain")
+                if isinstance(gain, int):
+                    estimated = height - gain
+                    margin = 8 if state.get("hold") else 0
+                    if not self._sm_roomy_band_needs_squeeze(estimated, need + margin):
+                        release = True
+            if release:
+                self._sm_write_short_roomy_squeeze(False)
+                state["on"] = False
+                state["released"] = True
+        except Exception:
+            return
+
     def _build_sheet_music_tab(self, parent):
         """Tab 7 — Sheet Music (MusicXML) → MIDI converter."""
+        self._sm_tab = parent
+        self._sm_short_squeeze = {
+            "on": False, "base": None, "gain": None, "hold": False, "released": False,
+            "awaiting": False, "seen": None, "seen_client": None, "base_client": None,
+        }
         # Compact vertical padding tightened (header and card gaps)
         # so the Convert button sits at least 16 px inside the fold at the 1480x930 gate size.
         # Roomy paddings stay the mode-bound values.
@@ -37298,7 +38173,9 @@ demucs.separate.main()
         _SM_MIN_LOG = 80
         _SM_BODY_PAD_Y = 6
         _SM_LOG_PAD = 5
-        _SM_MAX_REPASS = 3
+        # Settlement reads the canvas on a later pass. The cap covers a
+        # collapsing fill, the squeeze turning on, and the gain reading.
+        _SM_MAX_REPASS = 8
 
         def _fit_width():
             """Phase A: write width-derived values (canvas item width, header wraplength)."""
@@ -37431,14 +38308,55 @@ demucs.separate.main()
                 chrome_moved = bool(_fit_fill())
             except Exception:
                 chrome_moved = False
-            if (not wrote_a) and (not chrome_moved):
+            # The fill has written. The canvas height on this pass can still
+            # be the previous size. Base is recorded on a later pass, after
+            # geometry has run, and only when the height stayed the same.
+            before = getattr(self, "_sm_short_squeeze", None)
+            before_key = (
+                bool(isinstance(before, dict) and before.get("on")),
+                before.get("gain") if isinstance(before, dict) else None,
+                bool(isinstance(before, dict) and before.get("hold")),
+            )
+            self._sm_apply_short_roomy_squeeze()
+            after = getattr(self, "_sm_short_squeeze", None)
+            after_key = (
+                bool(isinstance(after, dict) and after.get("on")),
+                after.get("gain") if isinstance(after, dict) else None,
+                bool(isinstance(after, dict) and after.get("hold")),
+            )
+            squeeze_changed = after_key != before_key
+            # A hidden canvas has no real height. Ask for another pass only
+            # while this page is the one on screen, so a hidden resize does
+            # not burn the repass cap before the page is shown. A squeeze
+            # that is already on still needs that later pass: the gain is
+            # recorded only after the fill has settled.
+            try:
+                page_current = bool(self._sm_sheet_is_current())
+            except Exception:
+                page_current = False
+            needs_measure = (
+                page_current
+                and isinstance(after, dict)
+                and bool(after.get("awaiting"))
+            )
+            if (not wrote_a) and (not chrome_moved) and (not squeeze_changed) and (not needs_measure):
                 _pending["n"] = 0
                 return
-            if chrome_moved:
+            if chrome_moved or squeeze_changed or needs_measure:
                 n = int(_pending.get("n") or 0)
                 if n < _SM_MAX_REPASS:
                     _pending["n"] = n + 1
-                    _refit()
+                    if needs_measure or squeeze_changed:
+                        pending_id = _pending.get("id")
+                        if pending_id is not None:
+                            try:
+                                main.after_cancel(pending_id)
+                            except Exception:
+                                pass
+                            _pending["id"] = None
+                        _refit_settled()
+                    else:
+                        _refit()
                     return
             _pending["n"] = 0
 
@@ -37450,7 +38368,22 @@ demucs.separate.main()
             except Exception:
                 _pending["id"] = None
 
+        def _refit_settled():
+            """Run the next pass after geometry, not in this idle burst.
+
+            after_idle can run before the fill's height reaches the Score
+            canvas. A short timer lets that height settle before base or
+            gain is recorded.
+            """
+            if _pending["id"] is not None:
+                return
+            try:
+                _pending["id"] = main.after(50, _refit_now)
+            except Exception:
+                _pending["id"] = None
+
         self._sm_refit = _refit
+        self.notebook.bind("<<NotebookTabChanged>>", self._sm_on_sheet_shown, add="+")
 
         def _on_canvas(e):
             try:
@@ -37649,23 +38582,30 @@ demucs.separate.main()
         bottom_row.columnconfigure(0, weight=5, uniform="sm_bottom")
         bottom_row.columnconfigure(1, weight=3, uniform="sm_bottom")
         bottom_row.columnconfigure(2, weight=3, uniform="sm_bottom")
-        bottom_row.rowconfigure(0, weight=1)
+        bottom_row.rowconfigure(0, weight=0)
+        bottom_row.rowconfigure(1, weight=1)
         self._sm_row3 = bottom_row
         self._sm_bottom_row = bottom_row
 
         # ── Combined Output & Audio Offset (Column 0) ────────────────────────
         comb_frame = ttk.LabelFrame(bottom_row, text=" Output & Audio Offset ", padding=_sm_card_pad)
         _fluent_labelframe_title(comb_frame, " Output & Audio Offset ", "save")
+        # Fills the row when Advanced is the taller card, so the two
+        # bottom borders stay on one line. Inner columns stay sticky north.
         comb_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         comb_frame.columnconfigure(0, weight=1)
         comb_frame.columnconfigure(1, weight=1)
-        comb_frame.rowconfigure(0, weight=1)
+        comb_frame.rowconfigure(0, weight=0)
         self._sm_comb_frame = comb_frame
 
         out_frame = ttk.Frame(comb_frame)
-        out_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        out_frame.grid(row=0, column=0, sticky="new", padx=(0, 6))
         out_frame.columnconfigure(1, weight=1)
+        out_frame.rowconfigure(0, weight=0)
+        out_frame.rowconfigure(1, weight=0)
         self._sm_out_frame = out_frame
+        self._sm_score_roles = {}
+        self._sm_score_recent = []
 
         ttk.Label(out_frame, text="Output Folder:").grid(row=0, column=0, sticky="w", padx=(0, 4))
         self.sm_output_var = tk.StringVar()
@@ -37697,7 +38637,7 @@ demucs.separate.main()
                         variable=self.sm_send_creator_var).pack(anchor="w", pady=(2, 0))
 
         offset_frame = ttk.Frame(comb_frame)
-        offset_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        offset_frame.grid(row=0, column=1, sticky="new", padx=(6, 0))
         self._sm_offset_frame = offset_frame
 
         ttk.Label(offset_frame, text="Drum start offset:").pack(anchor="w")
@@ -37793,6 +38733,8 @@ demucs.separate.main()
         # ── Advanced (Column 1) ──────────────────────────────────────────────
         adv_card = ttk.LabelFrame(bottom_row, text=" Advanced ", padding=_sm_card_pad)
         _fluent_labelframe_title(adv_card, " Advanced ", "settings")
+        # Fills the row. Packed controls stay at the top, so the border
+        # meets the Score band on the same line as Output.
         adv_card.grid(row=0, column=1, sticky="nsew", padx=(3, 3))
         self._sm_adv_card = adv_card
 
@@ -37937,7 +38879,7 @@ demucs.separate.main()
         # ── Log (Column 2) ───────────────────────────────────────────────────
         log_frame = ttk.LabelFrame(bottom_row, text=" Log ", padding=5)
         _fluent_labelframe_title(log_frame, " Log ", "document")
-        log_frame.grid(row=0, column=2, sticky="nsew", padx=(6, 0))
+        log_frame.grid(row=0, column=2, rowspan=2, sticky="nsew", padx=(6, 0))
         self._sm_log_frame = log_frame
         log_btn_row = ttk.Frame(log_frame)
         log_btn_row.pack(fill=tk.X, pady=(0, 4))
@@ -37950,6 +38892,24 @@ demucs.separate.main()
         log_vp.pack_propagate(False)
         log_vp.configure(height=_SM_MIN_LOG)
         self._sm_log_vp = log_vp
+        self._sm_score_band_frame = ttk.Frame(bottom_row)
+        # 1 px gutter. The save icon title is 5 px taller than the plain
+        # label, and those pixels belong to the Score band.
+        self._sm_score_band_frame.grid(
+            row=1, column=0, columnspan=2, sticky="nsew", padx=(0, 6), pady=(1, 0))
+        self._sm_score_band_frame.pack_propagate(False)
+        self._sm_score_band_frame.configure(height=1, width=1)
+        self._sm_score_card = ttk.LabelFrame(
+            self._sm_score_band_frame, text=" Score ", padding=_sm_card_pad)
+        _fluent_labelframe_title(self._sm_score_card, " Score ", "music_note_2")
+        self._sm_score_card.pack(fill=tk.BOTH, expand=True)
+        self._sm_score_band = tk.Canvas(
+            self._sm_score_card, bg=APP_BG, highlightthickness=0, bd=0, width=1, height=1)
+        self._sm_score_band.pack(fill=tk.BOTH, expand=True)
+        self._sm_score_roles[self._sm_score_band] = "band"
+        self._sm_score_band.bind("<Configure>", self._sm_score_paint)
+        self._sm_score_band.bind("<Map>", self._sm_on_sheet_shown, add="+")
+        self._sm_score_canvases = (self._sm_score_band,)
         self.sm_log_text = scrolledtext.ScrolledText(
             log_vp, height=1, bg="#0d1117", fg="#58a6ff",
             font=("Consolas", 9), wrap=tk.WORD,
@@ -37961,6 +38921,7 @@ demucs.separate.main()
             (in_frame, "padding", (6, 6), (10, 6)),
             (comb_frame, "padding", (6, 6), (10, 6)),
             (adv_card, "padding", (6, 6), (10, 6)),
+            (self._sm_score_card, "padding", (6, 6), (10, 6)),
             (row_top, "pack_pady", (0, 4), (0, 6)),
         )
         self._sm_wrap_bound = (
@@ -37993,6 +38954,8 @@ demucs.separate.main()
             (_sm_sync_lbl, "warning"),
         )
         self._sm_density_applied = _sm_compact
+        self._sm_score_clear()
+        self._sm_score_refresh_recent()
         _refit()
 
     def _sm_open_search(self):
@@ -38118,6 +39081,10 @@ demucs.separate.main()
         if path:
             self.sm_input_var.set(path)
             self._add_recent_file("recent_sm_input", path)
+            try:
+                self._sm_score_refresh_recent()
+            except Exception:
+                pass
 
     def _sm_browse_output(self):
         path = filedialog.askdirectory()
@@ -38133,6 +39100,11 @@ demucs.separate.main()
         if not input_path or not os.path.exists(input_path):
             messagebox.showerror("No File", "Please select a MusicXML file first.")
             return
+
+        try:
+            self._sm_score_refresh_recent()
+        except Exception:
+            pass
 
         try:
             # Read raw XML (handles both .mxl and .xml). Container-aware -- see
@@ -38165,6 +39137,7 @@ demucs.separate.main()
             values = ["Auto-detect (recommended)"] + part_names
             self.sm_part_combo["values"] = values
             self.sm_part_combo.set("Auto-detect (recommended)")
+            self._sm_score_show_scan(input_path, part_names)
 
             messagebox.showinfo(
                 "Parts Found",
@@ -38201,6 +39174,10 @@ demucs.separate.main()
 
         self.sm_btn.configure(state="disabled", text="Converting...")
         self._sm_clear_log()
+        try:
+            self._sm_score_clear()
+        except Exception:
+            pass
 
         # Kick off elapsed timer + progress bar — set before the worker runs
         # so the very first log line carries an accurate [mm:ss] prefix.
@@ -38312,6 +39289,7 @@ demucs.separate.main()
 
         input_path = self.sm_input_var.get().strip()
         output_dir = self.sm_output_var.get().strip()
+        score_snap = None
 
         # GM drum note → Paradiddle MIDI note map
         # Standard GM percussion uses channel 10 (0-indexed: 9)
@@ -38375,10 +39353,12 @@ demucs.separate.main()
             # ── Read time signature ────────────────────────────────────────────
             ts_num_override = self.sm_timesig_num_var.get().strip()
             ts_den_override = self.sm_timesig_den_var.get().strip()
+            meter_tag = "first in file"
             if ts_num_override and ts_den_override:
                 try:
                     ts_num = int(ts_num_override)
                     ts_den = int(ts_den_override)
+                    meter_tag = "override"
                     self._sm_log(f"Time sig: {ts_num}/{ts_den}  (user override)")
                 except ValueError:
                     ts_num, ts_den = 4, 4
@@ -38670,6 +39650,27 @@ demucs.separate.main()
             if total_notes == 0:
                 self._sm_log("\n⚠  No drum notes found. Check that your file contains "
                              "percussion/drum notation and try again.")
+                try:
+                    _bn = ""
+                    if perc_part is not None:
+                        _bn = part_id_to_name.get(perc_part.get("id"), "") or ""
+                    _br, _bd = self._sm_score_recount(skipped_notes)
+                    self._sm_score_emit_merge(
+                        {},
+                        kind="empty",
+                        file=os.path.basename(input_path),
+                        part=_bn,
+                        lanes=dict(note_counts),
+                        measures=len(measures),
+                        bpm=float(bpm),
+                        bpm_sections=None,
+                        meter=(int(ts_num), int(ts_den), meter_tag),
+                        first_note=None,
+                        remapped=_br,
+                        dropped=_bd,
+                    )
+                except Exception:
+                    pass
                 self.root.after(0, lambda: self.sm_btn.configure(
                     state="normal", text="Convert Sheet Music to MIDI"))
                 return
@@ -38689,6 +39690,28 @@ demucs.separate.main()
                 self.root.after(0, lambda t=first_secs_raw: self.sm_first_note_lbl.configure(
                     text=f"First note: {t:.3f}s"))
 
+
+            try:
+                _bn = ""
+                if perc_part is not None:
+                    _bn = part_id_to_name.get(perc_part.get("id"), "") or ""
+                _br, _bd = self._sm_score_recount(skipped_notes)
+                score_snap = self._sm_score_emit_merge(
+                    {},
+                    kind="score",
+                    file=os.path.basename(input_path),
+                    part=_bn,
+                    lanes=dict(note_counts),
+                    measures=len(measures),
+                    bpm=float(bpm),
+                    bpm_sections=None,
+                    meter=(int(ts_num), int(ts_den), meter_tag),
+                    first_note=float(first_secs_raw),
+                    remapped=_br,
+                    dropped=_bd,
+                )
+            except Exception:
+                pass
             normalize = getattr(self, 'sm_offset_normalize_var', None) and self.sm_offset_normalize_var.get()
             if normalize and events:
                 first_tick_raw = sorted(events, key=lambda e: e[0])[0][0]
@@ -38790,6 +39813,12 @@ demucs.separate.main()
                 with open(midi_path, 'wb') as f:
                     f.write(midi_bytes)
                 self._sm_log(f"\n✓ MIDI saved to: {midi_path}")
+                try:
+                    if score_snap:
+                        score_snap = self._sm_score_emit_merge(
+                            score_snap, saved=os.path.basename(midi_path))
+                except Exception:
+                    pass
 
             if self.sm_open_editor_var.get():
                 # Write to temp if not already saved
@@ -38837,6 +39866,10 @@ demucs.separate.main()
             import traceback
             self._sm_log(f"\nERROR: {e}")
             self._sm_log(traceback.format_exc())
+            try:
+                self.root.after(0, self._sm_score_clear)
+            except Exception:
+                pass
             self._bg_message(
                 "Conversion Failed", f"An error occurred:\n{e}\n\nCheck the log for details.")
 
@@ -38858,6 +39891,7 @@ demucs.separate.main()
             input_path  = self.sm_input_var.get().strip()
             output_dir  = self.sm_output_var.get().strip()
             song_name   = os.path.splitext(os.path.basename(input_path))[0]
+            score_snap = None
 
             self._sm_log("=== Sheet Music → MIDI  (music21 parser) ===\n")
             self._sm_log(f"Input: {os.path.basename(input_path)}")
@@ -38936,14 +39970,41 @@ demucs.separate.main()
             ts_num_override = self.sm_timesig_num_var.get().strip()
             ts_den_override = self.sm_timesig_den_var.get().strip()
 
+            # One quarter-BPM reader for the log and the tempo map.
+            # getQuarterBPM converts a printed referent and a playback-only
+            # sounding value. A mark with no usable tempo is skipped.
+            def _mark_bpm(mm):
+                try:
+                    got = mm.getQuarterBPM()
+                except Exception:
+                    return None
+                if got is None:
+                    return None
+                try:
+                    got = float(got)
+                except (TypeError, ValueError):
+                    return None
+                if not got > 0:
+                    return None
+                return got
+
+            # getQuarterBPM prefers numberSounding and scales by the referent.
+            # Writing number alone leaves a half mark at twice the override
+            # and a playback-only mark at its old sounding tempo.
+            def _set_quarter_bpm(mm, bpm):
+                mm.numberSounding = None
+                mm.setQuarterBPM(bpm)
+
             if bpm_override:
                 try:
                     bpm = float(bpm_override)
                     self._sm_log(f"BPM override: {bpm:.1f}")
                     for mm in score.flatten().getElementsByClass('MetronomeMark'):
                         mm.number = bpm
+                        _set_quarter_bpm(mm, bpm)
                     if not score.flatten().getElementsByClass('MetronomeMark'):
                         mm = m21.tempo.MetronomeMark(number=bpm)
+                        _set_quarter_bpm(mm, bpm)
                         # NOT score.flatten().insert(...): flatten returns a NEW stream, so the
                         # insert landed in a throwaway and the override silently did nothing
                         # (verified: the written MIDI came out at 120, not the requested BPM).
@@ -38966,7 +40027,13 @@ demucs.separate.main()
 
             # ── Extract tempo and time sig for log ────────────────────────────
             tempos = score.flatten().getElementsByClass('MetronomeMark')
-            bpm_log = f"{tempos[0].number:.1f}" if tempos else "120 (default)"
+            bpm_log = "120 (default)"
+            for _mm in tempos:
+                _bpm = _mark_bpm(_mm)
+                if _bpm is None:
+                    continue
+                bpm_log = f"{_bpm:.1f}"
+                break
             self._sm_log(f"BPM: {bpm_log}")
 
             timesigs = score.flatten().getElementsByClass('TimeSignature')
@@ -38979,7 +40046,10 @@ demucs.separate.main()
             for mm in score.flatten().getElementsByClass('MetronomeMark'):
                 try:
                     offset_ql = float(mm.offset)
-                    tempo_map.append((offset_ql, float(mm.number)))
+                    _bpm = _mark_bpm(mm)
+                    if _bpm is None:
+                        continue
+                    tempo_map.append((offset_ql, float(_bpm)))
                 except Exception:
                     pass
             if not tempo_map:
@@ -38990,6 +40060,14 @@ demucs.separate.main()
             if bpm_override:
                 try:
                     bpm_val = float(bpm_override)
+                    _from_marks = []
+                    for mm in score.flatten().getElementsByClass('MetronomeMark'):
+                        _bpm = _mark_bpm(mm)
+                        if _bpm is None:
+                            continue
+                        _from_marks.append(float(_bpm))
+                    if _from_marks:
+                        bpm_val = _from_marks[0]
                     tempo_map = [(0.0, bpm_val)]
                     self._sm_log(f"BPM override: {bpm_val:.1f}")
                 except ValueError:
@@ -39303,6 +40381,26 @@ demucs.separate.main()
             if total == 0:
                 self._sm_log("\n⚠  No drum notes found. Check your file has a percussion "
                              "staff and try again, or switch to Standard XML parser.")
+                try:
+                    _pid = drum_part_xml.get("id", "") if drum_part_xml is not None else ""
+                    _bn = part_id_to_name.get(_pid, "") or ""
+                    _br, _bd = self._sm_score_recount(skipped)
+                    self._sm_score_emit_merge(
+                        {},
+                        kind="empty",
+                        file=os.path.basename(input_path),
+                        part=_bn,
+                        lanes=dict(note_counts),
+                        measures=len(measures),
+                        bpm=float(bpm_val),
+                        bpm_sections=len(tempo_map),
+                        meter=None,
+                        first_note=None,
+                        remapped=_br,
+                        dropped=_bd,
+                    )
+                except Exception:
+                    pass
                 self.root.after(0, lambda: self.sm_btn.configure(
                     state="normal", text="Convert Sheet Music to MIDI"))
                 return
@@ -39331,6 +40429,27 @@ demucs.separate.main()
                 self.root.after(0, lambda t=first_secs_raw: self.sm_first_note_lbl.configure(
                     text=f"First note: {t:.3f}s"))
 
+
+            try:
+                _pid = drum_part_xml.get("id", "") if drum_part_xml is not None else ""
+                _bn = part_id_to_name.get(_pid, "") or ""
+                _br, _bd = self._sm_score_recount(skipped)
+                score_snap = self._sm_score_emit_merge(
+                    {},
+                    kind="score",
+                    file=os.path.basename(input_path),
+                    part=_bn,
+                    lanes=dict(note_counts),
+                    measures=len(measures),
+                    bpm=float(bpm_val),
+                    bpm_sections=len(tempo_map),
+                    meter=None,
+                    first_note=float(first_secs_raw),
+                    remapped=_br,
+                    dropped=_bd,
+                )
+            except Exception:
+                pass
             normalize = getattr(self, 'sm_offset_normalize_var', None) and self.sm_offset_normalize_var.get()
             if normalize and first_secs_raw != 0.0:
                 # Shift all note times so first note lands at exactly audio_offset_secs.
@@ -39374,6 +40493,21 @@ demucs.separate.main()
                              f"header (the denominator must be a power of 2) — using 4/4.")
                 _hdr_num, _hdr_den = 4, 4
             self._sm_log(f"  MIDI header time signature: {_hdr_num}/{_hdr_den}")
+            try:
+                _score_meter_tag = "drum part"
+                if ts_num_override and ts_den_override:
+                    try:
+                        if (int(ts_num_override), int(ts_den_override)) == (int(_hdr_num), int(_hdr_den)):
+                            _score_meter_tag = "override"
+                    except ValueError:
+                        pass
+                if score_snap:
+                    score_snap = self._sm_score_emit_merge(
+                        score_snap,
+                        meter=(int(_hdr_num), int(_hdr_den), _score_meter_tag),
+                    )
+            except Exception:
+                pass
 
             def midi_header():
                 return b'MThd' + struct.pack('>IHHH', 6, 1, 2, tpb)
@@ -39418,6 +40552,12 @@ demucs.separate.main()
                 with open(midi_path, 'wb') as f:
                     f.write(midi_bytes)
                 self._sm_log(f"\n✓ MIDI saved to: {midi_path}")
+                try:
+                    if score_snap:
+                        score_snap = self._sm_score_emit_merge(
+                            score_snap, saved=os.path.basename(midi_path))
+                except Exception:
+                    pass
 
             if self.sm_open_editor_var.get():
                 if midi_path is None:
@@ -39462,6 +40602,10 @@ demucs.separate.main()
             import traceback
             self._sm_log(f"\nERROR: {e}")
             self._sm_log(traceback.format_exc())
+            try:
+                self.root.after(0, self._sm_score_clear)
+            except Exception:
+                pass
             self._bg_message(
                 "Conversion Failed", f"An error occurred:\n{e}\n\nCheck the log for details.")
         finally:
@@ -47171,7 +48315,13 @@ demucs.separate.main()
                  "  scrolls in sync with the note lanes. The green playhead line\n"
                  "  appears on the waveform too. Click the waveform to seek.\n"
                  "  Loads automatically when you browse an audio file.\n"
-                 "  The waveform always shows the active stem (radio button).\n\n"
+                 "  Keep drums waveform is in Display & Snap and is off by default.\n"
+                 "  With the option off, the waveform keeps its existing selected-stem behavior.\n"
+                 "  With it on, the strip shows the Drums slot in Single track and Layered playback.\n"
+                 "  If the Drums path is empty or is not a file, the strip follows the selected stem\n"
+                 "  when its file is available. If the resolved file cannot be read or contains no\n"
+                 "  audio samples, the strip stays empty. Playback mode, stem selection, and volume\n"
+                 "  stay unchanged.\n\n"
                  "  Using the waveform to find offset:\n"
                  "  Load a drums-only stem for the clearest view. Scroll to the\n"
                  "  start of the waveform and look for the first visible spike —\n"
@@ -56455,6 +57605,12 @@ demucs.separate.main()
                 var.set(paths[0])
                 if config_key:
                     self._add_recent_file(config_key, paths[0])
+
+                    if config_key == "recent_sm_input" and callable(getattr(self, "_sm_score_refresh_recent", None)):
+                        try:
+                            self._sm_score_refresh_recent()
+                        except Exception:
+                            pass
                 try:
                     if var == self.midi_var and self.title_var.get() in ("Untitled", ""):
                         base = os.path.splitext(os.path.basename(paths[0]))[0]
@@ -56610,6 +57766,12 @@ demucs.separate.main()
                     cur_recent = cur_cfg.get(config_key, [])
                     cur_recent = [r for r in cur_recent if r != p]
                     save_config({config_key: cur_recent})
+
+                    if config_key == "recent_sm_input" and callable(getattr(self, "_sm_score_refresh_recent", None)):
+                        try:
+                            self._sm_score_refresh_recent()
+                        except Exception:
+                            pass
                     _close_popup()
                     # Reopen so user can keep removing (or close manually)
                     self.root.after(50, lambda: self._show_recent_menu(
@@ -56633,6 +57795,12 @@ demucs.separate.main()
                 _w.bind("<Leave>", cl_leave)
             def _clear_all(_e):
                 save_config({config_key: []})
+
+                if config_key == "recent_sm_input" and callable(getattr(self, "_sm_score_refresh_recent", None)):
+                    try:
+                        self._sm_score_refresh_recent()
+                    except Exception:
+                        pass
                 _close_popup()
             clear_lbl.bind("<Button-1>", _clear_all)
             clear_row.bind("<Button-1>", _clear_all)
