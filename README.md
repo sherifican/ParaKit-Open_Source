@@ -32,7 +32,6 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the v5 / UI Studio / GPU-build plan
 |---|---|
 | **Install and run it** | [Download & run](#️-download--run-parakit-copy-paste-setup) — copy-paste setup |
 | **Check if your PC can run it** | [System requirements](#️-system-requirements) — measured, not guessed |
-| **See how the pieces fit together** | **[System Chart](docs/SYSTEM_CHART.html)** — the pipeline, all 14 tabs, what's risky to change. Download and open in a browser |
 | **Know what's in the repo** | [What's in this repository](#whats-in-this-repository) |
 | **Fix something that won't run** | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) |
 
@@ -371,7 +370,6 @@ extractor, and research notes — are organised into folders normally.
 |---|---|
 | **`CHANGELOG.txt`** | Full version history — also the source of the app's in-app **What's New** |
 | **`README.txt`** | Plain-text companion to this file |
-| **`docs/SYSTEM_CHART.html`** | **System Chart** — a single-page technical reference: the five-stage pipeline, all 14 tabs, where the non-tab features live, what gets downloaded and when, how updating works, how the source is laid out, and which parts are risky to change. Download it and open it in a browser; no install, nothing to run. Start here if you want to modify or build on ParaKit |
 | **`docs/`** | Building from source, troubleshooting, roadmap |
 | **`screenshots/`** | Images used by this README |
 | **`parakit.ico`** · **`parakit_header_logo.png`** · **`parakit_logo_FINAL.png`** · **`dot_*.png`** | App icon and interface images |
@@ -387,8 +385,7 @@ extractor, and research notes — are organised into folders normally.
 
 - **MIDI editor** — visual note placement and refinement
 - **Audio → MIDI detection** — automatic drum transcription with three engines:
-  **Spectral** (traditional), **ML / ONNX** (neural net), and **Hybrid** (combined),
-  plus genre presets (Pop / Rock / Metal / Funk)
+  **Spectral** (traditional), **ML / ONNX** (neural net), and **Hybrid** (combined)
 - **Stem splitter** — isolate a drums-only track from any song (Demucs)
 - **MusicXML → MIDI** — convert sheet music into a chart
 - **YouTube → FLAC** — download lossless audio to chart from YouTube
@@ -446,7 +443,7 @@ How closely do ParaKit's converted charts agree with charts people made by hand?
 | Toms (any tom) | 0.43 | 0.19 | 0.26 | 0.28 | 0.02 / 0.02 |
 | **All lanes (event-micro)** | **0.64** | **0.65** | **0.64** | **0.69** |  |
 
-*ParaKit v4.10.0, measured 2026-08-21, on a private set of 72 songs that already had human-made Paradiddle Expert charts, screened by median chart-event-to-nearest-librosa-onset distance <= 30 ms over a 90-second middle excerpt. These charts are agreement targets, not ground-truth onsets: charters quantize, simplify fills, omit ghost notes, and map a kit onto game lanes, so perfect agreement is neither possible nor the goal. The v4.10.0 kick, crash and tom operating points were tuned on this same corpus, so this is development-corpus agreement, not an out-of-sample estimate. ±30 ms is the MIREX drum-transcription window and ±50 ms the mir_eval onset default; both were fixed before scoring. Chance F1 is what note placement with no access to the audio would score, pooled identically to the measured numbers (uniform placement, and a circular shift of the real prediction train that keeps its rhythmic structure). Matching is maximum one-to-one per lane; the Toms row merges all toms, so tom-height errors do not count against it, and Ride is the end of the cymbal-relabeling chain, not an independent detector. Per-song F1 at ±30 ms: median 0.66 (IQR 0.56–0.73, min 0.03). Per-track offset centering would move overall F1 to 0.68 (±30) / 0.69 (±50) and is not applied. These figures are not comparable to results on ENST, MDB-Drums, IDMT or E-GMD, and they are not a ranking against any other tool. Full detail, hashes and per-song values: `dataset_audits/accuracy_report_v4.10.0_2026-08-21.json`; regenerate with `tools/measure_accuracy.py`.*
+*ParaKit v4.10.0, measured 2026-08-21, on a private set of 72 songs that already had human-made Paradiddle Expert charts, screened by median chart-event-to-nearest-librosa-onset distance <= 30 ms over a 90-second middle excerpt. These charts are agreement targets, not ground-truth onsets: charters quantize, simplify fills, omit ghost notes, and map a kit onto game lanes, so perfect agreement is neither possible nor the goal. The v4.10.0 kick, crash and tom operating points were tuned on this same corpus, so this is development-corpus agreement, not an out-of-sample estimate. ±30 ms is the MIREX drum-transcription window and ±50 ms the mir_eval onset default; both were fixed before scoring. Chance F1 is what note placement with no access to the audio would score, pooled identically to the measured numbers (uniform placement, and a circular shift of the real prediction train that keeps its rhythmic structure). Matching is maximum one-to-one per lane; the Toms row merges all toms, so tom-height errors do not count against it, and Ride is the end of the cymbal-relabeling chain, not an independent detector. Per-song F1 at ±30 ms: median 0.66 (IQR 0.56–0.73, min 0.03). Per-track offset centering would move overall F1 to 0.68 (±30) / 0.69 (±50) and is not applied. These figures are not comparable to results on ENST, MDB-Drums, IDMT or E-GMD, and they are not a ranking against any other tool. Full detail, hashes and per-song values live in the development repository as `dataset_audits/accuracy_report_v4.10.0_2026-08-21.json` (regenerate there with `tools/measure_accuracy.py`); they are not part of this download.*
 <!-- accuracy:end -->
 
 ---
@@ -635,7 +632,7 @@ works on every machine, even if a bit slower.
 
 Because this is the full source, you can add features, remove them, rearrange the UI, or
 make your own personal ParaKit. See [`docs/BUILDING.md`](docs/BUILDING.md) for running from
-source and compiling a standalone `.exe`.
+source and for an unsupported local attempt to compile a standalone `.exe`.
 
 ---
 
