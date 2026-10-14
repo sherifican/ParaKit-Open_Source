@@ -8215,7 +8215,7 @@ class MidiExtractorPanel:
 # ---------------------------------------------------------------------------
 class MidiToRlrrApp:
 
-    VERSION = "4.14.4"
+    VERSION = "4.14.5"
     # Default song description prefilled in the Single Song Creator until the user
     # edits it (embedded into the .rlrr's recordingMetadata.description on save).
     DEFAULT_SONG_DESCRIPTION = "Song charted using ParaKit"
@@ -20092,9 +20092,9 @@ demucs.separate.main()
         ttk.Label(settings_frame,
                   text="Choose between classic spectral analysis, AI/ML detection using an "
                        "ONNX drum model, or Hybrid mode which runs both and merges results.\n"
-                       "Spectral is the default and works without any extra files.",
+                       "Your saved Spectral, ML, or Hybrid choice is kept. If no engine is saved, Hybrid is selected only when the drum model is confirmed to load; otherwise, Spectral is selected.",
                   style="Sub.TLabel", foreground="#b388ff",
-                  justify=tk.LEFT, wraplength=700).grid(
+                  justify=tk.LEFT, wraplength=580).grid(
             row=16, column=0, columnspan=3, sticky="w", pady=(0, 4))
 
         self.a2m_engine_var = tk.StringVar(value="spectral")
@@ -20102,7 +20102,7 @@ demucs.separate.main()
         engine_rb_frame.grid(row=17, column=0, columnspan=3, sticky="w", pady=(0, 4))
         self._a2m_engine_rbs = []
         for _rb_text, _rb_val in [
-            ("Spectral  (default — no extra files needed, same as all previous versions)",
+            ("Spectral  (no model file needed)",
              "spectral"),
             ("ML / ONNX  (AI drum detection — requires parakit_drum_model.onnx)",
              "ml"),
@@ -26871,15 +26871,18 @@ demucs.separate.main()
 
         def _me_audio_var_changed(*_):
             path = self._me_active_audio()
+            chart_id = getattr(self, "_me_chart_load_id", 0)
             if self._me_keep_drums_waveform_enabled():
                 if path and os.path.isfile(path):
                     _me_preserve_active_cache()
                 self.root.after(
-                    100, lambda: self._me_refresh_waveform(update_chart_end=True))
+                    100,
+                    lambda chart_id=chart_id: self._me_refresh_waveform(
+                        update_chart_end=(getattr(self, "_me_chart_load_id", 0) == chart_id)))
             else:
                 if path and os.path.isfile(path):
                     _me_preserve_active_cache()
-                    self.root.after(100, lambda p=path: self._me_waveform_load(p))
+                self._me_schedule_off_waveform(path)
             if not self._me_playing:
                 return
             layered = self.me_layered_var.get()
@@ -28996,8 +28999,36 @@ demucs.separate.main()
         deliberately-wrong chart/stem pairings, 5.1% would have produced a
         false drift warning, and no statistic separated them from real ones.
         So the premise has to come from outside, and a shared file name is the
-        evidence available here — the stem was auto-fetched BY name from the
+        evidence available here: the stem was auto-fetched BY name from the
         MIDI's, or the user picked a file that matches it.
+
+        The two names are normalized differently and compared by equality
+        only. A shared prefix is not a match, so song and song2 stay quiet.
+        On the MIDI name only, in this order: a trailing (editor copy),
+        (editor copy N), (copy), or (copy N) comes off until the end is
+        stable; then the first editor MIDI tag and everything after that
+        tag; then that same trailing copy form comes off again, so a copy
+        form that sat in front of the tag still comes off; then the
+        difficulty suffix; then that same trailing copy form comes off
+        again, so a copy form that sat in front of the difficulty suffix
+        still comes off; then trailing whitespace comes off; then a
+        trailing drum or drums word. The tag is one or more spaces or
+        underscores, then MIDI, and the next character is the end of the
+        name, a space, an underscore, or an opening parenthesis. An
+        optional drum or drums word is part of that tag only when an
+        underscore comes before it. The first such tag is the one that is
+        cut. A space-form title word such as Hot Drums is kept, including when it sits in front of the tag, so Hot Drums MIDI stays Hot Drums.
+        Song drums MIDI vs Song is quiet. The trailing drum or drums word
+        is an underscore, then drum or drums, then the end of the name,
+        and trailing whitespace comes off immediately before that strip,
+        so Song_drums_expert, Song_drums_hard, and a name that ends in
+        _drums plus a space still resolve to Song. These pairs stay quiet: Hot_Drum_drums MIDI vs Hot_Drum_drums; Song_drums_extra_drums MIDI vs Song_drums_extra_drums; Song_backing vs Song_backing; Song_mix vs Song_mix; Song_drum vs Song_drum; Song_drums (Live) vs Song (Live); Song_hard_drums vs Song; Song (copy)_hard vs Song (copy). Underscore suffixes are ParaKit's stem convention; when in doubt the check stays quiet. A title that is only
+        the word Drums keeps that word, because the strip needs a leading
+        underscore, so the key does not become empty. _backing, _mix, and
+        a trailing midi with no space or underscore before it stay on the
+        MIDI name. The audio name keeps the existing suffix list, including
+        a trailing difficulty word, and is never cut after a MIDI word.
+        No other bracket group is removed.
 
         Deliberately conservative: when in doubt this returns False and the
         whole check goes quiet, which costs a diagnosis rather than inventing
@@ -29008,19 +29039,78 @@ demucs.separate.main()
             if not os.path.isfile(audio_path):
                 return False
 
-            def norm(p):
-                s = os.path.splitext(os.path.basename(p))[0].lower()
-                for pat in (r"\s*\(editor copy\)", r"_drums midi finished",
-                            r"\s*midi finished", r"_drums", r"_backing",
-                            r"_mix", r"\s*midi$",
-                            r"_(easy|medium|hard|expert)$"):
-                    s = re.sub(pat, "", s)
-                return re.sub(r"[^a-z0-9]+", "", s)
+            def midi_key(path):
+                stem = os.path.splitext(os.path.basename(path))[0]
+                while True:
+                    nxt = re.sub(
+                        r"\s*\((?:editor\s+copy|copy)(?:\s*\d+)?\)\s*$",
+                        "",
+                        stem,
+                        flags=re.IGNORECASE,
+                    )
+                    if nxt == stem:
+                        break
+                    stem = nxt
+                found = re.search(
+                    r"(?:_drums?)?[\s_]+midi(?=$|[\s_(])(.*)$",
+                    stem,
+                    flags=re.IGNORECASE,
+                )
+                if found:
+                    stem = stem[:found.start()]
+                    while True:
+                        cleaned = re.sub(
+                            "\\s*\\((?:editor\\s+copy|copy)(?:\\s*\\d+)?\\)\\s*$",
+                            "",
+                            stem,
+                            flags=re.IGNORECASE,
+                        )
+                        if cleaned == stem:
+                            break
+                        stem = cleaned
+                stem = re.sub(
+                    r"_(easy|medium|hard|expert)$",
+                    "",
+                    stem.lower(),
+                )
+                while True:
+                    peeled = re.sub(
+                        "(?i)\\s*\\((?:editor\\s+copy|copy)(?:\\s*\\d+)?\\)\\s*$",
+                        "",
+                        stem,
+                    )
+                    if peeled == stem:
+                        break
+                    stem = peeled
+                stem = re.sub(r"\s+$", "", stem)
+                stem = re.sub(
+                    r"_drums?$",
+                    "",
+                    stem,
+                    flags=re.IGNORECASE,
+                )
+                return re.sub(r"[^a-z0-9]+", "", stem)
 
-            a, b = norm(midi_path), norm(audio_path)
+            def audio_key(path):
+                stem = os.path.splitext(os.path.basename(path))[0].lower()
+                for pat in (
+                    r"\s*\(editor copy\)",
+                    r"_drums midi finished",
+                    r"\s*midi finished",
+                    r"_drums",
+                    r"_backing",
+                    r"_mix",
+                    r"\s*midi$",
+                    r"_(easy|medium|hard|expert)$",
+                ):
+                    stem = re.sub(pat, "", stem)
+                return re.sub(r"[^a-z0-9]+", "", stem)
+
+            a = midi_key(midi_path)
+            b = audio_key(audio_path)
             if not a or not b:
                 return False
-            return a == b or a.startswith(b) or b.startswith(a)
+            return a == b
         except Exception:
             return False
 
@@ -29451,6 +29541,9 @@ demucs.separate.main()
             bpm = chosen_bpm
             duration = notes[-1]["time"] + 1.0 if notes else 10.0
 
+            # A queued waveform callback captures this value. A later chart must
+            # not be clamped by a callback that was queued for this one.
+            self._me_chart_load_id = getattr(self, "_me_chart_load_id", 0) + 1
             self.me_notes           = notes
             self.me_bpm             = bpm
             self.me_duration        = duration
@@ -29610,6 +29703,12 @@ demucs.separate.main()
 
             self._me_redraw()
             if self._me_keep_drums_waveform_enabled():
+                _wave_path = self._me_waveform_source()[1]
+            else:
+                _wave_path = self._me_active_audio()
+            if not _wave_path or not os.path.isfile(_wave_path):
+                self._me_clear_waveform_strip()
+            elif self._me_keep_drums_waveform_enabled():
                 self._me_waveform_draw()
             return True
 
@@ -32402,6 +32501,57 @@ demucs.separate.main()
         except Exception:
             pass
 
+    def _me_clear_waveform_strip(self):
+        """Drop the cached waveform and draw the empty strip.
+
+        No audio length is passed and no undo step is pushed.
+        """
+        self._me_waveform_data = None
+        self._me_waveform_stereo = None
+        self._me_waveform_cache_key = None
+        self._me_waveform_draw()
+
+    def _me_off_waveform_fire(self, captured, update_chart_end):
+        """Shared option-off callback for the stem trace and the compatibility toggle.
+
+        A different selected path does nothing. A file loads with the source
+        unresolved, so turning the option on after the queue still redirects
+        to the Drums strip. An empty or missing path clears only while the
+        option is still off; once it is on, the Drums strip is resolved again.
+        """
+        if self._me_active_audio() != captured:
+            return
+        if captured and os.path.isfile(captured):
+            self._me_waveform_load(
+                captured, update_chart_end=update_chart_end, _source_resolved=False)
+            return
+        if self._me_keep_drums_waveform_enabled():
+            self._me_refresh_waveform(update_chart_end=False)
+            return
+        self._me_clear_waveform_strip()
+
+    def _me_schedule_off_waveform(self, path):
+        """Queue the stem-trace option-off callback. The chart identity is captured now."""
+        chart_id = getattr(self, "_me_chart_load_id", 0)
+        captured = path
+
+        def _fire():
+            same_chart = getattr(self, "_me_chart_load_id", 0) == chart_id
+            self._me_off_waveform_fire(captured, same_chart)
+
+        self.root.after(100, _fire)
+
+    def _me_schedule_toggle_waveform(self, path):
+        """Queue the compatibility-toggle callback. The chart identity is captured now."""
+        chart_id = getattr(self, "_me_chart_load_id", 0)
+        captured = path
+
+        def _fire():
+            toggle_same_chart = getattr(self, "_me_chart_load_id", 0) == chart_id
+            self._me_off_waveform_fire(captured, toggle_same_chart)
+
+        self.root.after(100, _fire)
+
     def _me_refresh_waveform(self, update_chart_end=False):
         if not self._me_keep_drums_waveform_enabled():
             return
@@ -32431,6 +32581,8 @@ demucs.separate.main()
             path = self._me_active_audio()
             if path and os.path.isfile(path):
                 self._me_waveform_load(path, update_chart_end=False)
+            else:
+                self._me_clear_waveform_strip()
         if not saved:
             self.me_status_var.set("Waveform preference could not be saved.")
 
@@ -32805,7 +32957,7 @@ demucs.separate.main()
                 if not self._me_keep_drums_waveform_enabled():
                     path = self._me_active_audio()
                     if path:
-                        self.root.after(100, lambda p=path: self._me_waveform_load(p))
+                        self._me_schedule_toggle_waveform(path)
                 return
 
     def _me_vel_hscroll(self, *args):
@@ -47484,7 +47636,7 @@ demucs.separate.main()
                "reclassify after rather than spending time trying to get the settings perfect.")
         entry(s,
               "What to expect from each engine:\n\n"
-              "  Spectral (default)\n"
+              "  Spectral (no model file needed)\n"
               "    Works well on most songs with clean mixes. Kick, snare, and hi-hat\n"
               "    detection is solid. Toms and ride are less reliable. On fast or\n"
               "    dense patterns you may see occasional duplicate hits (same hit\n"
@@ -47737,8 +47889,8 @@ demucs.separate.main()
         divider(s)
         entry(s,
               "🤖  Detection Engine  (v4.0)\n\n"
-              "Selects how drum hits are found in the audio. Three modes:\n\n"
-              "  Spectral  (default)\n"
+              "Selects how drum hits are found in the audio. Your saved Spectral, ML, or Hybrid choice is kept. If no engine is saved, Hybrid is selected only when the drum model is confirmed to load; otherwise, Spectral is selected. Three modes:\n\n"
+              "  Spectral  (no model file needed)\n"
               "    The original audio analysis pipeline used in all versions before v4.0.\n"
               "    Uses band-pass filters and spectral shape to classify hits. No extra\n"
               "    files needed. Works on all systems without any setup.\n\n"
@@ -48316,7 +48468,7 @@ demucs.separate.main()
                  "  appears on the waveform too. Click the waveform to seek.\n"
                  "  Loads automatically when you browse an audio file.\n"
                  "  Keep drums waveform is in Display & Snap and is off by default.\n"
-                 "  With the option off, the waveform keeps its existing selected-stem behavior.\n"
+                 "  With the option off, the strip follows the selected stem, and an empty or missing path shows an empty strip.\n"
                  "  With it on, the strip shows the Drums slot in Single track and Layered playback.\n"
                  "  If the Drums path is empty or is not a file, the strip follows the selected stem\n"
                  "  when its file is available. If the resolved file cannot be read or contains no\n"

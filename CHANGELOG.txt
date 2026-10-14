@@ -4,7 +4,7 @@
 
   Newest first. Two parts:
 
-    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.14.4  ->  4.4.57.99-10
+    PART 1  --  v4.x SOURCE RELEASES (this repo)        4.14.5  ->  4.4.57.99-10
     PART 2  --  EARLIER HISTORY (.exe release line)     4.4.52   ->  3.0.0
 
   About the version numbers:
@@ -26,6 +26,35 @@
 ==============================================================================
   PART 1  --  v4.x SOURCE RELEASES (this repo)
 ==============================================================================
+
+------------------------------------------------------------------------------
+  v4.14.5   --   2026-10-07
+------------------------------------------------------------------------------
+  This release clears a MIDI Editor waveform when the audio it would show is
+  unavailable. The drift check pairs a chart with its audio only when the
+  normalized names are equal. Audio to MIDI states the detection-engine
+  startup rule.
+
+  MIDI EDITOR WAVEFORM
+  MIDI Editor: turning Keep drums waveform off while the selected path is
+  empty or missing, switching to an empty or missing stem while that option
+  is off, or loading a song whose resolved waveform source is unavailable
+  now clears the strip. Queued waveform callbacks preserve Chart End when a
+  different chart has loaded. The strip draws its empty state. Turning the
+  option off while the selected path is a file still loads that file. The
+  clear leaves Chart End and the undo history unchanged.
+
+  MIDI EDITOR DRIFT CHECK
+  The drift check pairs a chart with its audio only when the normalized
+  names are equal. A chart named song no longer matches audio named song2.
+  A name that only shares a prefix stays quiet.
+
+  AUDIO TO MIDI DETECTION ENGINE
+  The engine note and the Help text state the startup rule. They no longer
+  call Spectral the default. A saved Spectral, ML, or Hybrid choice is kept.
+  If no engine is saved, Hybrid is selected only when the drum model is
+  confirmed to load; otherwise, Spectral is selected. The Spectral option
+  says that no model file is needed. The engine note wraps at 580 pixels.
 
 ------------------------------------------------------------------------------
   v4.14.4   --   2026-10-03
