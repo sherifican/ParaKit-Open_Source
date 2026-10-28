@@ -61,10 +61,24 @@ try:
 except ImportError:
     DND_AVAILABLE = False
 
-# ttkbootstrap — polished modern theme engine
+# ttkbootstrap — polished modern theme engine. Only the 1.x line is supported.
+# 1.x replaces the tk widget constructors on import so they take autostyle=;
+# 2.x leaves them alone and has no style registry, so the app crashed at startup
+# on any 2.x install. The check is that replacement itself, not a version string:
+# neither 1.x nor 2.0.0-2.1.1 has __version__, and a frozen or vendored copy can
+# lack package metadata. Without it the app runs plain ttk on "clam", the same
+# path it takes with no ttkbootstrap at all.
+def _ttkbs_is_v1(mod):
+    v = getattr(mod, "__version__", None)
+    if v is not None and str(v).split(".")[0] != "1":
+        return False
+    return all(str(getattr(c.__init__, "__module__", "")).startswith("ttkbootstrap")
+               for c in (tk.Frame, tk.Label, tk.Text))
+
+
 try:
     import ttkbootstrap as ttk_bs
-    TTKBS_AVAILABLE = True
+    TTKBS_AVAILABLE = _ttkbs_is_v1(ttk_bs)
 except ImportError:
     TTKBS_AVAILABLE = False
 

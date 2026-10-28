@@ -4647,7 +4647,7 @@
     },
     {
       "path": "parakit_spectral_tab.py",
-      "sha256": "b61116c97af340c03793edef560ff7fc6b151be5cf1979857581ee7782db82a1"
+      "sha256": "9a19eb63866fe9112e91fae47a075a134d39cea0b3b249d3fa82b3265c17e1b5"
     },
     {
       "path": "parakit_synth_voices.py",
@@ -4896,7 +4896,7 @@
     },
     {
       "path": "requirements.txt",
-      "sha256": "6c1cc05e303a25d3a14e82de67d339ddec8acf23e06e19e2a1e9fce5a8aca040"
+      "sha256": "6b327dc15fa03d8296a36f74b0f2a165f05399d28f1e82d5433a1a3726ed910d"
     },
     {
       "path": "rlrr_parse.py",

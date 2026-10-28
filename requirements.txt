@@ -23,7 +23,7 @@ python-rtmidi>=1.5     # real-time MIDI input backend for mido (drum-kit play)
 music21>=9             # MusicXML -> MIDI conversion
 
 # --- UI / drag-drop / practice ---------------------------------------------
-ttkbootstrap>=1.10     # themed Tkinter widgets (app theme)
+ttkbootstrap>=1.10,<2  # themed Tkinter widgets (app theme); 2.x is not supported yet
 tkinterdnd2>=0.4       # drag-and-drop onto file fields
 pygame>=2.6            # Preview / Practice falling-note renderer
 Pillow>=10             # album art + image handling
