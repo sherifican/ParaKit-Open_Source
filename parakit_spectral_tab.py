@@ -61,6 +61,21 @@ try:
 except Exception:
     _spr = None
 
+
+def _ttkbs_v1_loaded():
+    """True only when ttkbootstrap 1.x is imported. 1.x replaces the tk widget
+    constructors on import so they take autostyle=; 2.x does not, and passing it
+    there is a TclError. The check is that replacement itself: neither 1.x nor
+    2.0.0-2.1.1 has __version__, and a frozen copy can lack package metadata."""
+    mod = sys.modules.get("ttkbootstrap")
+    if mod is None:
+        return False
+    v = getattr(mod, "__version__", None)
+    if v is not None and str(v).split(".")[0] != "1":
+        return False
+    return all(str(getattr(c.__init__, "__module__", "")).startswith("ttkbootstrap")
+               for c in (tk.Frame, tk.Label, tk.Text))
+
 # ---------------------------------------------------------------------------
 # Palette -- ParaKit v4 dark-purple identity. Kept as module constants so the
 # v4 theming pass can swap them in one place.
@@ -957,7 +972,7 @@ class PrimaryButton(tk.Label):
 
     def __init__(self, parent, text, command=None, tooltip=None):
         _pb_kw = {}
-        if "ttkbootstrap" in sys.modules:
+        if _ttkbs_v1_loaded():
             _pb_kw["autostyle"] = False
         super().__init__(parent, text=text, font=F_BOLD, padx=16, pady=6,
                          cursor="hand2", background="#ff6ec7", foreground="#12121c",
@@ -3649,7 +3664,7 @@ class SpectralTab(ttk.Frame):
         # cyan wrap the other Auto Fetch buttons use. Separable from the host
         # helper: dropping this hunk leaves the magenta OutlineButton as today.
         _af_kw = {"bg": CYAN, "bd": 0}
-        if "ttkbootstrap" in sys.modules:
+        if _ttkbs_v1_loaded():
             _af_kw["autostyle"] = False
         self._af_border = tk.Frame(inner, **_af_kw)  # cyan-border: spec-af
         self._af_border.pack(side=tk.LEFT, padx=(6, 0))
